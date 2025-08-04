@@ -1,0 +1,77 @@
+---
+- name: Instalar Zsh, Oh My Zsh e Starship com config Rose Pine
+  hosts: all
+  become: yes
+
+  vars:
+    ohmyzsh_install_script: https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh
+    starship_install_script: https://starship.rs/install.sh
+
+  tasks:
+    - name: Instalar dependências
+      apt:
+        name:
+          - curl
+          - git
+          - zsh
+        state: present
+        update_cache: yes
+
+    - name: Verificar shell atual
+      become: false
+      shell: echo $SHELL
+      register: current_shell
+      changed_when: false
+
+    - name: Tornar o Zsh o shell padrão
+      user:
+        name: "{{ ansible_user }}"
+        shell: /usr/bin/zsh
+      when: current_shell.stdout != "/usr/bin/zsh"
+
+    - name: Remover diretório antigo do Oh My Zsh, se existir
+      become: false
+      file:
+        path: "$HOME/.oh-my-zsh"
+        state: absent
+
+    - name: Instalar Oh My Zsh (não interativo)
+      become: false
+      shell: |
+        export RUNZSH=no
+        export CHSH=no
+        sh -c "$(curl -fsSL {{ ohmyzsh_install_script }})" "" --unattended
+      args:
+        executable: /bin/bash
+
+    - name: Baixar binário do Starship
+      become: true
+      shell: |
+        curl -sLo /tmp/starship.tar.gz https://github.com/starship/starship/releases/latest/download/starship-x86_64-unknown-linux-musl.tar.gz
+        mkdir -p /tmp/starship-tmp && tar -xzf /tmp/starship.tar.gz -C /tmp/starship-tmp
+        install -m 755 /tmp/starship-tmp/starship /usr/local/bin/starship
+        rm -rf /tmp/starship.tar.gz /tmp/starship-tmp
+      args:
+        executable: /bin/bash
+
+    - name: Adicionar Starship ao .zshrc
+      become: false
+      lineinfile:
+        path: "$HOME/.zshrc"
+        line: 'eval "$(starship init zsh)"'
+        insertafter: EOF
+        state: present
+
+    - name: Criar pasta ~/.config se não existir
+      become: false
+      file:
+        path: "$HOME/.config"
+        state: directory
+        mode: '0755'
+
+    - name: Baixar configuração rose-pine para starship
+      become: false
+      get_url:
+        url: https://raw.githubusercontent.com/ericrocha97/starship/refs/heads/main/rose-pine.toml
+        dest: "$HOME/.config/starship.toml"
+        mode: '0644'

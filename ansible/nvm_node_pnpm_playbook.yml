@@ -1,0 +1,59 @@
+---
+- name: Instalar NVM, Node.js e pnpm
+  hosts: all
+  vars:
+    nvm_version: "v0.40.2"
+    node_version: "24"
+
+  tasks:
+    - name: Instalar dependências (curl, git)
+      become: yes
+      ansible.builtin.apt:
+        name:
+          - curl
+          - git
+        state: present
+        update_cache: yes
+
+    - name: Verificar se NVM está instalado
+      ansible.builtin.stat:
+        path: "{{ ansible_env.HOME }}/.nvm/nvm.sh"
+      register: nvm_stat
+
+    - name: Baixar e instalar NVM
+      ansible.builtin.shell:
+        cmd: "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/{{ nvm_version }}/install.sh | bash"
+      when: not nvm_stat.stat.exists
+      args:
+        creates: "{{ ansible_env.HOME }}/.nvm/nvm.sh"
+
+    - name: Adicionar NVM ao .bashrc e .zshrc
+      ansible.builtin.blockinfile:
+        path: "{{ ansible_env.HOME }}/{{ item }}"
+        create: yes
+        block: |
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+          [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+      loop:
+        - .bashrc
+        - .zshrc
+
+    - name: Instalar Node.js (LTS)
+      ansible.builtin.shell:
+        cmd: ". {{ ansible_env.HOME }}/.nvm/nvm.sh && nvm install {{ node_version }}"
+        executable: /bin/bash
+      register: node_install_result
+      changed_when: "'is already installed' not in node_install_result.stdout"
+
+    - name: Definir versão padrão do Node.js
+      ansible.builtin.shell:
+        cmd: ". {{ ansible_env.HOME }}/.nvm/nvm.sh && nvm alias default {{ node_version }}"
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Ativar Corepack e instalar PNPM
+      ansible.builtin.shell:
+        cmd: ". {{ ansible_env.HOME }}/.nvm/nvm.sh && nvm use default && corepack enable && corepack prepare pnpm@latest --activate"
+        executable: /bin/bash
+      changed_when: false

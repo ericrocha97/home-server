@@ -15,27 +15,6 @@ services:
       - "8000:8000"
     command: '--admin-password-file /tmp/portainer_password.txt'
 
-  code-server:
-    build:
-      context: .
-      args:
-        - DOCKER_GID=988 
-    
-    container_name: code-server
-    restart: unless-stopped
-    environment:
-      - "PUID=1000"
-      - "PGID=1000"
-      - "TZ=America/Sao_Paulo"
-      - "PASSWORD={{ code_server_password }}"
-      - "SUDO_PASSWORD={{ code_server_sudo_password }}"
-    volumes:
-      - ./code-server-config:/config
-      - ~/projetos:/home/coder/project
-      - /var/run/docker.sock:/var/run/docker.sock
-    ports:
-      - "8443:8443"
-
   netdata:
     image: netdata/netdata:latest
     container_name: netdata
@@ -54,4 +33,3 @@ services:
 
 volumes:
     portainer-data:
-    code-server-config:
