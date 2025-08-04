@@ -1,0 +1,10 @@
+---
+- name: Configure K3s Server
+  hosts: server
+  become: yes
+  roles:
+    - role: xanmanning.k3s
+      vars:
+        ansible_become: true
+        k3s_state: installed
+        k3s_server_init: true

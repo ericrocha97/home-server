@@ -1,0 +1,44 @@
+---
+- name: Deploy Docker Compose services
+  hosts: server
+  become: yes
+
+  vars_files:
+    - secrets.yml
+
+  vars:
+    remote_project_path: "/opt/docker_apps"
+
+  tasks:
+    - name: Create project directory on the server
+      file:
+        path: "{{ remote_project_path }}"
+        state: directory
+        mode: '0755'
+
+    - name: Create Portainer password file from vault
+      template:
+        src: "docker_files/portainer_password.txt.j2"
+        dest: "{{ remote_project_path }}/portainer_password.txt"
+        mode: '0600'
+
+    - name: Copy docker-compose template to the server
+      template:
+        src: "docker_files/docker-compose.yml.j2"
+        dest: "{{ remote_project_path }}/docker-compose.yml"
+
+    - name: Copy Dockerfile to the server
+      copy:
+        src: "docker_files/Dockerfile"
+        dest: "{{ remote_project_path }}/Dockerfile"
+
+    - name: Stop and remove existing containers if they exist
+      community.docker.docker_compose:
+        project_src: "{{ remote_project_path }}"
+        state: absent
+
+    - name: Ensure Docker applications are running
+      community.docker.docker_compose:
+        project_src: "{{ remote_project_path }}"
+        state: present
+        build: true
