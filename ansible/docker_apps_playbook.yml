@@ -1,10 +1,7 @@
 ---
-- name: Deploy Docker Compose services
-  hosts: server
+- name: Deploy Docker services
+  hosts: homeserver
   become: yes
-
-  vars_files:
-    - secrets.yml
 
   vars:
     remote_project_path: "/opt/docker_apps"
@@ -16,29 +13,23 @@
         state: directory
         mode: '0755'
 
-    - name: Create Portainer password file from vault
-      template:
-        src: "docker_files/portainer_password.txt.j2"
-        dest: "{{ remote_project_path }}/portainer_password.txt"
-        mode: '0600'
-
-    - name: Copy docker-compose template to the server
-      template:
-        src: "docker_files/docker-compose.yml.j2"
-        dest: "{{ remote_project_path }}/docker-compose.yml"
-
-    - name: Copy Dockerfile to the server
+    - name: Copy docker-compose file to the server
       copy:
-        src: "docker_files/Dockerfile"
-        dest: "{{ remote_project_path }}/Dockerfile"
+        src: "docker_files/docker-compose.yml"
+        dest: "{{ remote_project_path }}/docker-compose.yml" 
 
-    - name: Stop and remove existing containers if they exist
+    - name: Stop and remove existing Docker applications
       community.docker.docker_compose:
         project_src: "{{ remote_project_path }}"
         state: absent
+        remove_orphans: yes
+
+    - name: Prune unused Docker networks
+      command: docker network prune -f
+      changed_when: false
 
     - name: Ensure Docker applications are running
       community.docker.docker_compose:
         project_src: "{{ remote_project_path }}"
         state: present
-        build: true
+        remove_orphans: yes

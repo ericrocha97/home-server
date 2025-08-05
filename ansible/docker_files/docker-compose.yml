@@ -3,25 +3,26 @@ services:
     image: portainer/portainer-ce:latest
     container_name: portainer
     restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    volumes:
-      - /etc/localtime:/etc/localtime:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./portainer-data:/data
-      - /opt/docker_apps/portainer_password.txt:/tmp/portainer_password.txt
     ports:
-      - "9443:9443"
-      - "8000:8000"
-    command: '--admin-password-file /tmp/portainer_password.txt'
+      - "9000:9000"
+    volumes:
+      - ./portainer-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  adminer:
+    image: adminer:latest
+    container_name: adminer
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
 
   netdata:
     image: netdata/netdata:latest
     container_name: netdata
     hostname: home-server
-    ports:
-      - 19999:19999
     restart: unless-stopped
+    ports:
+      - "19999:19999"
     cap_add:
       - SYS_PTRACE
     security_opt:
@@ -32,4 +33,4 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
 
 volumes:
-    portainer-data:
+  portainer-data:
