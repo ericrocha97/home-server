@@ -80,7 +80,7 @@ Após executar o `docker_apps_playbook.yml`, os serviços estarão disponíveis 
 
 - **Portainer:** `http://<IP_DO_SERVIDOR>:9000`
 - **Adminer:** `http://<IP_DO_SERVIDOR>:8081`
-- **Netdata:** `http://<IP_DO_SERVIDOR>:19999`F
+- **Netdata:** `http://<IP_DO_SERVIDOR>:19999`
 - **Prometheus:** `http://<IP_DO_SERVIDOR>:19090`
 - **Grafana:** `http://<IP_DO_SERVIDOR>:13000`
 - **Node Exporter:** `http://<IP_DO_SERVIDOR>:19100/metrics`
