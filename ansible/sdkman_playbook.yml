@@ -1,0 +1,17 @@
+- hosts: homeserver
+  become: yes
+  tasks:
+    - name: Install SDKMAN dependencies
+      apt:
+        name: 
+          - unzip
+          - zip
+          - curl
+        state: present
+        update_cache: yes
+
+    - name: Install SDKMAN
+      shell: "curl -s 'https://get.sdkman.io' | bash"
+      args:
+        creates: "~/.sdkman/bin/sdkman-init.sh"
+      become: no 
