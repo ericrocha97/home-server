@@ -1,0 +1,65 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: portainer-sa
+  namespace: tools
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: portainer
+rules:
+  # Permissões para gerenciar todos os recursos principais
+  - apiGroups: [""]
+    resources: ["*"]
+    verbs: ["*"]
+  # Permissões para apps/v1 (deployments, daemonsets, etc.)
+  - apiGroups: ["apps"]
+    resources: ["*"]
+    verbs: ["*"]
+  # Permissões para networking (ingress, network policies)
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["*"]
+    verbs: ["*"]
+  # Permissões para RBAC
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["*"]
+    verbs: ["*"]
+  # Permissões para storage
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["*"]
+    verbs: ["*"]
+  # Permissões para metrics e monitoring
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["*"]
+    verbs: ["*"]
+  # Permissões para extensões/batch
+  - apiGroups: ["extensions", "batch"]
+    resources: ["*"]
+    verbs: ["*"]
+  # Permissões para custom resources (CRDs)
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["*"]
+    verbs: ["*"]
+  # Permissões para policy (PodSecurityPolicy, etc.)
+  - apiGroups: ["policy"]
+    resources: ["*"]
+    verbs: ["*"]
+  # Permissões para autoscaling
+  - apiGroups: ["autoscaling"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: portainer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: portainer
+subjects:
+  - kind: ServiceAccount
+    name: portainer-sa
+    namespace: tools

@@ -1,0 +1,180 @@
+---
+- name: Deploy aplicações no k3s
+  hosts: server
+  become: yes
+  vars:
+    helm_version: "v3.18.5"
+    helm_bin: /usr/local/bin/helm
+    k8s_manifests_root: "{{ playbook_dir | dirname }}/k8s"
+    # Diretório destino no host remoto (sem precisar de sudo)
+    remote_k8s_root: "/home/{{ ansible_user }}/k8s-manifests"
+    kubeconfig_path: "/etc/rancher/k3s/k3s.yaml"
+    ansible_python_interpreter: /usr/bin/python3
+
+  tasks:
+    - name: Garantir dependências base (curl, tar)
+      apt:
+        name: [curl, tar]
+        state: present
+        update_cache: yes
+
+    - name: Instalar dependências Python via APT (kubernetes.core)
+      apt:
+        name:
+          - python3-kubernetes
+          - python3-yaml
+          - python3-requests
+        state: present
+        update_cache: yes
+
+    - name: Verificar se secret Grafana real existe (local)
+      stat:
+        path: "{{ k8s_manifests_root }}/secrets/grafana-admin-secret.yaml"
+      register: grafana_secret_file
+      delegate_to: localhost
+      run_once: true
+
+    - name: Falhar se secret Grafana não existir (local)
+      fail:
+        msg: "Arquivo grafana-admin-secret.yaml não encontrado. Copie o exemplo e defina uma senha."
+      when: not grafana_secret_file.stat.exists
+      delegate_to: localhost
+      run_once: true
+
+    - name: Verificar se secret Portainer real existe (local)
+      stat:
+        path: "{{ k8s_manifests_root }}/secrets/portainer-admin-password-secret.yaml"
+      register: portainer_secret_file
+      delegate_to: localhost
+      run_once: true
+
+    - name: Falhar se secret Portainer não existir (local)
+      fail:
+        msg: "Arquivo portainer-admin-password-secret.yaml não encontrado. Copie o exemplo e defina uma senha."
+      when: not portainer_secret_file.stat.exists
+      delegate_to: localhost
+      run_once: true
+
+    - name: Criar diretório remoto para manifests (como usuário normal)
+      file:
+        path: "{{ remote_k8s_root }}"
+        state: directory
+        mode: '0755'
+      become: false
+
+    - name: Copiar árvore de manifests k8s
+      copy:
+        src: "{{ k8s_manifests_root }}/"
+        dest: "{{ remote_k8s_root }}/"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0644'
+        directory_mode: '0755'
+      become: false
+
+    - name: Criar diretório .kube para usuário
+      file:
+        path: "/home/{{ ansible_user }}/.kube"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0700'
+
+    - name: Copiar kubeconfig k3s para ~/.kube/config (mantendo permissões restritas)
+      copy:
+        remote_src: true
+        src: "{{ kubeconfig_path }}"
+        dest: "/home/{{ ansible_user }}/.kube/config"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+
+    - name: Usar kubeconfig copiado para operações (set_fact)
+      set_fact:
+        kubeconfig_path: "/home/{{ ansible_user }}/.kube/config"
+
+    - name: Garantir namespace monitoring existe (antes dos secrets)
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: v1
+        kind: Namespace
+        name: monitoring
+        state: present
+
+    - name: Garantir namespace tools existe (antes do secret Portainer)
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: v1
+        kind: Namespace
+        name: tools
+        state: present
+
+    - name: Aplicar Secret Grafana
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ remote_k8s_root }}/secrets/grafana-admin-secret.yaml"
+        kubeconfig: "{{ kubeconfig_path }}"
+
+    - name: Aplicar Secret Portainer
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ remote_k8s_root }}/secrets/portainer-admin-password-secret.yaml"
+        kubeconfig: "{{ kubeconfig_path }}"
+
+    - name: Instalar Helm se não existir
+      shell: |
+        curl -fsSL https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz -o /tmp/helm.tgz
+        tar -C /tmp -xzf /tmp/helm.tgz
+        install -m 0755 /tmp/linux-amd64/helm {{ helm_bin }}
+      args:
+        creates: "{{ helm_bin }}"
+        executable: /bin/bash
+
+    - name: Adicionar repositórios Helm prometheus & grafana
+      shell: |
+        {{ helm_bin }} repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
+        {{ helm_bin }} repo add grafana https://grafana.github.io/helm-charts || true
+        {{ helm_bin }} repo update
+      changed_when: false
+
+    - name: Instalar/Atualizar kube-prometheus-stack
+      kubernetes.core.helm:
+        name: monitoring
+        chart_ref: prometheus-community/kube-prometheus-stack
+        release_namespace: monitoring
+        update_repo_cache: true
+        values_files:
+          - "{{ remote_k8s_root }}/monitoring/kube-prometheus-stack-values.yaml"
+        kubeconfig: "{{ kubeconfig_path }}"
+
+    - name: Aplicar RBAC Portainer (ServiceAccount + ClusterRole)
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ remote_k8s_root }}/portainer/portainer-rbac.yaml"
+        kubeconfig: "{{ kubeconfig_path }}"
+
+    - name: Aplicar Portainer manifests
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ remote_k8s_root }}/portainer/portainer-deployment.yaml"
+        kubeconfig: "{{ kubeconfig_path }}"
+
+    - name: Aplicar cAdvisor DaemonSet (opcional)
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ remote_k8s_root }}/monitoring/cadvisor-daemonset.yaml"
+        kubeconfig: "{{ kubeconfig_path }}"
+
+    - name: Aplicar Ingress (Portainer & Grafana)
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ remote_k8s_root }}/ingress/ingress.yaml"
+        kubeconfig: "{{ kubeconfig_path }}"
+
+    - name: Mostrar serviços NodePorts
+      shell: kubectl get svc -A | grep -E '30900'
+      register: nodeports
+      changed_when: false
+
+    - debug:
+        var: nodeports.stdout_lines

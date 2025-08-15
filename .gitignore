@@ -1,1 +1,4 @@
 **/secrets.yml
+## Kubernetes secrets reais (não versionar)
+k8s/secrets/grafana-admin-secret.yaml
+k8s/secrets/portainer-admin-password-secret.yaml

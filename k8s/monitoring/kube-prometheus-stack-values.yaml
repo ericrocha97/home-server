@@ -1,0 +1,57 @@
+grafana:
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClassName: local-path
+  service:
+    type: ClusterIP
+  ingress:
+    enabled: false
+  admin:
+    existingSecret: grafana-admin-secret
+    userKey: admin-user
+    passwordKey: admin-password
+
+prometheus:
+  prometheusSpec:
+    retention: 15d
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+    scrapeInterval: 15s
+
+  service:
+    type: ClusterIP
+
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 2Gi
+
+nodeExporter:
+  enabled: true
+
+kubeStateMetrics:
+  enabled: true
+
+prometheusOperator:
+  enabled: true
+
+additionalScrapeConfigs: |
+  - job_name: 'portainer'
+    metrics_path: /api/system/metrics
+    scheme: http
+    static_configs:
+      - targets: ['portainer.tools.svc.cluster.local:9000']
