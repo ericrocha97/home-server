@@ -6,7 +6,7 @@ Esta pasta contém a migração dos serviços antes orquestrados por `docker-com
 
 | Serviço              | Tipo K8s                        | Persistência    | Exposição         | Observações |
 |----------------------|---------------------------------|-----------------|-------------------|-------------|
-| Portainer            | Deployment                      | PVC 1Gi         | NodePort 30900    | Gerencia Docker local e cluster k3s. Métricas em `/api/system/metrics` |
+| Portainer            | Deployment                      | PVC 1Gi         | Ingress / NodePort opc. | Gerencia Docker + cluster k3s. Métricas em `/api/system/metrics` |
 | Prometheus/Grafana   | Helm Chart kube-prometheus-stack| PVCs (values)   | Grafana via PF/Ingress | Stack de monitoramento principal |
 | cAdvisor             | DaemonSet + Service             | -               | ClusterIP (headless) | Métricas por nó dos containers Docker e pods |
 | node-exporter        | DaemonSet (via chart)           | -               | Service interno    | Métricas de host (CPU, memória, filesystem) |
@@ -38,11 +38,34 @@ kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80
 
 ## Deploy Portainer
 
+Automatizado via playbook `ansible/k8s_apps_playbook.yml` (aplica RBAC, Deployment, Secrets e Ingress). Manual (debug / laboratório):
+
 ```bash
+kubectl apply -f k8s/portainer/portainer-rbac.yaml
 kubectl apply -f k8s/portainer/portainer-deployment.yaml
 ```
 
-Acessar: `http://<IP_DO_NODE>:30900`.
+Acesso:
+
+- Ingress: `http://portainer.local` (após editar `/etc/hosts`)
+- NodePort (fallback): `http://<IP_DO_NODE>:30900` (pode remover o Service `portainer-nodeport` se não precisar)
+
+### Acesso simultâneo Docker + Kubernetes
+
+O Deployment monta:
+
+- `/var/run/docker.sock` (controle total Docker host)
+- `/var/lib/docker/volumes` (RW) – permite gerenciamento de volumes
+
+Argumento `--host=unix:///var/run/docker.sock` força detecção do Docker local. RBAC Kubernetes via ServiceAccount `portainer-sa` + ClusterRoleBinding com permissões amplas.
+
+#### Segurança
+
+Montar o docker.sock concede ao Portainer (e qualquer exploit) acesso root efetivo ao host. Considere:
+
+- Usar Portainer Agent em vez de socket direto
+- Tornar `/var/lib/docker/volumes` readOnly se apenas inspeção
+- Restringir Ingress (TLS + auth extra)
 
 ## Deploy cAdvisor (separado)
 
@@ -106,11 +129,34 @@ Passos:
 
 Entradas adicionadas ao `.gitignore` garantem que `grafana-admin-secret.yaml` e `portainer-admin-password-secret.yaml` não sejam commitados.
 
+## Automação via Ansible
+
+Playbook: `ansible/k8s_apps_playbook.yml`
+
+Principais etapas:
+
+ 1. Valida existência dos secrets locais reais
+ 2. Copia manifests para o servidor
+ 3. Copia kubeconfig protegido para `~/.kube/config` do usuário remoto
+ 4. Cria namespaces `monitoring` e `tools`
+ 5. Aplica secrets
+ 6. Instala Helm (se ausente) + repositórios
+ 7. Instala/atualiza `kube-prometheus-stack`
+ 8. Aplica RBAC Portainer (`portainer-rbac.yaml`)
+ 9. Aplica Deployment Portainer / cAdvisor / Ingress
+
+Execução:
+
+```bash
+cd ansible
+ansible-playbook -i inventory.ini k8s_apps_playbook.yml --ask-become-pass
+```
+
 ## Próximos Passos / Melhorias
 
-1. Configurar TLS (Let's Encrypt via cert-manager) – anotar ingress com `cert-manager.io/cluster-issuer`.
-2. Ajustar retenção e recursos do Prometheus conforme uso real.
-3. Adicionar dashboards customizados (import IDs populares: 1860 node exporter, 893 cAdvisor, 16176 Portainer se disponível).
-4. Criar backups dos PVCs (snapshot ou Velero).
-5. Limitar acesso ao Portainer via autenticação adicional / RBAC interno.
-6. Adicionar ServiceMonitor específico se quiser separar métricas do cAdvisor dedicado.
+1. Configurar TLS (cert-manager + Let's Encrypt) e remover NodePort.
+2. Ajustar retenção / recursos Prometheus conforme uso real.
+3. Dashboards adicionais (IDs: 1860 node exporter, 893 cAdvisor, 16176 Portainer).
+4. Backups PVCs (Velero ou snapshots local-path).
+5. Hardening Portainer (remover docker.sock após fase híbrida ou migrar para Agent).
+6. ServiceMonitor dedicado ao cAdvisor (refinar scrape / labels).
