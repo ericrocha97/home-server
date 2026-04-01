@@ -42,7 +42,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: casaos-ingress
-  namespace: default
+  namespace: casaos
   annotations:
     kubernetes.io/ingress.class: traefik
 spec:
