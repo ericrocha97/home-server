@@ -84,6 +84,15 @@ Este repositório contém playbooks Ansible para configurar um servidor domésti
     ansible-playbook -i inventory.ini sdkman_playbook.yml --ask-become-pass
     ```
 
+7. **Instalar CasaOS:**
+    Este playbook instala o CasaOS (sistema de cloud pessoal).
+
+    ```bash
+    ansible-playbook -i inventory.ini casaos_playbook.yml --ask-become-pass
+    ```
+
+    Acessar: `http://casaos.local` (configurar `/etc/hosts`)
+
 ## Acesso aos Serviços
 
 Após rodar `k8s_apps_playbook.yml` e configurar `/etc/hosts` local apontando para o IP do nó:
