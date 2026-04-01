@@ -33,6 +33,7 @@
       register: grafana_secret_file
       delegate_to: localhost
       run_once: true
+      become: false
 
     - name: Falhar se secret Grafana não existir (local)
       fail:
@@ -40,6 +41,7 @@
       when: not grafana_secret_file.stat.exists
       delegate_to: localhost
       run_once: true
+      become: false
 
     - name: Verificar se secret Portainer real existe (local)
       stat:
@@ -47,6 +49,7 @@
       register: portainer_secret_file
       delegate_to: localhost
       run_once: true
+      become: false
 
     - name: Falhar se secret Portainer não existir (local)
       fail:
@@ -54,6 +57,7 @@
       when: not portainer_secret_file.stat.exists
       delegate_to: localhost
       run_once: true
+      become: false
 
     - name: Criar diretório remoto para manifests (como usuário normal)
       file:
@@ -107,6 +111,14 @@
         api_version: v1
         kind: Namespace
         name: tools
+        state: present
+
+    - name: Garantir namespace casaos existe (antes do Ingress CasaOS)
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: v1
+        kind: Namespace
+        name: casaos
         state: present
 
     - name: Aplicar Secret Grafana
@@ -165,7 +177,13 @@
         src: "{{ remote_k8s_root }}/monitoring/cadvisor-daemonset.yaml"
         kubeconfig: "{{ kubeconfig_path }}"
 
-    - name: Aplicar Ingress (Portainer & Grafana)
+    - name: Aplicar Service/Endpoints do CasaOS
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ remote_k8s_root }}/casaos/casaos-service.yaml"
+        kubeconfig: "{{ kubeconfig_path }}"
+
+    - name: Aplicar Ingress (Portainer, Grafana e CasaOS)
       kubernetes.core.k8s:
         state: present
         src: "{{ remote_k8s_root }}/ingress/ingress.yaml"

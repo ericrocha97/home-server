@@ -46,6 +46,9 @@ ansible-playbook -i inventory.ini sdkman_playbook.yml --ask-become-pass
 # Install CasaOS
 ansible-playbook -i inventory.ini casaos_playbook.yml --ask-become-pass
 
+# Note: CasaOS is configured to run on host port 8081
+# to avoid conflict with Traefik on port 80.
+
 # Syntax check all playbooks
 ansible-playbook --syntax-check playbook.yml
 ansible-playbook --syntax-check k3s_playbook.yml

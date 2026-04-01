@@ -91,6 +91,9 @@ Este repositório contém playbooks Ansible para configurar um servidor domésti
     ansible-playbook -i inventory.ini casaos_playbook.yml --ask-become-pass
     ```
 
+    O playbook configura o CasaOS para escutar na porta `8081` no host, evitando conflito com o Traefik na porta `80`.
+    Depois, o Ingress do k3s expõe via `http://casaos.local`.
+
     Acessar: `http://casaos.local` (configurar `/etc/hosts`)
 
 ## Acesso aos Serviços

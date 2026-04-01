@@ -3,10 +3,34 @@
   hosts: server
   become: yes
   vars:
-    casaos_install_url: "https://get.icewhale.io/casaos.sh"
+    casaos_install_url: "https://get.casaos.io"
+    casaos_gateway_config_path: "/etc/casaos/gateway.ini"
+    casaos_gateway_port: "8081"
 
   tasks:
     - name: Download and run CasaOS installer
       shell: curl -fsSL "{{ casaos_install_url }}" | bash
       args:
-        creates: /opt/casaos
+        creates: /var/lib/casaos
+        executable: /bin/bash
+
+    - name: Configure CasaOS gateway port
+      ini_file:
+        path: "{{ casaos_gateway_config_path }}"
+        section: gateway
+        option: port
+        value: "{{ casaos_gateway_port }}"
+        no_extra_spaces: true
+      notify: Restart CasaOS gateway
+
+    - name: Ensure CasaOS gateway service is enabled and running
+      service:
+        name: casaos-gateway
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Restart CasaOS gateway
+      service:
+        name: casaos-gateway
+        state: restarted
