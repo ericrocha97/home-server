@@ -6,15 +6,7 @@
     casaos_install_url: "https://get.icewhale.io/casaos.sh"
 
   tasks:
-    - name: Check if CasaOS is already installed
-      shell: command -v casaos-gateway >/dev/null 2>&1 || docker ps | grep -q casaos
-      register: casaos_check
-      changed_when: false
-      failed_when: false
-
     - name: Download and run CasaOS installer
-      shell: |
-        curl -fsSL {{ casaos_install_url }} | bash
-      when: casaos_check.rc != 0
+      shell: curl -fsSL "{{ casaos_install_url }}" | bash
       args:
         creates: /opt/casaos
