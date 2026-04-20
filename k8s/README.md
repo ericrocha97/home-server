@@ -67,6 +67,38 @@ mkcert -CAROOT
 
 Importante: cada cliente que acessa `*.home.arpa` deve confiar na CA raiz do mkcert.
 
+## Portainer para Kubernetes e Docker
+
+O setup mantém o Portainer Server em `tools`, com dois agents:
+
+- Kubernetes Agent (`namespace: portainer`)
+  - service: `portainer-agent.portainer.svc.cluster.local:9001`
+- Docker Agent no host
+  - container: `portainer_agent`
+  - bind: `192.168.100.113:9001`
+
+Para hardening e vínculo entre server e agents, é obrigatório `AGENT_SECRET`.
+
+Arquivo local (não versionado):
+
+- `ansible/secrets/portainer-agent-secret.txt`
+
+Gerar:
+
+```bash
+openssl rand -hex 32 > ansible/secrets/portainer-agent-secret.txt
+chmod 600 ansible/secrets/portainer-agent-secret.txt
+```
+
+O playbook cria o secret `portainer-agent-secret` nos namespaces `tools` e `portainer`.
+
+Após deploy, adicionar os environments no Portainer UI:
+
+1. Kubernetes -> Agent -> `portainer-agent.portainer.svc.cluster.local:9001`
+2. Docker Standalone -> Agent -> `192.168.100.113:9001`
+
+Não incluir protocolo no campo de endereço.
+
 ## Resolução de nomes
 
 Opção rápida com `/etc/hosts`:
@@ -149,6 +181,7 @@ Se necessário, reaplique manifests antigos (somente em cenário de rollback pla
 
 ## Segurança
 
-- Portainer com `docker.sock` expõe poder elevado no host; endureça permissões quando possível.
+- Portainer Server (namespace `tools`) está sem mount direto de `docker.sock`; o acesso Docker ocorre via `portainer_agent` com `AGENT_SECRET`.
+- O endpoint Docker continua privilegiado porque o Docker Agent usa o socket do host; mantenha acesso restrito à rede local confiável.
 - PostgreSQL puro (`5432`/`15432`) não deve ser exposto por Ingress HTTP.
 - Se precisar TLS para PostgreSQL, trate em fluxo separado com solução TCP/TLS apropriada.

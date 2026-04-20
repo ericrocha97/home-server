@@ -74,6 +74,30 @@ Notas:
 - Os arquivos `ansible/secrets/local-home-arpa-tls.crt` e `ansible/secrets/local-home-arpa-tls.key` são locais e não versionados.
 - Cada cliente que acessar os hosts `*.home.arpa` precisa confiar na CA raiz do mkcert, senão o browser exibirá alerta de certificado.
 
+## Portainer para Kubernetes + Docker (persistente)
+
+O deploy atual deixa o Portainer Server no namespace `tools` e adiciona:
+
+- Portainer Agent Kubernetes no namespace `portainer`
+- Portainer Agent Docker no host (container `portainer_agent` em `192.168.100.113:9001`)
+- `AGENT_SECRET` compartilhado entre server e agents
+
+Antes de executar `k8s_apps_playbook.yml`, crie um segredo forte local:
+
+```bash
+openssl rand -hex 32 > ansible/secrets/portainer-agent-secret.txt
+chmod 600 ansible/secrets/portainer-agent-secret.txt
+```
+
+Depois de aplicar o playbook, no Portainer UI:
+
+1. Add environment -> Kubernetes -> Agent
+   - Address: `portainer-agent.portainer.svc.cluster.local:9001`
+2. Add environment -> Docker Standalone -> Agent
+   - Address: `192.168.100.113:9001`
+
+Sem protocolo (`http://`/`https://`) no campo de endereço.
+
 ## Como executar os playbooks
 
 Execute sempre a partir de `ansible/`.
@@ -146,7 +170,11 @@ Opção recomendada: configurar DNS local (roteador, AdGuard Home, Pi-hole) com 
 
 ## Segurança e notas importantes
 
-- Portainer monta `/var/run/docker.sock` e mantém permissões amplas (ClusterRole), o que implica risco elevado no host.
-- Considere migrar para Portainer Agent ou endurecer permissões após estabilização.
+- Portainer agora opera com separação de responsabilidades:
+  - Portainer Server no namespace `tools`, sem mount direto de `docker.sock`
+  - Portainer Agent Kubernetes no namespace `portainer`
+  - Portainer Agent Docker no host em `192.168.100.113:9001`
+- `AGENT_SECRET` é obrigatório para vínculo entre server e agents.
+- Como o Docker Agent usa o socket do Docker do host, o endpoint Docker ainda é privilegiado e deve ficar restrito à rede local confiável.
 - Este fluxo trata apenas de serviços **HTTP/HTTPS** atrás de Ingress.
 - PostgreSQL puro (`15432`/`5432`) **não** deve ser exposto por Ingress HTTP; se precisar TLS para banco, tratar separadamente com solução TCP/TLS apropriada.

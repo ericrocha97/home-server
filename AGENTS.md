@@ -63,6 +63,10 @@ mkcert \
   portainer.home.arpa \
   grafana.home.arpa
 
+# Generate Portainer AGENT_SECRET (local-only)
+openssl rand -hex 32 > ansible/secrets/portainer-agent-secret.txt
+chmod 600 ansible/secrets/portainer-agent-secret.txt
+
 # Syntax check all playbooks
 ansible-playbook --syntax-check playbook.yml
 ansible-playbook --syntax-check k3s_playbook.yml
@@ -194,6 +198,9 @@ helm lint ./k8s/monitoring/kube-prometheus-stack-values.yaml
    - `local-home-arpa-tls.crt`
    - `local-home-arpa-tls.key`
    - never commit them
+6. **Portainer agent secret**: keep local-only in `ansible/secrets/`:
+   - `portainer-agent-secret.txt`
+   - never commit it
 
 ### Documentation
 
@@ -227,8 +234,9 @@ helm lint ./k8s/monitoring/kube-prometheus-stack-values.yaml
 
 ## Security Notes
 
-- Portainer has broad permissions (ClusterRole) - review before production use
-- Consider migrating to Portainer Agent for reduced privileges
+- Portainer Server no longer mounts `/var/run/docker.sock` directly
+- Kubernetes management is done through Portainer Agent in namespace `portainer` (ClusterRoleBinding to `cluster-admin`) - keep access control strict
+- Docker management is done through host `portainer_agent` on `192.168.100.113:9001` (uses Docker socket) - restrict access to trusted local network and keep `AGENT_SECRET` configured
 - Local HTTPS currently uses mkcert + trusted local CA for `*.home.arpa`
 - For production-grade cert automation, consider cert-manager
 - Remove NodePort services once Ingress is stable

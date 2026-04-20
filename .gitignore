@@ -7,5 +7,6 @@ k8s/secrets/portainer-admin-password-secret.yaml
 docs/
 ansible/secrets/local-home-arpa-tls.crt
 ansible/secrets/local-home-arpa-tls.key
+ansible/secrets/portainer-agent-secret.txt
 
 kubectl
