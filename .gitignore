@@ -8,5 +8,6 @@ docs/
 ansible/secrets/local-home-arpa-tls.crt
 ansible/secrets/local-home-arpa-tls.key
 ansible/secrets/portainer-agent-secret.txt
+ansible/inventory.ini
 
 kubectl

@@ -13,7 +13,8 @@ This repository contains Ansible playbooks and Kubernetes manifests for configur
 │   ├── nvm_node_pnpm_playbook.yml
 │   ├── zsh_starship_playbook.yml
 │   ├── sdkman_playbook.yml
-│   ├── inventory.ini          # Target hosts
+│   ├── inventory.example.ini  # Public-safe inventory template
+│   ├── inventory.ini          # Local inventory (gitignored)
 │   └── secrets.yml            # Ansible Vault secrets (future)
 ├── k8s/                       # Kubernetes manifests
 │   ├── external-services/      # Services + EndpointSlices for host-native/docker apps
@@ -236,8 +237,9 @@ helm lint ./k8s/monitoring/kube-prometheus-stack-values.yaml
 
 - Portainer Server no longer mounts `/var/run/docker.sock` directly
 - Kubernetes management is done through Portainer Agent in namespace `portainer` (ClusterRoleBinding to `cluster-admin`) - keep access control strict
-- Docker management is done through host `portainer_agent` on `192.168.100.113:9001` (uses Docker socket) - restrict access to trusted local network and keep `AGENT_SECRET` configured
+- Docker management is done through host `portainer_agent` on `<SERVER_LAN_IP>:9001` (uses Docker socket) - restrict access to trusted local network and keep `AGENT_SECRET` configured
 - Local HTTPS currently uses mkcert + trusted local CA for `*.home.arpa`
 - For production-grade cert automation, consider cert-manager
 - Remove NodePort services once Ingress is stable
 - Do not expose raw PostgreSQL (`5432`/`15432`) via HTTP Ingress; only web UIs (pgAdmin/Adminer) belong behind Ingress
+- Do not commit real LAN IPs in public docs/manifests; use placeholders and runtime variables (`SERVER_LAN_IP` / `ansible_host`)

@@ -6,10 +6,11 @@
     helm_version: "v3.18.5"
     helm_bin: /usr/local/bin/helm
     k8s_manifests_root: "{{ playbook_dir | dirname }}/k8s"
+    server_lan_ip: "{{ lookup('env', 'SERVER_LAN_IP') | default('', true) }}"
     local_tls_cert_path: "{{ playbook_dir }}/secrets/local-home-arpa-tls.crt"
     local_tls_key_path: "{{ playbook_dir }}/secrets/local-home-arpa-tls.key"
     local_portainer_agent_secret_path: "{{ playbook_dir }}/secrets/portainer-agent-secret.txt"
-    docker_host_agent_bind_ip: "192.168.100.113"
+    docker_host_agent_bind_ip: "{{ lookup('env', 'DOCKER_HOST_AGENT_BIND_IP') | default(server_lan_ip, true) }}"
     docker_host_agent_port: "9001"
     docker_host_agent_container_name: "portainer_agent"
     docker_host_agent_image: "portainer/agent:2.39.1"
@@ -19,6 +20,29 @@
     ansible_python_interpreter: /usr/bin/python3
 
   tasks:
+    - name: Definir IP LAN efetivo do servidor
+      set_fact:
+        effective_server_lan_ip: >-
+          {{
+            server_lan_ip
+            if (server_lan_ip | length > 0)
+            else ansible_host
+          }}
+
+    - name: Falhar se IP LAN efetivo não estiver definido
+      fail:
+        msg: "Defina ansible_host no inventory ou exporte SERVER_LAN_IP para gerar EndpointSlices e bind do Portainer Agent."
+      when: effective_server_lan_ip | default('') | length == 0
+
+    - name: Sincronizar bind IP do Portainer Agent Docker
+      set_fact:
+        docker_host_agent_bind_ip: >-
+          {{
+            docker_host_agent_bind_ip
+            if (docker_host_agent_bind_ip | length > 0)
+            else effective_server_lan_ip
+          }}
+
     - name: Garantir dependências base (curl, tar)
       apt:
         name: [curl, tar]
@@ -129,6 +153,27 @@
         group: "{{ ansible_user }}"
         mode: '0644'
         directory_mode: '0755'
+      become: false
+
+    - name: Criar diretório remoto para templates external-services
+      file:
+        path: "{{ remote_k8s_root }}/external-services"
+        state: directory
+        mode: '0755'
+      become: false
+
+    - name: Renderizar manifests external-services com IP LAN efetivo
+      template:
+        src: "templates/external-services/{{ item }}.yaml.j2"
+        dest: "{{ remote_k8s_root }}/external-services/{{ item }}.yaml"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0644'
+      loop:
+        - casaos
+        - jenkins
+        - metabase
+        - n8n
       become: false
 
     - name: Criar diretório .kube para usuário

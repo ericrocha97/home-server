@@ -25,7 +25,7 @@ Este repositório contém playbooks Ansible e manifests Kubernetes para configur
 - CasaOS continua rodando nativo no host em `8081`.
 - Serviços externos ao cluster (CasaOS/Jenkins/Metabase/n8n) são roteados via:
   - `Service` Kubernetes sem selector
-  - `EndpointSlice` apontando para `192.168.100.113` e porta publicada no host
+  - `EndpointSlice` apontando para `<SERVER_LAN_IP>` e porta publicada no host
 - Domínio padrão local: `home.arpa` (não usar `.local` para estes acessos).
 
 Hosts usados:
@@ -50,6 +50,30 @@ Hosts usados:
    ```
 
 4. **mkcert** instalado na máquina de administração (para HTTPS local).
+5. Crie seu inventário local a partir do exemplo:
+
+   ```bash
+   cp ansible/inventory.example.ini ansible/inventory.ini
+   ```
+
+## Variáveis locais para evitar IP hardcoded
+
+Como este repositório é público, o IP LAN real não deve ficar commitado.
+
+Use uma destas opções:
+
+1. editar `ansible/inventory.ini` local com seus valores reais (não commitar alterações locais), ou
+2. exportar variáveis de ambiente antes dos playbooks:
+
+```bash
+export SERVER_LAN_IP="<SERVER_LAN_IP>"
+export DOCKER_HOST_AGENT_BIND_IP="$SERVER_LAN_IP"
+```
+
+As variáveis são usadas por:
+
+- `ansible/k3s_playbook.yml` (`node-ip` e `node-external-ip`)
+- `ansible/k8s_apps_playbook.yml` (EndpointSlices e bind do Docker Agent)
 
 ## HTTPS local com mkcert (home.arpa)
 
@@ -79,7 +103,7 @@ Notas:
 O deploy atual deixa o Portainer Server no namespace `tools` e adiciona:
 
 - Portainer Agent Kubernetes no namespace `portainer`
-- Portainer Agent Docker no host (container `portainer_agent` em `192.168.100.113:9001`)
+- Portainer Agent Docker no host (container `portainer_agent` em `<SERVER_LAN_IP>:9001`)
 - `AGENT_SECRET` compartilhado entre server e agents
 
 Antes de executar `k8s_apps_playbook.yml`, crie um segredo forte local:
@@ -94,7 +118,7 @@ Depois de aplicar o playbook, no Portainer UI:
 1. Add environment -> Kubernetes -> Agent
    - Address: `portainer-agent.portainer.svc.cluster.local:9001`
 2. Add environment -> Docker Standalone -> Agent
-   - Address: `192.168.100.113:9001`
+   - Address: `<SERVER_LAN_IP>:9001`
 
 Sem protocolo (`http://`/`https://`) no campo de endereço.
 
@@ -161,7 +185,7 @@ Fallback opcional atual:
 Opção rápida (`/etc/hosts` no cliente):
 
 ```text
-192.168.100.113 casaos.home.arpa jenkins.home.arpa metabase.home.arpa n8n.home.arpa portainer.home.arpa grafana.home.arpa
+<SERVER_LAN_IP> casaos.home.arpa jenkins.home.arpa metabase.home.arpa n8n.home.arpa portainer.home.arpa grafana.home.arpa
 ```
 
 Opção recomendada: configurar DNS local (roteador, AdGuard Home, Pi-hole) com os mesmos hosts.
@@ -173,7 +197,7 @@ Opção recomendada: configurar DNS local (roteador, AdGuard Home, Pi-hole) com 
 - Portainer agora opera com separação de responsabilidades:
   - Portainer Server no namespace `tools`, sem mount direto de `docker.sock`
   - Portainer Agent Kubernetes no namespace `portainer`
-  - Portainer Agent Docker no host em `192.168.100.113:9001`
+  - Portainer Agent Docker no host em `<SERVER_LAN_IP>:9001`
 - `AGENT_SECRET` é obrigatório para vínculo entre server e agents.
 - Como o Docker Agent usa o socket do Docker do host, o endpoint Docker ainda é privilegiado e deve ficar restrito à rede local confiável.
 - Este fluxo trata apenas de serviços **HTTP/HTTPS** atrás de Ingress.

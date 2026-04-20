@@ -14,10 +14,8 @@ Esta pasta concentra os manifests da stack no k3s e o roteamento HTTPS local par
 ## Estrutura relevante
 
 - `k8s/external-services/`
-  - `casaos.yaml`
-  - `jenkins.yaml`
-  - `metabase.yaml`
-  - `n8n.yaml`
+  - `README.md` (referência do fluxo)
+  - manifests concretos são renderizados em runtime pelo playbook a partir de `ansible/templates/external-services/*.yaml.j2`
 - `k8s/ingress/`
   - `tools-ingress.yaml`
   - `monitoring-ingress.yaml`
@@ -38,7 +36,7 @@ Esta pasta concentra os manifests da stack no k3s e o roteamento HTTPS local par
 
 IP do servidor usado nos EndpointSlices:
 
-- `192.168.100.113`
+- definido em runtime por variável (`SERVER_LAN_IP`) ou por `ansible_host` do inventory
 
 ## TLS local com mkcert
 
@@ -75,7 +73,7 @@ O setup mantém o Portainer Server em `tools`, com dois agents:
   - service: `portainer-agent.portainer.svc.cluster.local:9001`
 - Docker Agent no host
   - container: `portainer_agent`
-  - bind: `192.168.100.113:9001`
+  - bind: `<SERVER_LAN_IP>:9001`
 
 Para hardening e vínculo entre server e agents, é obrigatório `AGENT_SECRET`.
 
@@ -95,7 +93,7 @@ O playbook cria o secret `portainer-agent-secret` nos namespaces `tools` e `port
 Após deploy, adicionar os environments no Portainer UI:
 
 1. Kubernetes -> Agent -> `portainer-agent.portainer.svc.cluster.local:9001`
-2. Docker Standalone -> Agent -> `192.168.100.113:9001`
+2. Docker Standalone -> Agent -> `<SERVER_LAN_IP>:9001`
 
 Não incluir protocolo no campo de endereço.
 
@@ -104,7 +102,7 @@ Não incluir protocolo no campo de endereço.
 Opção rápida com `/etc/hosts`:
 
 ```text
-192.168.100.113 casaos.home.arpa jenkins.home.arpa metabase.home.arpa n8n.home.arpa portainer.home.arpa grafana.home.arpa
+<SERVER_LAN_IP> casaos.home.arpa jenkins.home.arpa metabase.home.arpa n8n.home.arpa portainer.home.arpa grafana.home.arpa
 ```
 
 Opção recomendada: DNS local (roteador, AdGuard Home, Pi-hole).
@@ -121,8 +119,9 @@ Arquivos de exemplo:
 
 ## Validação de manifests (sem aplicar)
 
+Observação: os manifests concretos de `external-services` são renderizados pelo playbook a partir de templates Jinja2 usando `SERVER_LAN_IP` ou `ansible_host`.
+
 ```bash
-kubectl apply --dry-run=client -f k8s/external-services/
 kubectl apply --dry-run=client -f k8s/ingress/tools-ingress.yaml
 kubectl apply --dry-run=client -f k8s/ingress/monitoring-ingress.yaml
 kubectl create --dry-run=client -f k8s/portainer/portainer-deployment.yaml
