@@ -5,3 +5,9 @@ k8s/secrets/portainer-admin-password-secret.yaml
 
 ## docs - agents plans, diagrams, etc. (não versionar)
 docs/
+ansible/secrets/local-home-arpa-tls.crt
+ansible/secrets/local-home-arpa-tls.key
+ansible/secrets/portainer-agent-secret.txt
+ansible/inventory.ini
+
+kubectl

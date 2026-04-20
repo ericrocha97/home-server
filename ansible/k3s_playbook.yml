@@ -2,6 +2,8 @@
 - name: Configure K3s Server
   hosts: server
   become: yes
+  vars:
+    k3s_node_ip: "{{ lookup('env', 'SERVER_LAN_IP') | default(ansible_host, true) }}"
   roles:
     - role: xanmanning.k3s
       vars:
@@ -14,6 +16,6 @@
         k3s_use_flags:
           - server
         k3s_server_options:
-          node-ip: "192.168.100.113"
+          node-ip: "{{ k3s_node_ip }}"
           flannel-iface: "enp9s0"
-          node-external-ip: "192.168.100.113"
+          node-external-ip: "{{ k3s_node_ip }}"

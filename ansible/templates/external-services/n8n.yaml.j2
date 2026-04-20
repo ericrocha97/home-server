@@ -1,0 +1,27 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: n8n-external
+  namespace: tools
+spec:
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: n8n-external-1
+  namespace: tools
+  labels:
+    kubernetes.io/service-name: n8n-external
+addressType: IPv4
+ports:
+  - name: http
+    port: 15678
+    protocol: TCP
+endpoints:
+  - addresses:
+      - {{ effective_server_lan_ip }}

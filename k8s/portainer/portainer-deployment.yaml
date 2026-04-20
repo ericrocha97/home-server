@@ -27,18 +27,17 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 9000
+          env:
+            - name: AGENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: portainer-agent-secret
+                  key: AGENT_SECRET
           args:
             - "--admin-password-file=/run/secrets/portainer/password"
-            - "--host=unix:///var/run/docker.sock"
           volumeMounts:
             - name: data
               mountPath: /data
-            - name: docker-sock
-              mountPath: /var/run/docker.sock
-            - name: docker-volumes
-              mountPath: /var/lib/docker/volumes
-              # RW para permitir operações completas sobre volumes
-              readOnly: false
             - name: portainer-admin-pass
               mountPath: /run/secrets/portainer
               readOnly: true
@@ -53,14 +52,6 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: portainer-data
-        - name: docker-sock
-          hostPath:
-            path: /var/run/docker.sock
-            type: Socket
-        - name: docker-volumes
-          hostPath:
-            path: /var/lib/docker/volumes
-            type: Directory
         - name: portainer-admin-pass
           secret:
             secretName: portainer-admin-password
@@ -112,3 +103,70 @@ spec:
     - port: 9000
       targetPort: 9000
       nodePort: 30900
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: portainer-agent
+  namespace: portainer
+spec:
+  type: ClusterIP
+  selector:
+    app: portainer-agent
+  ports:
+    - name: http
+      protocol: TCP
+      port: 9001
+      targetPort: 9001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: portainer-agent-headless
+  namespace: portainer
+spec:
+  clusterIP: None
+  selector:
+    app: portainer-agent
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portainer-agent
+  namespace: portainer
+spec:
+  selector:
+    matchLabels:
+      app: portainer-agent
+  template:
+    metadata:
+      labels:
+        app: portainer-agent
+    spec:
+      serviceAccountName: portainer-sa-clusteradmin
+      containers:
+        - name: portainer-agent
+          image: portainer/agent:lts
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AGENT_CLUSTER_ADDR
+              value: "portainer-agent-headless"
+            - name: KUBERNETES_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: AGENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: portainer-agent-secret
+                  key: AGENT_SECRET
+          ports:
+            - containerPort: 9001
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi

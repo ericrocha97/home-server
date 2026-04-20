@@ -1,6 +1,6 @@
 # AGENTS.md - Home Server Infrastructure Repository
 
-This repository contains Ansible playbooks and Kubernetes manifests for configuring and deploying a home server running k3s with observability tools (Prometheus/Grafana) and Portainer.
+This repository contains Ansible playbooks and Kubernetes manifests for configuring and deploying a home server running k3s with observability tools (Prometheus/Grafana), Portainer, and external host services routed through Traefik with local HTTPS.
 
 ## Repository Structure
 
@@ -8,13 +8,16 @@ This repository contains Ansible playbooks and Kubernetes manifests for configur
 ├── ansible/                    # Ansible playbooks
 │   ├── playbook.yml           # Base server setup
 │   ├── k3s_playbook.yml       # K3s installation
-│   ├── k8s_apps_playbook.yml  # Kubernetes apps deployment
+│   ├── k8s_apps_playbook.yml  # Kubernetes apps deployment + local TLS + external services
+│   ├── casaos_playbook.yml    # CasaOS native install (host port 8081)
 │   ├── nvm_node_pnpm_playbook.yml
 │   ├── zsh_starship_playbook.yml
 │   ├── sdkman_playbook.yml
-│   ├── inventory.ini          # Target hosts
+│   ├── inventory.example.ini  # Public-safe inventory template
+│   ├── inventory.ini          # Local inventory (gitignored)
 │   └── secrets.yml            # Ansible Vault secrets (future)
 ├── k8s/                       # Kubernetes manifests
+│   ├── external-services/      # Services + EndpointSlices for host-native/docker apps
 │   ├── ingress/
 │   ├── monitoring/
 │   ├── portainer/
@@ -35,7 +38,7 @@ ansible-playbook -i inventory.ini playbook.yml --ask-become-pass
 # Install K3s
 ansible-playbook -i inventory.ini k3s_playbook.yml --ask-become-pass
 
-# Deploy Kubernetes apps (Portainer, Prometheus Stack, Ingress)
+# Deploy Kubernetes apps (Portainer, Prometheus Stack, Ingress TLS, external services)
 ansible-playbook -i inventory.ini k8s_apps_playbook.yml --ask-become-pass
 
 # Development environment
@@ -47,7 +50,23 @@ ansible-playbook -i inventory.ini sdkman_playbook.yml --ask-become-pass
 ansible-playbook -i inventory.ini casaos_playbook.yml --ask-become-pass
 
 # Note: CasaOS is configured to run on host port 8081
-# to avoid conflict with Traefik on port 80.
+# to avoid conflict with Traefik on ports 80/443.
+
+# Generate local TLS certificate for home.arpa hosts (run on admin machine)
+mkcert -install
+mkcert \
+  -cert-file ansible/secrets/local-home-arpa-tls.crt \
+  -key-file ansible/secrets/local-home-arpa-tls.key \
+  casaos.home.arpa \
+  jenkins.home.arpa \
+  metabase.home.arpa \
+  n8n.home.arpa \
+  portainer.home.arpa \
+  grafana.home.arpa
+
+# Generate Portainer AGENT_SECRET (local-only)
+openssl rand -hex 32 > ansible/secrets/portainer-agent-secret.txt
+chmod 600 ansible/secrets/portainer-agent-secret.txt
 
 # Syntax check all playbooks
 ansible-playbook --syntax-check playbook.yml
@@ -85,6 +104,13 @@ python3 -c "import yaml; [yaml.safe_load_all(open(f)) for f in ['playbook.yml']]
 ```bash
 # Apply manifests (requires kubectl configured)
 kubectl apply -f k8s/ --dry-run=client  # Validate without applying
+
+# Validate external host-services manifests
+kubectl apply --dry-run=client -f k8s/external-services/
+
+# Validate ingress split
+kubectl apply --dry-run=client -f k8s/ingress/tools-ingress.yaml
+kubectl apply --dry-run=client -f k8s/ingress/monitoring-ingress.yaml
 
 # Lint Kubernetes YAML
 kubectl create --dry-run=client -f k8s/portainer/portainer-deployment.yaml
@@ -155,8 +181,9 @@ helm lint ./k8s/monitoring/kube-prometheus-stack-values.yaml
    - Labels should follow: `app: portainer` or `app.kubernetes.io/name: grafana`
 
 3. **Ingress Annotations**:
-   - Always specify ingress class: `kubernetes.io/ingress.class: traefik`
-   - Use `pathType: Prefix` for most paths
+    - Always specify ingress class: `kubernetes.io/ingress.class: traefik`
+    - Use `pathType: Prefix` for most paths
+    - Prefer `spec.ingressClassName: traefik` in new manifests
 
 4. **Storage**:
    - Use `storageClassName: local-path` for local-path provisioner
@@ -168,6 +195,13 @@ helm lint ./k8s/monitoring/kube-prometheus-stack-values.yaml
 2. **Secret files pattern**: `*-admin-secret.yaml`
 3. **Check existence in playbooks**: Validate secrets exist before applying
 4. **Permissions**: Secret files should have `0600` permissions
+5. **Local TLS files**: keep mkcert outputs local-only in `ansible/secrets/`:
+   - `local-home-arpa-tls.crt`
+   - `local-home-arpa-tls.key`
+   - never commit them
+6. **Portainer agent secret**: keep local-only in `ansible/secrets/`:
+   - `portainer-agent-secret.txt`
+   - never commit it
 
 ### Documentation
 
@@ -201,7 +235,11 @@ helm lint ./k8s/monitoring/kube-prometheus-stack-values.yaml
 
 ## Security Notes
 
-- Portainer has broad permissions (ClusterRole) - review before production use
-- Consider migrating to Portainer Agent for reduced privileges
-- Add TLS with cert-manager when ready for production
+- Portainer Server no longer mounts `/var/run/docker.sock` directly
+- Kubernetes management is done through Portainer Agent in namespace `portainer` (ClusterRoleBinding to `cluster-admin`) - keep access control strict
+- Docker management is done through host `portainer_agent` on `<SERVER_LAN_IP>:9001` (uses Docker socket) - restrict access to trusted local network and keep `AGENT_SECRET` configured
+- Local HTTPS currently uses mkcert + trusted local CA for `*.home.arpa`
+- For production-grade cert automation, consider cert-manager
 - Remove NodePort services once Ingress is stable
+- Do not expose raw PostgreSQL (`5432`/`15432`) via HTTP Ingress; only web UIs (pgAdmin/Adminer) belong behind Ingress
+- Do not commit real LAN IPs in public docs/manifests; use placeholders and runtime variables (`SERVER_LAN_IP` / `ansible_host`)
