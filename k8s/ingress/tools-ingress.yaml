@@ -1,0 +1,70 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: tools-ingress
+  namespace: tools
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  tls:
+    - secretName: local-home-arpa-tls
+      hosts:
+        - casaos.home.arpa
+        - jenkins.home.arpa
+        - metabase.home.arpa
+        - n8n.home.arpa
+        - portainer.home.arpa
+  rules:
+    - host: casaos.home.arpa
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: casaos-external
+                port:
+                  number: 80
+    - host: jenkins.home.arpa
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: jenkins-external
+                port:
+                  number: 80
+    - host: metabase.home.arpa
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: metabase-external
+                port:
+                  number: 80
+    - host: n8n.home.arpa
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: n8n-external
+                port:
+                  number: 80
+    - host: portainer.home.arpa
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: portainer
+                port:
+                  number: 9000
