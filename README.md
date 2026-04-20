@@ -1,117 +1,152 @@
 # Configuração Ansible para Home Server
 
-Este repositório contém playbooks Ansible para configurar um servidor doméstico com foco em Kubernetes (k3s) + observabilidade (Prometheus/Grafana) e ferramentas auxiliares (Portainer), além de ambiente de desenvolvimento (Node.js, Zsh, SDKs).
+Este repositório contém playbooks Ansible e manifests Kubernetes para configurar um home server com k3s, observabilidade (Prometheus/Grafana), Portainer e integração de serviços externos do host via Traefik.
 
 ## Estrutura de Arquivos
 
 - `ansible/`: Diretório principal com playbooks.
-  - `playbook.yml`: Setup base (pacotes essenciais, Docker opcional se ainda necessário para Portainer gerir host, utilitários).
+  - `playbook.yml`: Setup base (pacotes essenciais, Docker opcional, utilitários).
   - `k3s_playbook.yml`: Instala e configura k3s (via role `xanmanning.k3s`).
-  - `k8s_apps_playbook.yml`: Implanta stack Kubernetes (Portainer + kube-prometheus-stack + cAdvisor + Ingress + Secrets + RBAC).
+  - `k8s_apps_playbook.yml`: Implanta stack Kubernetes (Portainer + kube-prometheus-stack + cAdvisor + external-services + ingress TLS).
+  - `casaos_playbook.yml`: Instala CasaOS nativo no Ubuntu e fixa porta `8081`.
   - `nvm_node_pnpm_playbook.yml`: Instala NVM, Node LTS e pnpm.
   - `zsh_starship_playbook.yml`: Instala Zsh, Oh My Zsh e Starship.
   - `sdkman_playbook.yml`: Instala SDKMAN! e dependências.
   - `inventory.ini`: Inventário de hosts.
-  - `secrets.yml`: (Reservado) para uso futuro com Ansible Vault.
-- `k8s/`: Manifests da stack (Portainer, monitoring, ingress, secrets, RBAC) + README detalhado.
+  - `secrets.yml`: Reservado para uso futuro com Ansible Vault.
+- `k8s/`: Manifests da stack.
+  - `external-services/`: Services sem selector + EndpointSlices para apps fora do cluster.
+  - `ingress/`: Ingress separados (`tools` e `monitoring`) com TLS local.
+  - `monitoring/`, `portainer/`, `secrets/`: componentes da stack.
+
+## Arquitetura de acesso local
+
+- Ponto único de entrada em `80/443`: Traefik do k3s.
+- CasaOS continua rodando nativo no host em `8081`.
+- Serviços externos ao cluster (CasaOS/Jenkins/Metabase/n8n) são roteados via:
+  - `Service` Kubernetes sem selector
+  - `EndpointSlice` apontando para `192.168.100.113` e porta publicada no host
+- Domínio padrão local: `home.arpa` (não usar `.local` para estes acessos).
+
+Hosts usados:
+
+- `casaos.home.arpa`
+- `jenkins.home.arpa`
+- `metabase.home.arpa`
+- `n8n.home.arpa`
+- `portainer.home.arpa`
+- `grafana.home.arpa`
 
 ## Pré-requisitos
 
-1. **Ansible Instalado**: Você precisa ter o Ansible instalado na sua máquina local.
-2. **Acesso SSH**: Acesso SSH ao servidor de destino configurado com chaves públicas/privadas.
-3. **Coleções e Roles Ansible**: Instale as coleções e roles necessárias (a `kubernetes.core` é obrigatória para o playbook de apps; `community.docker` só se ainda for usar Docker diretamente):
+1. **Ansible instalado** na máquina local.
+2. **Acesso SSH** ao servidor alvo com chave configurada.
+3. **Coleções e roles Ansible**:
 
-    ```bash
-    ansible-galaxy collection install kubernetes.core
-    ansible-galaxy role install xanmanning.k3s
-    ansible-galaxy collection install community.docker
-    ```
+   ```bash
+   ansible-galaxy collection install kubernetes.core
+   ansible-galaxy role install xanmanning.k3s
+   ansible-galaxy collection install community.docker
+   ```
 
-## Como Executar os Playbooks
+4. **mkcert** instalado na máquina de administração (para HTTPS local).
 
-**Nota**: Execute os playbooks a partir do diretório `ansible/`.
+## HTTPS local com mkcert (home.arpa)
 
-1. **Configuração Inicial do Servidor:**
-    Este playbook instala pacotes básicos e o Docker.
+Gerar certificado e chave usados pelo playbook:
 
-    ```bash
-    ansible-playbook -i inventory.ini playbook.yml --ask-become-pass
-    ```
-
-2. **Instalar K3s:**
-    Este playbook instala o K3s no servidor.
-
-    ```bash
-    ansible-playbook -i inventory.ini k3s_playbook.yml --ask-become-pass
-    ```
-
-3. **Deploy da Stack Kubernetes (após k3s + secrets locais):**
-
-    Criar secrets reais a partir dos exemplos em `k8s/secrets/*.example.yaml`.
-
-    ```bash
-    ansible-playbook -i inventory.ini k8s_apps_playbook.yml --ask-become-pass
-    ```
-
-    Acessos:
-    - Portainer: `http://portainer.local` (Ingress) ou `http://<IP_DO_SERVIDOR>:30900` (NodePort opcional)
-    - Grafana: `http://grafana.local`
-
-    Adicionar ao `/etc/hosts` da máquina de acesso:
-
-    ```text
-    <IP_DO_SERVIDOR> portainer.local grafana.local
-    ```
-
-4. **Instalar Ambiente Node.js:**
-    Este playbook instala NVM, Node.js (LTS) e pnpm.
-
-    ```bash
-    ansible-playbook -i inventory.ini nvm_node_pnpm_playbook.yml --ask-become-pass
-    ```
-
-5. **Instalar Zsh e Starship:**
-    Este playbook instala e configura o Zsh e o prompt Starship.
-
-    ```bash
-    ansible-playbook -i inventory.ini zsh_starship_playbook.yml --ask-become-pass
-    ```
-
-6. **Instalar SDKMAN!:**
-    Este playbook instala o SDKMAN! e suas dependências no servidor.
-
-    ```bash
-    ansible-playbook -i inventory.ini sdkman_playbook.yml --ask-become-pass
-    ```
-
-7. **Instalar CasaOS:**
-    Este playbook instala o CasaOS (sistema de cloud pessoal).
-
-    ```bash
-    ansible-playbook -i inventory.ini casaos_playbook.yml --ask-become-pass
-    ```
-
-    O playbook configura o CasaOS para escutar na porta `8081` no host, evitando conflito com o Traefik na porta `80`.
-    Depois, o Ingress do k3s expõe via `http://casaos.local`.
-
-    Acessar: `http://casaos.local` (configurar `/etc/hosts`)
-
-## Acesso aos Serviços
-
-Após rodar `k8s_apps_playbook.yml` e configurar `/etc/hosts` local apontando para o IP do nó:
-
-- Portainer: `http://portainer.local` (NodePort 30900 opcional)
-- Grafana: `http://grafana.local`
-- Prometheus / Alertmanager: usar `kubectl port-forward` ou criar Ingress futuro
-
-Exemplo `/etc/hosts`:
-
-```text
-<IP_DO_SERVIDOR> portainer.local grafana.local
+```bash
+mkcert -install
+mkcert \
+  -cert-file ansible/secrets/local-home-arpa-tls.crt \
+  -key-file ansible/secrets/local-home-arpa-tls.key \
+  casaos.home.arpa \
+  jenkins.home.arpa \
+  metabase.home.arpa \
+  n8n.home.arpa \
+  portainer.home.arpa \
+  grafana.home.arpa
+mkcert -CAROOT
 ```
 
-## Segurança & Notas
+Notas:
 
-- Portainer monta `/var/run/docker.sock` e possui permissões amplas (ClusterRole) – risco: acesso root ao host.
-- Considere migrar para Portainer Agent ou limitar permissões após estabilização.
-- Recomendado adicionar TLS (cert-manager) e remover NodePort quando Ingress estiver estável.
+- Os arquivos `ansible/secrets/local-home-arpa-tls.crt` e `ansible/secrets/local-home-arpa-tls.key` são locais e não versionados.
+- Cada cliente que acessar os hosts `*.home.arpa` precisa confiar na CA raiz do mkcert, senão o browser exibirá alerta de certificado.
+
+## Como executar os playbooks
+
+Execute sempre a partir de `ansible/`.
+
+1. **Configuração inicial do servidor**
+
+   ```bash
+   ansible-playbook -i inventory.ini playbook.yml --ask-become-pass
+   ```
+
+2. **Instalar k3s**
+
+   ```bash
+   ansible-playbook -i inventory.ini k3s_playbook.yml --ask-become-pass
+   ```
+
+3. **Instalar CasaOS (nativo no host)**
+
+   ```bash
+   ansible-playbook -i inventory.ini casaos_playbook.yml --ask-become-pass
+   ```
+
+   O CasaOS permanece no host em `8081`, sem competir com Traefik em `80/443`.
+
+4. **Deploy da stack k8s (Ingress TLS + serviços externos)**
+
+   Antes de rodar:
+
+   - Crie os secrets reais a partir de `k8s/secrets/*.example.yaml`.
+   - Gere os arquivos TLS do mkcert em `ansible/secrets/`.
+
+   ```bash
+   ansible-playbook -i inventory.ini k8s_apps_playbook.yml --ask-become-pass
+   ```
+
+5. **Ambiente de desenvolvimento (opcional)**
+
+   ```bash
+   ansible-playbook -i inventory.ini nvm_node_pnpm_playbook.yml --ask-become-pass
+   ansible-playbook -i inventory.ini zsh_starship_playbook.yml --ask-become-pass
+   ansible-playbook -i inventory.ini sdkman_playbook.yml --ask-become-pass
+   ```
+
+## Acesso aos serviços
+
+Após o deploy com `k8s_apps_playbook.yml`:
+
+- CasaOS: `https://casaos.home.arpa`
+- Jenkins: `https://jenkins.home.arpa`
+- Metabase: `https://metabase.home.arpa`
+- n8n: `https://n8n.home.arpa`
+- Portainer: `https://portainer.home.arpa`
+- Grafana: `https://grafana.home.arpa`
+
+Fallback opcional atual:
+
+- Portainer NodePort: `http://<IP_DO_SERVIDOR>:30900`
+
+## DNS local / resolução de nomes
+
+Opção rápida (`/etc/hosts` no cliente):
+
+```text
+192.168.100.113 casaos.home.arpa jenkins.home.arpa metabase.home.arpa n8n.home.arpa portainer.home.arpa grafana.home.arpa
+```
+
+Opção recomendada: configurar DNS local (roteador, AdGuard Home, Pi-hole) com os mesmos hosts.
+
+`*.local` está descontinuado para estes acessos.
+
+## Segurança e notas importantes
+
+- Portainer monta `/var/run/docker.sock` e mantém permissões amplas (ClusterRole), o que implica risco elevado no host.
+- Considere migrar para Portainer Agent ou endurecer permissões após estabilização.
+- Este fluxo trata apenas de serviços **HTTP/HTTPS** atrás de Ingress.
+- PostgreSQL puro (`15432`/`5432`) **não** deve ser exposto por Ingress HTTP; se precisar TLS para banco, tratar separadamente com solução TCP/TLS apropriada.

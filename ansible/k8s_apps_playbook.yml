@@ -6,6 +6,8 @@
     helm_version: "v3.18.5"
     helm_bin: /usr/local/bin/helm
     k8s_manifests_root: "{{ playbook_dir | dirname }}/k8s"
+    local_tls_cert_path: "{{ playbook_dir }}/secrets/local-home-arpa-tls.crt"
+    local_tls_key_path: "{{ playbook_dir }}/secrets/local-home-arpa-tls.key"
     # Diretório destino no host remoto (sem precisar de sudo)
     remote_k8s_root: "/home/{{ ansible_user }}/k8s-manifests"
     kubeconfig_path: "/etc/rancher/k3s/k3s.yaml"
@@ -55,6 +57,38 @@
       fail:
         msg: "Arquivo portainer-admin-password-secret.yaml não encontrado. Copie o exemplo e defina uma senha."
       when: not portainer_secret_file.stat.exists
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: Verificar se certificado TLS local existe (local)
+      stat:
+        path: "{{ local_tls_cert_path }}"
+      register: tls_cert_file
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: Falhar se certificado TLS local não existir
+      fail:
+        msg: "Arquivo local-home-arpa-tls.crt não encontrado em ansible/secrets/."
+      when: not tls_cert_file.stat.exists
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: Verificar se chave TLS local existe (local)
+      stat:
+        path: "{{ local_tls_key_path }}"
+      register: tls_key_file
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: Falhar se chave TLS local não existir
+      fail:
+        msg: "Arquivo local-home-arpa-tls.key não encontrado em ansible/secrets/."
+      when: not tls_key_file.stat.exists
       delegate_to: localhost
       run_once: true
       become: false
@@ -113,14 +147,6 @@
         name: tools
         state: present
 
-    - name: Garantir namespace casaos existe (antes do Ingress CasaOS)
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig_path }}"
-        api_version: v1
-        kind: Namespace
-        name: casaos
-        state: present
-
     - name: Aplicar Secret Grafana
       kubernetes.core.k8s:
         state: present
@@ -132,6 +158,24 @@
         state: present
         src: "{{ remote_k8s_root }}/secrets/portainer-admin-password-secret.yaml"
         kubeconfig: "{{ kubeconfig_path }}"
+
+    - name: Aplicar secret TLS local home.arpa em tools e monitoring
+      kubernetes.core.k8s:
+        state: present
+        kubeconfig: "{{ kubeconfig_path }}"
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: local-home-arpa-tls
+            namespace: "{{ item }}"
+          type: kubernetes.io/tls
+          data:
+            tls.crt: "{{ lookup('file', local_tls_cert_path) | b64encode }}"
+            tls.key: "{{ lookup('file', local_tls_key_path) | b64encode }}"
+      loop:
+        - tools
+        - monitoring
 
     - name: Instalar Helm se não existir
       shell: |
@@ -177,17 +221,75 @@
         src: "{{ remote_k8s_root }}/monitoring/cadvisor-daemonset.yaml"
         kubeconfig: "{{ kubeconfig_path }}"
 
-    - name: Aplicar Service/Endpoints do CasaOS
+    - name: Aplicar external services (host apps)
       kubernetes.core.k8s:
         state: present
-        src: "{{ remote_k8s_root }}/casaos/casaos-service.yaml"
+        src: "{{ item }}"
+        kubeconfig: "{{ kubeconfig_path }}"
+      loop:
+        - "{{ remote_k8s_root }}/external-services/casaos.yaml"
+        - "{{ remote_k8s_root }}/external-services/jenkins.yaml"
+        - "{{ remote_k8s_root }}/external-services/metabase.yaml"
+        - "{{ remote_k8s_root }}/external-services/n8n.yaml"
+
+    - name: Aplicar ingress tools com TLS
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ remote_k8s_root }}/ingress/tools-ingress.yaml"
         kubeconfig: "{{ kubeconfig_path }}"
 
-    - name: Aplicar Ingress (Portainer, Grafana e CasaOS)
+    - name: Aplicar ingress monitoring com TLS
       kubernetes.core.k8s:
         state: present
-        src: "{{ remote_k8s_root }}/ingress/ingress.yaml"
+        src: "{{ remote_k8s_root }}/ingress/monitoring-ingress.yaml"
         kubeconfig: "{{ kubeconfig_path }}"
+
+    - name: Verificar se namespace casaos ainda existe (legado)
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: v1
+        kind: Namespace
+        name: casaos
+      register: casaos_namespace_info
+
+    - name: Remover ingress legado grafana.local
+      kubernetes.core.k8s:
+        state: absent
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: networking.k8s.io/v1
+        kind: Ingress
+        name: grafana-ingress
+        namespace: monitoring
+
+    - name: Remover ingress legado casaos.local
+      kubernetes.core.k8s:
+        state: absent
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: networking.k8s.io/v1
+        kind: Ingress
+        name: casaos-ingress
+        namespace: casaos
+      when: casaos_namespace_info.resources | length > 0
+
+    - name: Remover Service legado casaos-service no namespace casaos
+      kubernetes.core.k8s:
+        state: absent
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: v1
+        kind: Service
+        name: casaos-service
+        namespace: casaos
+      when: casaos_namespace_info.resources | length > 0
+
+    - name: Remover Endpoints legado casaos-service no namespace casaos
+      kubernetes.core.k8s:
+        state: absent
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: v1
+        kind: Endpoints
+        name: casaos-service
+        namespace: casaos
+      when: casaos_namespace_info.resources | length > 0
 
     - name: Mostrar serviços NodePorts
       shell: kubectl get svc -A | grep -E '30900'
