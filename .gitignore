@@ -11,3 +11,7 @@ ansible/secrets/portainer-agent-secret.txt
 ansible/inventory.ini
 
 kubectl
+
+*.crt
+
+*.pem
