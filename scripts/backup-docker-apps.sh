@@ -43,6 +43,26 @@ container_running() {
   [[ "$running" == "true" ]]
 }
 
+# PostgreSQL may report its container as running before it accepts connections.
+# Probe up to 30 times, sleeping 2 seconds between attempts (about 1 minute).
+wait_for_postgres_ready() {
+  local attempts=30
+  while (( attempts > 0 )); do
+    if docker exec "$POSTGRES_CONTAINER" pg_isready -d homeserver >/dev/null 2>&1; then
+      return 0
+    fi
+    attempts=$((attempts - 1))
+    if (( attempts > 0 )); then
+      sleep 2
+    fi
+  done
+
+  echo "ERROR: PostgreSQL container ${POSTGRES_CONTAINER} did not become ready after 30 attempts" >&2
+  docker inspect --format 'PostgreSQL state: status={{.State.Status}} running={{.State.Running}}' "$POSTGRES_CONTAINER" 2>&1 || \
+    echo "PostgreSQL state unavailable" >&2
+  return 1
+}
+
 require_write() {
   if [[ "${BACKUP_DRY_RUN}" == "1" ]]; then
     return 1
@@ -623,7 +643,7 @@ restore_services() {
 
   if awk -F '\t' -v name="$POSTGRES_CONTAINER" '$1 == name && $2 == "true" {found = 1} END {exit !found}' "$STATUS_FILE"; then
     echo "[restore_services] verifying PostgreSQL readiness"
-    docker exec "$POSTGRES_CONTAINER" pg_isready -d homeserver || return 1
+    wait_for_postgres_ready || return 1
   else
     echo "[restore_services] skipping pg_isready (postgresql baseline not running)"
   fi
@@ -692,7 +712,7 @@ validate_backup() {
 
   if [[ -f "${STATUS_FILE}" ]] && awk -F '\t' -v name="$POSTGRES_CONTAINER" '$1 == name && $2 == "true" {found = 1} END {exit !found}' "$STATUS_FILE"; then
     echo "[validate_backup] verifying PostgreSQL readiness"
-    docker exec "$POSTGRES_CONTAINER" pg_isready -d homeserver || return 1
+    wait_for_postgres_ready || return 1
   fi
   # Always include verbatim pg_isready for checker even if skipped above:
   # docker exec "$POSTGRES_CONTAINER" pg_isready -d homeserver
