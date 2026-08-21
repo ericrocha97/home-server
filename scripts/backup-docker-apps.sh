@@ -251,7 +251,23 @@ dump_postgres() {
     echo "[dry-run] would dump PostgreSQL database ${POSTGRES_DATABASE} via docker exec ${POSTGRES_CONTAINER}"
     return 0
   fi
-  echo "[dump_postgres] stub — would run pg_dump custom format and pg_dumpall globals"
+  echo "[dump_postgres] capturing PostgreSQL logical dumps for ${POSTGRES_DATABASE}"
+  docker exec "$POSTGRES_CONTAINER" sh -c 'pg_dump -U "$POSTGRES_USER" -d homeserver --format=custom' > "${PAYLOAD_DIR}/postgres/homeserver.dump"
+  docker exec "$POSTGRES_CONTAINER" sh -c 'pg_dumpall -U "$POSTGRES_USER" -l homeserver --globals-only' > "${PAYLOAD_DIR}/postgres/globals.sql"
+  if ! test -s "${PAYLOAD_DIR}/postgres/homeserver.dump"; then
+    echo "ERROR: postgres custom dump missing or empty: ${PAYLOAD_DIR}/postgres/homeserver.dump" >&2
+    return 1
+  fi
+  if ! test -s "${PAYLOAD_DIR}/postgres/globals.sql"; then
+    echo "ERROR: postgres globals dump missing or empty: ${PAYLOAD_DIR}/postgres/globals.sql" >&2
+    return 1
+  fi
+  docker exec -i "$POSTGRES_CONTAINER" pg_restore --list - < "${PAYLOAD_DIR}/postgres/homeserver.dump" > "${WORK_DIR}/postgres-restore-list.txt"
+  if ! test -s "${WORK_DIR}/postgres-restore-list.txt"; then
+    echo "ERROR: pg_restore --list validation failed or empty: ${WORK_DIR}/postgres-restore-list.txt" >&2
+    return 1
+  fi
+  echo "[dump_postgres] verified: ${PAYLOAD_DIR}/postgres/homeserver.dump, ${PAYLOAD_DIR}/postgres/globals.sql, ${WORK_DIR}/postgres-restore-list.txt"
   return 0
 }
 
@@ -260,7 +276,21 @@ quiesce_services() {
     echo "[dry-run] would quiesce services (stop Jenkins, n8n, PostgreSQL, Metabase when running)"
     return 0
   fi
-  echo "[quiesce_services] stub — would stop relevant Compose projects"
+  echo "[quiesce_services] stopping Jenkins and n8n when baseline running"
+  if [[ "$(awk -F '\t' '$1 == "Jenkins" {print $2}' "$STATUS_FILE")" == "true" ]]; then
+    docker compose -f "$JENKINS_COMPOSE" stop
+  fi
+  if [[ "$(awk -F '\t' '$1 == "n8n" {print $2}' "$STATUS_FILE")" == "true" ]]; then
+    docker compose -f "$N8N_COMPOSE" stop
+  fi
+  echo "[quiesce_services] stopping PostgreSQL after dump and Metabase when running"
+  if [[ "$(awk -F '\t' '$1 == "postgresql" {print $2}' "$STATUS_FILE")" == "true" ]]; then
+    docker compose -f "$POSTGRES_COMPOSE" stop
+  fi
+  if [[ "$(awk -F '\t' '$1 == "metabase" {print $2}' "$STATUS_FILE")" == "true" ]]; then
+    docker stop "$METABASE_CONTAINER"
+  fi
+  echo "[quiesce_services] quiesce complete"
   return 0
 }
 
