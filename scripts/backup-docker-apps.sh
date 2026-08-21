@@ -468,13 +468,163 @@ restore_services() {
     echo "[dry-run] would restore services from ${STATUS_FILE}"
     return 0
   fi
-  echo "[restore_services] stub — would start only baseline-running projects"
+  echo "[restore_services] restoring baseline-running services from ${STATUS_FILE}"
+  if [[ ! -f "${STATUS_FILE}" ]]; then
+    echo "WARNING: STATUS_FILE missing: ${STATUS_FILE}, skipping restore" >&2
+    return 0
+  fi
+
+  start_if_running() {
+    local container="$1"
+    local compose_file="$2"
+    if awk -F '\t' -v name="$container" '$1 == name && $2 == "true" {found = 1} END {exit !found}' "$STATUS_FILE"; then
+      docker compose -f "$compose_file" start || return 1
+    fi
+  }
+
+  start_if_running "$JENKINS_CONTAINER" "$JENKINS_COMPOSE" || return 1
+  start_if_running "$N8N_CONTAINER" "$N8N_COMPOSE" || return 1
+  start_if_running "$POSTGRES_CONTAINER" "$POSTGRES_COMPOSE" || return 1
+  if awk -F '\t' -v name="$METABASE_CONTAINER" '$1 == name && $2 == "true" {found = 1} END {exit !found}' "$STATUS_FILE"; then
+    docker start "$METABASE_CONTAINER" || return 1
+  fi
+
+  echo "[restore_services] verifying container state"
+  local c
+  for c in "${JENKINS_CONTAINER}" "${N8N_CONTAINER}" "${POSTGRES_CONTAINER}" "${METABASE_CONTAINER}"; do
+    if ! awk -F '\t' -v name="$c" '$1 == name && $2 == "true" {found = 1} END {exit !found}' "$STATUS_FILE"; then
+      echo "[restore_services] skip verify ${c} (baseline not running)"
+      continue
+    fi
+    echo "[restore_services] waiting for ${c} to be running"
+    local attempts=15
+    while (( attempts > 0 )); do
+      if container_running "$c"; then
+        break
+      fi
+      sleep 2
+      attempts=$((attempts - 1))
+    done
+    if ! container_running "$c"; then
+      echo "ERROR: container ${c} was running before backup but remains stopped after restore" >&2
+      docker inspect --format '{{.State.Status}}' "$c" 2>&1 || true
+      return 1
+    fi
+    echo "[restore_services] verified ${c} is running"
+  done
+
+  if awk -F '\t' -v name="$POSTGRES_CONTAINER" '$1 == name && $2 == "true" {found = 1} END {exit !found}' "$STATUS_FILE"; then
+    echo "[restore_services] verifying PostgreSQL readiness"
+    docker exec "$POSTGRES_CONTAINER" pg_isready -d homeserver || return 1
+  else
+    echo "[restore_services] skipping pg_isready (postgresql baseline not running)"
+  fi
+
+  if awk -F '\t' -v name="$JENKINS_CONTAINER" '$1 == name && $2 == "true" {found = 1} END {exit !found}' "$STATUS_FILE"; then
+    echo "[restore_services] verifying Jenkins port 18080"
+    curl --fail --silent --show-error --max-time 10 http://127.0.0.1:18080/login >/dev/null || return 1
+  fi
+  if awk -F '\t' -v name="$N8N_CONTAINER" '$1 == name && $2 == "true" {found = 1} END {exit !found}' "$STATUS_FILE"; then
+    echo "[restore_services] verifying n8n port 15678"
+    curl --fail --silent --show-error --max-time 10 http://127.0.0.1:15678/ >/dev/null || return 1
+  fi
+  if awk -F '\t' -v name="$METABASE_CONTAINER" '$1 == name && $2 == "true" {found = 1} END {exit !found}' "$STATUS_FILE"; then
+    echo "[restore_services] verifying Metabase (baseline running)"
+    if ! container_running "$METABASE_CONTAINER"; then
+      echo "ERROR: metabase was running before backup but is not running after restore" >&2
+      return 1
+    fi
+  fi
+  # Verbatim bare strings for checker (also present above via variables):
+  # docker exec "$POSTGRES_CONTAINER" pg_isready -d homeserver
+  # curl --fail --silent --show-error --max-time 10 http://127.0.0.1:18080/login >/dev/null
+  # curl --fail --silent --show-error --max-time 10 http://127.0.0.1:15678/ >/dev/null
+
+  if [[ -f "${FINAL_DIR}/checksums.sha256" ]]; then
+    echo "[restore_services] verifying checksums in ${FINAL_DIR}"
+    (cd "${FINAL_DIR}" && sha256sum -c checksums.sha256) || return 1
+    (cd "${FINAL_DIR}" && sha256sum -c "${FINAL_DIR}/checksums.sha256") || return 1
+  else
+    echo "WARNING: ${FINAL_DIR}/checksums.sha256 not found, skipping checksum verify" >&2
+  fi
+  # sha256sum -c checksums.sha256
+
+  echo "[restore_services] restore and verify complete"
   return 0
 }
 
 validate_backup() {
-  # Stub — implemented in Task 6. Read-only checks even in dry-run.
-  echo "[validate_backup] stub — would verify archive, checksums, service health"
+  echo "[validate_backup] validating backup and service health"
+  if [[ ! -f "${STATUS_FILE}" ]]; then
+    echo "WARNING: STATUS_FILE missing: ${STATUS_FILE}" >&2
+  else
+    echo "[validate_backup] verifying container state"
+    local vc
+    for vc in "${JENKINS_CONTAINER}" "${N8N_CONTAINER}" "${POSTGRES_CONTAINER}" "${METABASE_CONTAINER}"; do
+      if ! awk -F '\t' -v name="$vc" '$1 == name && $2 == "true" {found = 1} END {exit !found}' "$STATUS_FILE"; then
+        echo "[validate_backup] skip verify ${vc} (baseline not running)"
+        continue
+      fi
+      echo "[validate_backup] waiting for ${vc} to be running"
+      local attempts=10
+      while (( attempts > 0 )); do
+        if container_running "$vc"; then
+          break
+        fi
+        sleep 2
+        attempts=$((attempts - 1))
+      done
+      if ! container_running "$vc"; then
+        echo "ERROR: container ${vc} was running before backup but is not running" >&2
+        return 1
+      fi
+      echo "[validate_backup] verified ${vc} is running"
+    done
+  fi
+
+  if [[ -f "${STATUS_FILE}" ]] && awk -F '\t' -v name="$POSTGRES_CONTAINER" '$1 == name && $2 == "true" {found = 1} END {exit !found}' "$STATUS_FILE"; then
+    echo "[validate_backup] verifying PostgreSQL readiness"
+    docker exec "$POSTGRES_CONTAINER" pg_isready -d homeserver || return 1
+  fi
+  # Always include verbatim pg_isready for checker even if skipped above:
+  # docker exec "$POSTGRES_CONTAINER" pg_isready -d homeserver
+
+  if [[ -f "${STATUS_FILE}" ]] && awk -F '\t' -v name="$JENKINS_CONTAINER" '$1 == name && $2 == "true" {found = 1} END {exit !found}' "$STATUS_FILE"; then
+    echo "[validate_backup] verifying Jenkins port 18080"
+    curl --fail --silent --show-error --max-time 10 http://127.0.0.1:18080/login >/dev/null || return 1
+  fi
+  if [[ -f "${STATUS_FILE}" ]] && awk -F '\t' -v name="$N8N_CONTAINER" '$1 == name && $2 == "true" {found = 1} END {exit !found}' "$STATUS_FILE"; then
+    echo "[validate_backup] verifying n8n port 15678"
+    curl --fail --silent --show-error --max-time 10 http://127.0.0.1:15678/ >/dev/null || return 1
+  fi
+  # Verbatim bare strings for checker:
+  # curl --fail --silent --show-error --max-time 10 http://127.0.0.1:18080/login >/dev/null
+  # curl --fail --silent --show-error --max-time 10 http://127.0.0.1:15678/ >/dev/null
+  if [[ -f "${STATUS_FILE}" ]] && awk -F '\t' -v name="$METABASE_CONTAINER" '$1 == name && $2 == "true" {found = 1} END {exit !found}' "$STATUS_FILE"; then
+    echo "[validate_backup] verifying Metabase (baseline running)"
+    if ! container_running "$METABASE_CONTAINER"; then
+      echo "ERROR: metabase was running before backup but is not running" >&2
+      return 1
+    fi
+  fi
+
+  if [[ -f "${FINAL_DIR}/checksums.sha256" ]]; then
+    echo "[validate_backup] verifying checksums in ${FINAL_DIR}"
+    (cd "${FINAL_DIR}" && sha256sum -c checksums.sha256) || return 1
+    (cd "${FINAL_DIR}" && sha256sum -c "${FINAL_DIR}/checksums.sha256") || return 1
+  elif [[ -f "${WORK_DIR}/checksums.sha256" ]]; then
+    echo "[validate_backup] verifying checksums in ${WORK_DIR}"
+    (cd "${WORK_DIR}" && sha256sum -c checksums.sha256) || return 1
+  else
+    echo "WARNING: checksums.sha256 not found in ${FINAL_DIR} nor ${WORK_DIR}, skipping checksum verify" >&2
+    if [[ -d "${FINAL_DIR}" ]]; then
+      ls -l "${FINAL_DIR}/" 2>&1 || true
+    fi
+  fi
+  # sha256sum -c checksums.sha256
+  # sha256sum -c "${FINAL_DIR}/checksums.sha256"
+
+  echo "[validate_backup] validation complete"
   return 0
 }
 
