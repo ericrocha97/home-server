@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# home-server docker backup — safe invocation:
-#   dry-run: ssh -tt home-server 'sudo env BACKUP_DRY_RUN=1 bash -s' < scripts/backup-docker-apps.sh
-#   real:    ssh -tt home-server 'sudo bash -s' < scripts/backup-docker-apps.sh
+# home-server docker backup - safe invocation:
+#   scp scripts/backup-docker-apps.sh home-server:/tmp/home-server-docker-backup.sh
+#   ssh -tt home-server 'sudo -v'
+#   dry-run: ssh home-server 'sudo -n env BACKUP_DRY_RUN=1 bash /tmp/home-server-docker-backup.sh'
+#   real:    ssh -tt home-server 'sudo -n bash /tmp/home-server-docker-backup.sh'
+#   cleanup: ssh home-server 'rm -f /tmp/home-server-docker-backup.sh'
+# Note: sudo -n intentionally never prompts; run `ssh -tt home-server 'sudo -v'` first.
 # Set BACKUP_DRY_RUN inside the remote sudo command; client-side environment
 # assignments are not forwarded through SSH by default.
 # WARNING: running this script without sudo is unsafe. Docker-group access does
@@ -49,9 +53,13 @@ require_write() {
 preflight() {
   if (( EUID != 0 )); then
     echo "ERROR: backup script must run as root; the remote user needs sudo access." >&2
-    echo "Use one of these safe invocations:" >&2
-    echo "  dry-run: ssh -tt home-server 'sudo env BACKUP_DRY_RUN=1 bash -s' < scripts/backup-docker-apps.sh" >&2
-    echo "  real:    ssh -tt home-server 'sudo bash -s' < scripts/backup-docker-apps.sh" >&2
+    echo "Use this safe workflow:" >&2
+    echo "  scp scripts/backup-docker-apps.sh home-server:/tmp/home-server-docker-backup.sh" >&2
+    echo "  ssh -tt home-server 'sudo -v'" >&2
+    echo "  dry-run: ssh home-server 'sudo -n env BACKUP_DRY_RUN=1 bash /tmp/home-server-docker-backup.sh'" >&2
+    echo "  real:    ssh -tt home-server 'sudo -n bash /tmp/home-server-docker-backup.sh'" >&2
+    echo "  cleanup: ssh home-server 'rm -f /tmp/home-server-docker-backup.sh'" >&2
+    echo "NOTE: sudo -n intentionally never prompts; run ssh -tt home-server 'sudo -v' first." >&2
     return 1
   fi
 

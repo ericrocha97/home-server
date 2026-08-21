@@ -41,18 +41,25 @@ No Kubernetes manifests or monitoring files are modified by this plan.
 
 ## Interfaces
 
-The script runs locally for syntax and dry-run checks, and remotely with SSH:
+The script runs locally for syntax and dry-run checks, and remotely with this
+safe SSH workflow:
 
 ```bash
-ssh -tt home-server 'sudo env BACKUP_DRY_RUN=1 bash -s' < scripts/backup-docker-apps.sh
-ssh -tt home-server 'sudo bash -s' < scripts/backup-docker-apps.sh
+scp scripts/backup-docker-apps.sh home-server:/tmp/home-server-docker-backup.sh
+ssh -tt home-server 'sudo -v'
+ssh home-server 'sudo -n env BACKUP_DRY_RUN=1 bash /tmp/home-server-docker-backup.sh'
+ssh -tt home-server 'sudo -n bash /tmp/home-server-docker-backup.sh'
+ssh home-server 'rm -f /tmp/home-server-docker-backup.sh'
 ```
 
 > **Note on remote permissions and `BACKUP_DRY_RUN` propagation:** The remote user needs `sudo` because the CasaOS
 > Compose files are root-readable only (`root:root`, mode `0600`). Set `BACKUP_DRY_RUN` inside the remote `sudo`
-> command as shown above; client-side environment assignments are not forwarded through SSH by default. Running the
-> script without `sudo` is unsafe because Docker-group access does not grant access to those Compose files and can
-> allow partial execution before a failure is reported.
+> command as shown above; client-side environment assignments are not forwarded through SSH by default. `sudo -n`
+> intentionally never prompts; run `ssh -tt home-server 'sudo -v'` first. Do not pipe the local script directly into
+> a password-requiring root shell: SSH shares stdin with the remote command, so a sudo password prompt can consume
+> script lines as password attempts. Copy the script to a remote file first. Running the script without `sudo` is
+> unsafe because Docker-group access does not grant access to those Compose files and can allow partial execution
+> before a failure is reported.
 
 The script accepts these environment variables:
 
@@ -218,7 +225,10 @@ and Compose labels. Do not record `.Config.Env`.
 Run:
 
 ```bash
-ssh -tt home-server 'sudo env BACKUP_DRY_RUN=1 bash -s' < scripts/backup-docker-apps.sh
+scp scripts/backup-docker-apps.sh home-server:/tmp/home-server-docker-backup.sh
+ssh -tt home-server 'sudo -v'
+ssh home-server 'sudo -n env BACKUP_DRY_RUN=1 bash /tmp/home-server-docker-backup.sh'
+ssh home-server 'rm -f /tmp/home-server-docker-backup.sh'
 ```
 
 Expected: the command reports the destination, required source paths, and
@@ -550,7 +560,10 @@ ShellCheck is unavailable, record that limitation and still run `bash -n`.
 Run:
 
 ```bash
-ssh -tt home-server 'sudo env BACKUP_DRY_RUN=1 bash -s' < scripts/backup-docker-apps.sh
+scp scripts/backup-docker-apps.sh home-server:/tmp/home-server-docker-backup.sh
+ssh -tt home-server 'sudo -v'
+ssh home-server 'sudo -n env BACKUP_DRY_RUN=1 bash /tmp/home-server-docker-backup.sh'
+ssh home-server 'rm -f /tmp/home-server-docker-backup.sh'
 ```
 
 Verify no service state changed, no GPG prompt occurred, and no final backup
@@ -561,7 +574,10 @@ directory was created.
 Run:
 
 ```bash
-ssh -tt home-server 'sudo bash -s' < scripts/backup-docker-apps.sh
+scp scripts/backup-docker-apps.sh home-server:/tmp/home-server-docker-backup.sh
+ssh -tt home-server 'sudo -v'
+ssh -tt home-server 'sudo -n bash /tmp/home-server-docker-backup.sh'
+ssh home-server 'rm -f /tmp/home-server-docker-backup.sh'
 ```
 
 Enter the GPG passphrase directly in the terminal. Do not send it through the
