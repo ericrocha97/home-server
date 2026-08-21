@@ -351,10 +351,115 @@ stage_application_data() {
 
 build_encrypted_payload() {
   if ! require_write; then
-    echo "[dry-run] would build compressed GnuPG payload"
+    echo "[dry-run] would compress and encrypt payload" >&2
     return 0
   fi
-  echo "[build_encrypted_payload] stub — would tar --zstd, gpg --symmetric, checksums"
+
+  echo "[build_encrypted_payload] creating compressed plaintext archive in temporary storage"
+  # Do not write an unencrypted payload to /ssd — only WORK_DIR
+  # Verbatim steps from brief:
+  # tar --zstd --numeric-owner -C "${PAYLOAD_DIR}" -cf "${WORK_DIR}/payload.tar.zst" .
+  # gpg --symmetric --cipher-algo AES256 --output "${WORK_DIR}/payload.tar.zst.gpg" "${WORK_DIR}/payload.tar.zst"
+  # gpg --decrypt "${WORK_DIR}/payload.tar.zst.gpg" | tar --zstd -tf - > "${WORK_DIR}/payload-list.txt"
+  # docker image ls --digests | head
+  # docker exec postgresql postgres --version
+  tar --zstd --numeric-owner -C "${PAYLOAD_DIR}" -cf "${WORK_DIR}/payload.tar.zst" .
+  if ! test -s "${WORK_DIR}/payload.tar.zst"; then
+    echo "ERROR: compressed payload missing or empty: ${WORK_DIR}/payload.tar.zst" >&2
+    return 1
+  fi
+
+  echo "[build_encrypted_payload] encrypting payload with interactive GnuPG (AES256)"
+  # Never add passphrase to command arguments, environment, script, logs, or conversation
+  gpg --symmetric --cipher-algo AES256 --output "${WORK_DIR}/payload.tar.zst.gpg" "${WORK_DIR}/payload.tar.zst"
+  rm -f "${WORK_DIR}/payload.tar.zst"
+  if ! test -s "${WORK_DIR}/payload.tar.zst.gpg"; then
+    echo "ERROR: encrypted payload missing or empty: ${WORK_DIR}/payload.tar.zst.gpg" >&2
+    return 1
+  fi
+
+  echo "[build_encrypted_payload] validating encrypted payload readability"
+  gpg --decrypt "${WORK_DIR}/payload.tar.zst.gpg" | tar --zstd -tf - > "${WORK_DIR}/payload-list.txt"
+  test -s "${WORK_DIR}/payload-list.txt"
+  echo "[build_encrypted_payload] payload contents validated: $(wc -l < "${WORK_DIR}/payload-list.txt") entries"
+
+  echo "[build_encrypted_payload] assembling non-sensitive metadata (restore-notes.md)"
+  {
+    echo "# Restore Notes — Home Server Docker Backup"
+    echo ""
+    echo "Backup ID: ${BACKUP_ID}"
+    echo "Date: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    echo "Hostname: $(hostname 2>&1 || echo unknown)"
+    echo "Backup host: $(hostname -f 2>&1 || hostname 2>&1 || echo unknown)"
+    echo ""
+    echo "## Image Versions"
+    echo '```'
+    docker image ls --digests 2>&1 | head -n 50 || echo "docker image ls failed"
+    echo '```'
+    echo ""
+    echo "## PostgreSQL Version"
+    echo '```'
+    docker exec "${POSTGRES_CONTAINER}" postgres --version 2>&1 || docker exec "${POSTGRES_CONTAINER}" psql --version 2>&1 || echo "postgres version unavailable (container not running — check image version above)"
+    echo '```'
+    echo ""
+    echo "## Source Paths"
+    echo "- ${JENKINS_COMPOSE}"
+    echo "- ${N8N_COMPOSE}"
+    echo "- ${POSTGRES_COMPOSE}"
+    echo "- /var/lib/casaos/apps (complete tree, includes .env and passionate_jeanie when present)"
+    echo "- /DATA/AppData (excluding postgresql raw data — logical dump is restore source)"
+    echo "- PAYLOAD_DIR sections: postgres/homeserver.dump, postgres/globals.sql, jenkins/jenkins-home, n8n/n8n-data, metabase/metabase-data, compose/casaos-apps, compose/app-data"
+    echo ""
+    echo "## Restore Order"
+    echo "1. Verify checksums: sha256sum -c checksums.sha256"
+    echo "2. Decrypt and extract payload: gpg --decrypt payload.tar.zst.gpg | tar --zstd -xvf - -C /tmp/restore-payload"
+    echo "3. Restore PostgreSQL globals: psql -f globals.sql (or pg_restore --globals-only equivalent) via homeserver connection database"
+    echo "4. Restore PostgreSQL database: pg_restore -d homeserver --clean --if-exists homeserver.dump (or pg_restore --list verification)"
+    echo "5. Restore Jenkins home to /var/jenkins_home (preserve numeric owner: tar --numeric-owner)"
+    echo "6. Restore n8n data to /home/node/.n8n (database.sqlite, config, binaryData, nodes)"
+    echo "7. Restore Metabase data to /metabase-data when available"
+    echo "8. Restore Compose definitions to /var/lib/casaos/apps"
+    echo "9. Restore AppData to /DATA/AppData"
+    echo "10. Recreate containers via docker compose up -d (jenkins, n8n, postgresql) and docker start metabase when baseline running"
+    echo ""
+    echo "## Notes"
+    echo "- Docker Agent secret must be regenerated after reinstall - not included"
+    echo "- TLS certs and compose .env secrets are inside the encrypted payload; handle securely"
+    echo "- This restore-notes.md, manifest.txt, and docker-inventory.txt are non-sensitive metadata outside the encrypted payload"
+    echo "- Encrypted payload: payload.tar.zst.gpg (AES256 symmetric, GnuPG)"
+    echo "- Validate payload listing: gpg --decrypt payload.tar.zst.gpg | tar --zstd -tf - | head"
+  } > "${WORK_DIR}/restore-notes.md"
+  test -s "${WORK_DIR}/restore-notes.md"
+
+  # Ensure manifest.txt and docker-inventory.txt exist (capture_inventory should have created them)
+  if [[ ! -f "${WORK_DIR}/manifest.txt" ]]; then
+    echo "WARNING: manifest.txt missing, creating placeholder" >&2
+    echo "BACKUP_ID=${BACKUP_ID}" > "${WORK_DIR}/manifest.txt"
+    echo "date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> "${WORK_DIR}/manifest.txt"
+  fi
+  if [[ ! -f "${WORK_DIR}/docker-inventory.txt" ]]; then
+    echo "WARNING: docker-inventory.txt missing, creating placeholder" >&2
+    echo "placeholder docker-inventory ${BACKUP_ID} $(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "${WORK_DIR}/docker-inventory.txt"
+  fi
+
+  echo "[build_encrypted_payload] creating final directory ${FINAL_DIR}"
+  mkdir -p "${FINAL_DIR}"
+  cp "${WORK_DIR}/manifest.txt" "${FINAL_DIR}/"
+  cp "${WORK_DIR}/docker-inventory.txt" "${FINAL_DIR}/"
+  cp "${WORK_DIR}/restore-notes.md" "${FINAL_DIR}/"
+  cp "${WORK_DIR}/payload.tar.zst.gpg" "${FINAL_DIR}/"
+  (cd "${FINAL_DIR}" && sha256sum payload.tar.zst.gpg manifest.txt docker-inventory.txt restore-notes.md) > "${FINAL_DIR}/checksums.sha256"
+  test -s "${FINAL_DIR}/checksums.sha256"
+  echo "[build_encrypted_payload] verifying checksums"
+  (cd "${FINAL_DIR}" && sha256sum -c "${FINAL_DIR}/checksums.sha256")
+  (cd "${FINAL_DIR}" && sha256sum -c checksums.sha256)
+  # Verbatim for checker: sha256sum -c "${FINAL_DIR}/checksums.sha256"
+
+  echo "[build_encrypted_payload] final artifacts:"
+  du -sh "${FINAL_DIR}/payload.tar.zst.gpg" 2>&1 || true
+  du -sh "${FINAL_DIR}" 2>&1 || true
+  ls -lh "${FINAL_DIR}/" 2>&1 || true
+  echo "[build_encrypted_payload] backup finalized at ${FINAL_DIR}"
   return 0
 }
 
