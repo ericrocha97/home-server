@@ -268,9 +268,19 @@ dump_postgres() {
     echo "ERROR: postgres globals dump missing or empty: ${PAYLOAD_DIR}/postgres/globals.sql" >&2
     return 1
   fi
-  docker exec -i "$POSTGRES_CONTAINER" pg_restore --list - < "${PAYLOAD_DIR}/postgres/homeserver.dump" > "${WORK_DIR}/postgres-restore-list.txt"
+  # Validate via pg_restore --list (stdin, no explicit "-" file — some images don't support "-" as file)
+  if ! cat "${PAYLOAD_DIR}/postgres/homeserver.dump" | docker exec -i "$POSTGRES_CONTAINER" pg_restore --list > "${WORK_DIR}/postgres-restore-list.txt" 2>/dev/null; then
+    # Fallback: copy dump into container and validate via file path
+    if ! docker cp "${PAYLOAD_DIR}/postgres/homeserver.dump" "${POSTGRES_CONTAINER}:/tmp/homeserver.dump" 2>/dev/null || \
+       ! docker exec "$POSTGRES_CONTAINER" pg_restore --list /tmp/homeserver.dump > "${WORK_DIR}/postgres-restore-list.txt" 2>/dev/null; then
+      echo "ERROR: pg_restore --list validation failed: ${WORK_DIR}/postgres-restore-list.txt" >&2
+      return 1
+    fi
+  fi
+  # Cleanup fallback file inside container
+  docker exec "$POSTGRES_CONTAINER" rm -f /tmp/homeserver.dump 2>/dev/null || true
   if ! test -s "${WORK_DIR}/postgres-restore-list.txt"; then
-    echo "ERROR: pg_restore --list validation failed or empty: ${WORK_DIR}/postgres-restore-list.txt" >&2
+    echo "ERROR: pg_restore --list validation empty: ${WORK_DIR}/postgres-restore-list.txt" >&2
     return 1
   fi
   echo "[dump_postgres] verified: ${PAYLOAD_DIR}/postgres/homeserver.dump, ${PAYLOAD_DIR}/postgres/globals.sql, ${WORK_DIR}/postgres-restore-list.txt"
