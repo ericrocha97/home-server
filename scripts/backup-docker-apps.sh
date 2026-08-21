@@ -299,7 +299,53 @@ stage_application_data() {
     echo "[dry-run] would stage application data via docker cp and tar"
     return 0
   fi
-  echo "[stage_application_data] stub — would copy Jenkins/n8n/Metabase/Compose/AppData"
+  echo "[stage_application_data] staging Jenkins, n8n, Metabase, Compose, and AppData"
+
+  # Step 1: Copy Jenkins data from the stopped container (no filtering, after quiesce)
+  echo "[stage_application_data] copying Jenkins data from ${JENKINS_CONTAINER}:/var/jenkins_home"
+  docker cp "${JENKINS_CONTAINER}:/var/jenkins_home/." "${PAYLOAD_DIR}/jenkins/jenkins-home/"
+
+  # Step 2: Copy n8n data and verify without printing contents
+  echo "[stage_application_data] copying n8n data from ${N8N_CONTAINER}:/home/node/.n8n"
+  docker cp "${N8N_CONTAINER}:/home/node/.n8n/." "${PAYLOAD_DIR}/n8n/n8n-data/"
+  test -s "${PAYLOAD_DIR}/n8n/n8n-data/database.sqlite"
+  test -f "${PAYLOAD_DIR}/n8n/n8n-data/config"
+
+  # Step 3: Copy Metabase data when available; record result in manifest-events.txt
+  echo "[stage_application_data] copying Metabase data when available"
+  if docker cp "${METABASE_CONTAINER}:/metabase-data/." "${PAYLOAD_DIR}/metabase/metabase-data/"; then
+    printf '%s\n' 'Metabase data captured' >> "${WORK_DIR}/manifest-events.txt"
+  else
+    printf '%s\n' 'Metabase data path unavailable' >> "${WORK_DIR}/manifest-events.txt"
+  fi
+
+  # Step 4: Copy Compose definitions preserving metadata (tar extraction, includes .env and passionate_jeanie)
+  echo "[stage_application_data] archiving /var/lib/casaos/apps to ${PAYLOAD_DIR}/compose/casaos-apps"
+  tar --numeric-owner -C /var/lib/casaos/apps -cf - . | tar -C "${PAYLOAD_DIR}/compose/casaos-apps" -xf -
+  test -f "${PAYLOAD_DIR}/compose/casaos-apps/jenkins/docker-compose.yml"
+  test -f "${PAYLOAD_DIR}/compose/casaos-apps/n8n/docker-compose.yml"
+  test -f "${PAYLOAD_DIR}/compose/casaos-apps/postgresql/docker-compose.yml"
+
+  # Step 5: Copy non-PostgreSQL Docker application data (exclude raw postgresql, preserve metadata via tar)
+  echo "[stage_application_data] archiving /DATA/AppData (excluding postgresql) to ${PAYLOAD_DIR}/compose/app-data"
+  tar --exclude=./postgresql --numeric-owner -C /DATA/AppData -cf - . | tar -C "${PAYLOAD_DIR}/compose/app-data" -xf -
+
+  # Step 6: Record staged sizes into manifest.txt without secrets
+  echo "[stage_application_data] recording staged sizes to ${WORK_DIR}/manifest.txt"
+  {
+    echo ""
+    echo "=== staged payload sizes (du -sh) ==="
+    du -sh "${PAYLOAD_DIR}/jenkins" 2>&1 || echo "du failed for jenkins"
+    du -sh "${PAYLOAD_DIR}/n8n" 2>&1 || echo "du failed for n8n"
+    du -sh "${PAYLOAD_DIR}/metabase" 2>&1 || echo "du failed for metabase"
+    du -sh "${PAYLOAD_DIR}/compose" 2>&1 || echo "du failed for compose"
+    du -sh "${PAYLOAD_DIR}/postgres" 2>&1 || echo "du failed for postgres"
+    du -sh "${PAYLOAD_DIR}" 2>&1 || echo "du failed for payload"
+    echo "=== manifest events ==="
+    cat "${WORK_DIR}/manifest-events.txt" 2>&1 || echo "no manifest-events.txt"
+  } >> "${WORK_DIR}/manifest.txt" 2>&1 || true
+
+  echo "[stage_application_data] staging complete"
   return 0
 }
 
