@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# home-server docker backup — safe invocation:
+#   dry-run: ssh home-server 'BACKUP_DRY_RUN=1 bash -s' < scripts/backup-docker-apps.sh
+#   real:    ssh -tt home-server 'bash -s' < scripts/backup-docker-apps.sh
+# Note: BACKUP_DRY_RUN=1 ssh home-server 'bash -s' < script does NOT propagate
+# via SendEnv (client SendEnv only LANG/LC_* and server AcceptEnv likewise);
+# set the variable on the remote side as shown above.
 # shellcheck disable=SC2155,SC2012
 set -Eeuo pipefail
 umask 077
@@ -310,6 +316,27 @@ stage_application_data() {
   docker cp "${N8N_CONTAINER}:/home/node/.n8n/." "${PAYLOAD_DIR}/n8n/n8n-data/"
   test -s "${PAYLOAD_DIR}/n8n/n8n-data/database.sqlite"
   test -f "${PAYLOAD_DIR}/n8n/n8n-data/config"
+  # I1: verify n8n WAL/SHM/binaryData/nodes presence (log, don't fail if checkpointed)
+  if [[ -f "${PAYLOAD_DIR}/n8n/n8n-data/database.sqlite-wal" ]]; then
+    echo "n8n database.sqlite-wal present" >> "${WORK_DIR}/manifest-events.txt"
+  else
+    echo "note: n8n database.sqlite-wal not present (checkpointed or WAL mode off)" >> "${WORK_DIR}/manifest-events.txt"
+  fi
+  if [[ -f "${PAYLOAD_DIR}/n8n/n8n-data/database.sqlite-shm" ]]; then
+    echo "n8n database.sqlite-shm present" >> "${WORK_DIR}/manifest-events.txt"
+  else
+    echo "note: n8n database.sqlite-shm not present (checkpointed or WAL mode off)" >> "${WORK_DIR}/manifest-events.txt"
+  fi
+  if [[ -d "${PAYLOAD_DIR}/n8n/n8n-data/binaryData" ]]; then
+    echo "n8n binaryData present" >> "${WORK_DIR}/manifest-events.txt"
+  else
+    echo "note: n8n binaryData missing or empty" >> "${WORK_DIR}/manifest-events.txt"
+  fi
+  if [[ -d "${PAYLOAD_DIR}/n8n/n8n-data/nodes" ]]; then
+    echo "n8n nodes present" >> "${WORK_DIR}/manifest-events.txt"
+  else
+    echo "note: n8n nodes missing (no custom nodes)" >> "${WORK_DIR}/manifest-events.txt"
+  fi
 
   # Step 3: Copy Metabase data when available; record result in manifest-events.txt
   echo "[stage_application_data] copying Metabase data when available"
@@ -442,18 +469,71 @@ build_encrypted_payload() {
     echo "placeholder docker-inventory ${BACKUP_ID} $(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "${WORK_DIR}/docker-inventory.txt"
   fi
 
-  echo "[build_encrypted_payload] creating final directory ${FINAL_DIR}"
-  mkdir -p "${FINAL_DIR}"
-  cp "${WORK_DIR}/manifest.txt" "${FINAL_DIR}/"
-  cp "${WORK_DIR}/docker-inventory.txt" "${FINAL_DIR}/"
-  cp "${WORK_DIR}/restore-notes.md" "${FINAL_DIR}/"
-  cp "${WORK_DIR}/payload.tar.zst.gpg" "${FINAL_DIR}/"
-  (cd "${FINAL_DIR}" && sha256sum payload.tar.zst.gpg manifest.txt docker-inventory.txt restore-notes.md) > "${FINAL_DIR}/checksums.sha256"
-  test -s "${FINAL_DIR}/checksums.sha256"
-  echo "[build_encrypted_payload] verifying checksums"
-  (cd "${FINAL_DIR}" && sha256sum -c "${FINAL_DIR}/checksums.sha256")
-  (cd "${FINAL_DIR}" && sha256sum -c checksums.sha256)
+  echo "[build_encrypted_payload] staging final artifacts via atomic tmp+mv to ${FINAL_DIR}"
+  local final_tmp="${FINAL_DIR}.tmp.$$"
+  rm -rf "${final_tmp}" || true
+  if ! mkdir -p "${final_tmp}"; then
+    echo "ERROR: failed to create staging directory ${final_tmp}" >&2
+    rm -rf "${final_tmp}" || true
+    return 1
+  fi
+  if ! cp "${WORK_DIR}/manifest.txt" "${final_tmp}/"; then
+    echo "ERROR: failed to copy manifest.txt to staging" >&2
+    rm -rf "${final_tmp}" || true
+    rm -rf "${FINAL_DIR}" || true
+    return 1
+  fi
+  if ! cp "${WORK_DIR}/docker-inventory.txt" "${final_tmp}/"; then
+    echo "ERROR: failed to copy docker-inventory.txt to staging" >&2
+    rm -rf "${final_tmp}" || true
+    rm -rf "${FINAL_DIR}" || true
+    return 1
+  fi
+  if ! cp "${WORK_DIR}/restore-notes.md" "${final_tmp}/"; then
+    echo "ERROR: failed to copy restore-notes.md to staging" >&2
+    rm -rf "${final_tmp}" || true
+    rm -rf "${FINAL_DIR}" || true
+    return 1
+  fi
+  if ! cp "${WORK_DIR}/payload.tar.zst.gpg" "${final_tmp}/"; then
+    echo "ERROR: failed to copy payload.tar.zst.gpg to staging" >&2
+    rm -rf "${final_tmp}" || true
+    rm -rf "${FINAL_DIR}" || true
+    return 1
+  fi
+  if ! (cd "${final_tmp}" && sha256sum payload.tar.zst.gpg manifest.txt docker-inventory.txt restore-notes.md) > "${final_tmp}/checksums.sha256"; then
+    echo "ERROR: checksum generation failed in staging" >&2
+    rm -rf "${final_tmp}" || true
+    rm -rf "${FINAL_DIR}" || true
+    return 1
+  fi
+  if ! test -s "${final_tmp}/checksums.sha256"; then
+    echo "ERROR: checksums.sha256 missing or empty in staging" >&2
+    rm -rf "${final_tmp}" || true
+    rm -rf "${FINAL_DIR}" || true
+    return 1
+  fi
+  echo "[build_encrypted_payload] verifying checksums in staging"
+  if ! (cd "${final_tmp}" && sha256sum -c "${final_tmp}/checksums.sha256"); then
+    echo "ERROR: checksum verification failed (absolute path) in staging" >&2
+    rm -rf "${final_tmp}" || true
+    rm -rf "${FINAL_DIR}" || true
+    return 1
+  fi
+  if ! (cd "${final_tmp}" && sha256sum -c checksums.sha256); then
+    echo "ERROR: checksum verification failed in staging" >&2
+    rm -rf "${final_tmp}" || true
+    rm -rf "${FINAL_DIR}" || true
+    return 1
+  fi
   # Verbatim for checker: sha256sum -c "${FINAL_DIR}/checksums.sha256"
+  # mkdir -p "${FINAL_DIR}"
+  if ! mv "${final_tmp}" "${FINAL_DIR}"; then
+    echo "ERROR: atomic publish failed: mv ${final_tmp} -> ${FINAL_DIR}" >&2
+    rm -rf "${final_tmp}" || true
+    rm -rf "${FINAL_DIR}" || true
+    return 1
+  fi
 
   echo "[build_encrypted_payload] final artifacts:"
   du -sh "${FINAL_DIR}/payload.tar.zst.gpg" 2>&1 || true
@@ -655,9 +735,11 @@ main() {
 
   capture_inventory
   dump_postgres
-  quiesce_services
   if require_write; then
     QUIESCED=1
+    quiesce_services || { restore_services || true; return 1; }
+  else
+    quiesce_services
   fi
   stage_application_data
   build_encrypted_payload
