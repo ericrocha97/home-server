@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # home-server docker backup — safe invocation:
-#   dry-run: ssh home-server 'BACKUP_DRY_RUN=1 bash -s' < scripts/backup-docker-apps.sh
-#   real:    ssh -tt home-server 'bash -s' < scripts/backup-docker-apps.sh
-# Note: BACKUP_DRY_RUN=1 ssh home-server 'bash -s' < script does NOT propagate
-# via SendEnv (client SendEnv only LANG/LC_* and server AcceptEnv likewise);
-# set the variable on the remote side as shown above.
+#   dry-run: ssh -tt home-server 'sudo env BACKUP_DRY_RUN=1 bash -s' < scripts/backup-docker-apps.sh
+#   real:    ssh -tt home-server 'sudo bash -s' < scripts/backup-docker-apps.sh
+# Set BACKUP_DRY_RUN inside the remote sudo command; client-side environment
+# assignments are not forwarded through SSH by default.
+# WARNING: running this script without sudo is unsafe. Docker-group access does
+# not grant read access to root-readable-only CasaOS Compose files and can
+# permit partial execution before a failure is reported.
 # shellcheck disable=SC2155,SC2012
 set -Eeuo pipefail
 umask 077
@@ -45,6 +47,14 @@ require_write() {
 }
 
 preflight() {
+  if (( EUID != 0 )); then
+    echo "ERROR: backup script must run as root; the remote user needs sudo access." >&2
+    echo "Use one of these safe invocations:" >&2
+    echo "  dry-run: ssh -tt home-server 'sudo env BACKUP_DRY_RUN=1 bash -s' < scripts/backup-docker-apps.sh" >&2
+    echo "  real:    ssh -tt home-server 'sudo bash -s' < scripts/backup-docker-apps.sh" >&2
+    return 1
+  fi
+
   echo "[preflight] BACKUP_ROOT=${BACKUP_ROOT} BACKUP_MIN_FREE_GB=${BACKUP_MIN_FREE_GB} BACKUP_DRY_RUN=${BACKUP_DRY_RUN}"
   echo "[preflight] FINAL_DIR=${FINAL_DIR} WORK_DIR=${WORK_DIR}"
 
@@ -294,17 +304,17 @@ quiesce_services() {
   fi
   echo "[quiesce_services] stopping Jenkins and n8n when baseline running"
   if [[ "$(awk -F '\t' '$1 == "Jenkins" {print $2}' "$STATUS_FILE")" == "true" ]]; then
-    docker compose -f "$JENKINS_COMPOSE" stop
+    docker compose -f "$JENKINS_COMPOSE" stop || return 1
   fi
   if [[ "$(awk -F '\t' '$1 == "n8n" {print $2}' "$STATUS_FILE")" == "true" ]]; then
-    docker compose -f "$N8N_COMPOSE" stop
+    docker compose -f "$N8N_COMPOSE" stop || return 1
   fi
   echo "[quiesce_services] stopping PostgreSQL after dump and Metabase when running"
   if [[ "$(awk -F '\t' '$1 == "postgresql" {print $2}' "$STATUS_FILE")" == "true" ]]; then
-    docker compose -f "$POSTGRES_COMPOSE" stop
+    docker compose -f "$POSTGRES_COMPOSE" stop || return 1
   fi
   if [[ "$(awk -F '\t' '$1 == "metabase" {print $2}' "$STATUS_FILE")" == "true" ]]; then
-    docker stop "$METABASE_CONTAINER"
+    docker stop "$METABASE_CONTAINER" || return 1
   fi
   echo "[quiesce_services] quiesce complete"
   return 0
@@ -760,7 +770,7 @@ main() {
   fi
   validate_backup
 
-  echo "Backup preflight and inventory completed (Task 2). Payload staging deferred to later tasks."
+  echo "Backup completed successfully: ${FINAL_DIR}"
 }
 
 main "$@"
