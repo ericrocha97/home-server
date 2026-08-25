@@ -5,6 +5,7 @@ k8s/secrets/portainer-admin-password-secret.yaml
 
 ## docs - agents plans, diagrams, etc. (não versionar)
 docs/
+docs/superpowers/plans/2026-08-20-home-server-docker-backup.md
 ansible/secrets/local-home-arpa-tls.crt
 ansible/secrets/local-home-arpa-tls.key
 ansible/secrets/portainer-agent-secret.txt
