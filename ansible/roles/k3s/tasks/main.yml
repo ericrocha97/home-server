@@ -1,1 +1,75 @@
-[]
+---
+- name: Validar IP LAN do inventário
+  ansible.builtin.assert:
+    that:
+      - server_lan_ip | length > 0
+    fail_msg: "server_lan_ip deve ser derivado do inventário lab/prod."
+
+- name: Listar interfaces IPv4 do host
+  ansible.builtin.command: ip -o -4 addr show
+  register: k3s_ipv4_addresses
+  changed_when: false
+
+- name: Definir interface LAN do k3s
+  ansible.builtin.set_fact:
+    resolved_k3s_flannel_interface: >-
+      {{
+        k3s_flannel_interface_override
+        if (k3s_flannel_interface_override | length > 0)
+        else (
+          k3s_ipv4_addresses.stdout_lines
+          | select('search', server_lan_ip ~ '/')
+          | first
+        ).split()[1]
+      }}
+
+- name: Validar interface LAN detectada
+  ansible.builtin.assert:
+    that:
+      - resolved_k3s_flannel_interface | default('') | length > 0
+    fail_msg: "Não foi possível encontrar a interface que contém server_lan_ip; defina k3s_flannel_interface no inventário local."
+
+- name: Instalar k3s single-node com versão pinada
+  ansible.builtin.include_role:
+    name: xanmanning.k3s
+    apply:
+      tags:
+        - k3s
+  tags:
+    - k3s
+  vars:
+    k3s_state: installed
+    k3s_release_version: "{{ k3s_version }}"
+    k3s_build_cluster: true
+    k3s_control_node: true
+    k3s_etcd_datastore: false
+    k3s_install_hard_links: true
+    k3s_server:
+      node-ip: "{{ server_lan_ip }}"
+      node-external-ip: "{{ server_lan_ip }}"
+      flannel-iface: "{{ resolved_k3s_flannel_interface }}"
+      cluster-cidr: "{{ k3s_pod_cidr }}"
+      service-cidr: "{{ k3s_service_cidr }}"
+      write-kubeconfig-mode: "{{ k3s_kubeconfig_mode }}"
+      tls-san:
+        - "{{ server_lan_ip }}"
+      token: "{{ k3s_token }}"
+
+- name: Aguardar serviço k3s ativo
+  ansible.builtin.systemd_service:
+    name: k3s
+    state: started
+  register: k3s_service_state
+  retries: 10
+  delay: 6
+  until: k3s_service_state.status.ActiveState == 'active'
+
+- name: Aguardar API Kubernetes local
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 6443
+    timeout: 120
+
+- name: Verificar node k3s Ready
+  ansible.builtin.command: k3s kubectl wait --for=condition=Ready node/{{ inventory_hostname }} --timeout=120s
+  changed_when: false
