@@ -1,1 +1,66 @@
-[]
+---
+- name: Atualizar cache APT
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Instalar pacotes base do Ubuntu
+  ansible.builtin.apt:
+    name: "{{ base_packages }}"
+    state: present
+
+- name: Impedir hardening SSH sem usuário administrativo não-root
+  ansible.builtin.assert:
+    that:
+      - base_admin_user != 'root'
+    fail_msg: "base_admin_user deve ser um usuário não-root porque PermitRootLogin será desabilitado."
+
+- name: Garantir usuário administrativo sem senha de login
+  ansible.builtin.user:
+    name: "{{ base_admin_user }}"
+    shell: /bin/bash
+    groups: sudo
+    append: true
+    password_lock: true
+    create_home: true
+
+- name: Instalar chave pública do administrador
+  ansible.posix.authorized_key:
+    user: "{{ base_admin_user }}"
+    key: "{{ lookup('file', base_admin_authorized_key_path) }}"
+    state: present
+    manage_dir: true
+  when: base_admin_authorized_key_path | length > 0
+
+- name: Definir timezone do host
+  community.general.timezone:
+    name: "{{ base_timezone }}"
+
+- name: Definir hostname do host
+  ansible.builtin.hostname:
+    name: "{{ base_hostname }}"
+
+- name: Criar diretórios persistentes base
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop: "{{ home_server_directories }}"
+
+- name: Instalar configuração de hardening SSH
+  ansible.builtin.template:
+    src: 99-home-server-hardening.conf.j2
+    dest: /etc/ssh/sshd_config.d/99-home-server-hardening.conf
+    owner: root
+    group: root
+    mode: '0644'
+  when: base_ssh_hardening
+  notify: Validar e recarregar SSH
+
+- name: Habilitar atualizações de segurança automáticas
+  ansible.builtin.service:
+    name: unattended-upgrades
+    enabled: true
+    state: started
