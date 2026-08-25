@@ -52,6 +52,7 @@
     k3s_control_node: true
     k3s_etcd_datastore: false
     k3s_install_hard_links: true
+    k3s_control_token: "{{ k3s_token }}" 
     k3s_server:
       node-ip: "{{ server_lan_ip }}"
       node-external-ip: "{{ server_lan_ip }}"
@@ -61,7 +62,6 @@
       write-kubeconfig-mode: "{{ k3s_kubeconfig_mode }}"
       tls-san:
         - "{{ server_lan_ip }}"
-      token: "{{ k3s_token }}"
 
 - name: Aguardar serviço k3s ativo
   ansible.builtin.systemd_service:

@@ -43,10 +43,6 @@ spec:
                   certFile: {{ traefik_tls_mount_path }}/tls.crt
                   keyFile: {{ traefik_tls_mount_path }}/tls.key
     volumes:
-      - name: traefik-tls
-        secret:
-          secretName: "{{ traefik_tls_secret_name }}"
-    additionalVolumeMounts:
-      - name: traefik-tls
+      - name: "{{ traefik_tls_secret_name }}"
         mountPath: {{ traefik_tls_mount_path }}
-        readOnly: true
+        type: secret

@@ -19,12 +19,12 @@
     name: ufw
     state: present
 
-- name: Definir política de entrada como deny
+- name: Definir política padrão de entrada como deny
   community.general.ufw:
-    direction: in
+    direction: incoming
     policy: deny
 
-- name: Definir política de saída como allow
+- name: Definir política padrão de saída como allow
   community.general.ufw:
     direction: outgoing
     policy: allow
@@ -32,7 +32,6 @@
 - name: Permitir portas de bootstrap somente da LAN/VPN
   community.general.ufw:
     rule: allow
-    direction: in
     from_ip: "{{ item.0 }}"
     port: "{{ item.1.port }}"
     proto: tcp
@@ -56,7 +55,6 @@
 - name: Permitir Traefik acessar Cockpit no host
   community.general.ufw:
     rule: allow
-    direction: in
     from_ip: "{{ k3s_pod_cidr }}"
     to_ip: "{{ server_lan_ip }}"
     port: '9090'

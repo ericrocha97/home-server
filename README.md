@@ -145,6 +145,8 @@ Use o gerador somente-leitura para obter os mapeamentos:
 
 Cada comando imprime oito linhas no formato `<IP> <serviço>.<domínio>` (cockpit, glance, grafana, jenkins, metabase, n8n, portainer, prometheus) usando o IP/domínio do inventário selecionado via `ansible-inventory --list`. Nada é escrito automaticamente em `/etc/hosts`.
 
+Como o inventário contém um Vault (`group_vars/all/vault.yml`), o script pedirá a senha do Vault para decifrar as variáveis do grupo — comportamento esperado.
+
 Copie manualmente a saída para o arquivo hosts do cliente quando quiser resolver por nome:
 
 ```bash

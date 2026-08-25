@@ -14,7 +14,7 @@ if [[ ! -f "$inventory" ]]; then
   exit 1
 fi
 
-inventory_json="$(ansible-inventory -i "$inventory" --list)"
+inventory_json="$(ansible-inventory -i "$inventory" --list --ask-vault-pass)"
 hostvars_json="$(jq -er '._meta.hostvars | to_entries[0].value' <<<"$inventory_json")"
 server_ip="$(jq -er 'if (.server_lan_ip // "") | test("\\{\\{") then .ansible_host else .server_lan_ip // .ansible_host end' <<<"$hostvars_json")"
 base_domain="$(jq -er '.base_domain' <<<"$hostvars_json")"
