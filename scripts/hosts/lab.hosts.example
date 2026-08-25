@@ -1,0 +1,8 @@
+192.0.2.10 cockpit.lab.arpa
+192.0.2.10 glance.lab.arpa
+192.0.2.10 grafana.lab.arpa
+192.0.2.10 jenkins.lab.arpa
+192.0.2.10 metabase.lab.arpa
+192.0.2.10 n8n.lab.arpa
+192.0.2.10 portainer.lab.arpa
+192.0.2.10 prometheus.lab.arpa

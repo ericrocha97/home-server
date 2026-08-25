@@ -1,204 +1,185 @@
-# Configuração Ansible para Home Server
+# Home Server — Bootstrap Slice 1
 
-Este repositório contém playbooks Ansible e manifests Kubernetes para configurar um home server com k3s, observabilidade (Prometheus/Grafana), Portainer e integração de serviços externos do host via Traefik.
+Repositório para provisionar um home server a partir de uma VM Ubuntu 26.04 limpa, com workflow lab-first. O Ansible é o único orquestrador e o mesmo código serve `lab` e `prod`.
 
-## Estrutura de Arquivos
+## Visão geral do Slice 1
 
-- `ansible/`: Diretório principal com playbooks.
-  - `playbook.yml`: Setup base (pacotes essenciais, Docker opcional, utilitários).
-  - `k3s_playbook.yml`: Instala e configura k3s (via role `xanmanning.k3s`).
-  - `k8s_apps_playbook.yml`: Implanta stack Kubernetes (Portainer + kube-prometheus-stack + cAdvisor + external-services + ingress TLS).
-  - `casaos_playbook.yml`: Instala CasaOS nativo no Ubuntu e fixa porta `8081`.
-  - `nvm_node_pnpm_playbook.yml`: Instala NVM, Node LTS e pnpm.
-  - `zsh_starship_playbook.yml`: Instala Zsh, Oh My Zsh e Starship.
-  - `sdkman_playbook.yml`: Instala SDKMAN! e dependências.
-  - `inventory.ini`: Inventário de hosts.
-  - `secrets.yml`: Reservado para uso futuro com Ansible Vault.
-- `k8s/`: Manifests da stack.
-  - `external-services/`: Services sem selector + EndpointSlices para apps fora do cluster.
-  - `ingress/`: Ingress separados (`tools` e `monitoring`) com TLS local.
-  - `monitoring/`, `portainer/`, `secrets/`: componentes da stack.
+O Slice 1 prepara host e plataforma:
 
-## Arquitetura de acesso local
+- Base Ubuntu segura (pacotes, timezone, SSH hardening, `/srv/home-server`).
+- Docker Engine + Compose plugin sem daemon TCP.
+- Cockpit no host em `9090`.
+- k3s single-node pinado (`v1.36.3+k3s1`) com containerd, CoreDNS e ServiceLB.
+- Traefik bundled em `kube-system` com file provider (`watch: true`) e Secret `traefik-tls` em `kube-system` alimentado por mkcert local.
 
-- Ponto único de entrada em `80/443`: Traefik do k3s.
-- CasaOS continua rodando nativo no host em `8081`.
-- Serviços externos ao cluster (CasaOS/Jenkins/Metabase/n8n) são roteados via:
-  - `Service` Kubernetes sem selector
-  - `EndpointSlice` apontando para `<SERVER_LAN_IP>` e porta publicada no host
-- Domínio padrão local: `home.arpa` (não usar `.local` para estes acessos).
+Nada de aplicações futuras neste slice: sem Jenkins, n8n, Metabase, PostgreSQL, Portainer, Grafana, Prometheus, Glance ou restore de dados.
 
-Hosts usados:
+## Estrutura de arquivos
 
-- `casaos.home.arpa`
-- `jenkins.home.arpa`
-- `metabase.home.arpa`
-- `n8n.home.arpa`
-- `portainer.home.arpa`
-- `grafana.home.arpa`
+```
+├── ansible/
+│   ├── ansible.cfg
+│   ├── site.yml                 # entry point único — ansible/site.yml
+│   ├── requirements.yml
+│   ├── requirements.txt
+│   ├── inventories/
+│   │   ├── lab/
+│   │   │   ├── hosts.yml              # ignorado — copiar de hosts.example.yml
+│   │   │   └── group_vars/all.yml     # ignorado — copiar de all.example.yml
+│   │   └── prod/
+│   │       ├── hosts.yml              # ignorado — copiar de hosts.example.yml
+│   │       └── group_vars/all.yml     # ignorado — copiar de all.example.yml
+│   ├── roles/{base,docker,cockpit,k3s,firewall,k8s-platform}/
+│   └── secrets/               # ignorado — *.crt/*.key locais do mkcert
+├── compose/                   # reservado para Slice 2 (host-native Docker Compose)
+├── k8s/
+│   ├── ingress/README.md      # limite: rotas Docker via file provider, não via K8s Service
+│   └── README.md              # plataforma Kubernetes
+├── scripts/
+│   ├── hosts/generate-hosts.sh
+│   ├── hosts/lab.hosts.example
+│   └── hosts/prod.hosts.example
+├── old/                       # arquivo local ignorado — stack antiga preservada localmente, nunca versionada
+└── .env.example
+```
+
+`old/` é arquivo local ignorado pelo `.gitignore`. A stack antiga foi movida para `old/ansible` e `old/k8s` localmente e não participa da nova execução.
 
 ## Pré-requisitos
 
-1. **Ansible instalado** na máquina local.
-2. **Acesso SSH** ao servidor alvo com chave configurada.
-3. **Coleções e roles Ansible**:
+- Ansible Core `2.20.1` na máquina de administração.
+- Acesso SSH com chave ao host alvo.
+- `mkcert` instalado localmente para gerar TLS de `*.lab.arpa` / `*.home.arpa`.
+- Coleções/roles pinadas:
 
-   ```bash
-   ansible-galaxy collection install kubernetes.core
-   ansible-galaxy role install xanmanning.k3s
-   ansible-galaxy collection install community.docker
-   ```
+  ```bash
+  pip install -r ansible/requirements.txt
+  ansible-galaxy collection install -r ansible/requirements.yml
+  ansible-galaxy role install -r ansible/requirements.yml
+  ```
 
-4. **mkcert** instalado na máquina de administração (para HTTPS local).
-5. Crie seu inventário local a partir do exemplo:
+- Inventário local criado a partir dos exemplos:
 
-   ```bash
-   cp ansible/inventory.example.ini ansible/inventory.ini
-   ```
+  ```bash
+  cp ansible/inventories/lab/hosts.example.yml ansible/inventories/lab/hosts.yml
+  cp ansible/inventories/lab/group_vars/all.example.yml ansible/inventories/lab/group_vars/all.yml
+  # editar hosts.yml e all.yml com valores reais de lab (não commitar)
+  cp ansible/inventories/prod/hosts.example.yml ansible/inventories/prod/hosts.yml
+  cp ansible/inventories/prod/group_vars/all.example.yml ansible/inventories/prod/group_vars/all.yml
+  # editar para prod quando necessário (não commitar)
+  ```
 
-## Variáveis locais para evitar IP hardcoded
+O `base_domain` é `lab.arpa` em `lab` e `home.arpa` em `prod`. O IP real do servidor (`ansible_host` / `server_lan_ip`) fica apenas nos `hosts.yml` ignorados.
 
-Como este repositório é público, o IP LAN real não deve ficar commitado.
+## Como executar
 
-Use uma destas opções:
-
-1. editar `ansible/inventory.ini` local com seus valores reais (não commitar alterações locais), ou
-2. exportar variáveis de ambiente antes dos playbooks:
+Sempre a partir da raiz do repositório com `ANSIBLE_CONFIG` apontando para `ansible/ansible.cfg`:
 
 ```bash
-export SERVER_LAN_IP="<SERVER_LAN_IP>"
-export DOCKER_HOST_AGENT_BIND_IP="$SERVER_LAN_IP"
+export ANSIBLE_CONFIG="$PWD/ansible/ansible.cfg"
 ```
 
-As variáveis são usadas por:
-
-- `ansible/k3s_playbook.yml` (`node-ip` e `node-external-ip`)
-- `ansible/k8s_apps_playbook.yml` (EndpointSlices e bind do Docker Agent)
-
-## HTTPS local com mkcert (home.arpa)
-
-Gerar certificado e chave usados pelo playbook:
+Bootstrap completo (lab):
 
 ```bash
+ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml
+```
+
+Execução por tags (exemplos):
+
+```bash
+ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass ansible/site.yml --tags base
+ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass ansible/site.yml --tags docker
+ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass ansible/site.yml --tags cockpit
+ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags k3s
+ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags firewall
+ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags k8s-platform
+```
+
+Validações locais sem SSH:
+
+```bash
+ansible-playbook --syntax-check ansible/site.yml
+ansible-inventory -i ansible/inventories/lab/hosts.example.yml --graph
+yamllint ansible/ k8s/
+bash -n scripts/hosts/generate-hosts.sh
+```
+
+Ordem intencional em `ansible/site.yml`: `base` → `docker` → `cockpit` → `k3s` → `firewall` → `k8s-platform`.
+
+## TLS local com mkcert
+
+Gerar certificados fora do Git (exemplo lab):
+
+```bash
+mkdir -p ansible/secrets
 mkcert -install
 mkcert \
-  -cert-file ansible/secrets/local-home-arpa-tls.crt \
-  -key-file ansible/secrets/local-home-arpa-tls.key \
-  casaos.home.arpa \
-  jenkins.home.arpa \
-  metabase.home.arpa \
-  n8n.home.arpa \
-  portainer.home.arpa \
-  grafana.home.arpa
-mkcert -CAROOT
+  -cert-file ansible/secrets/lab-tls.crt \
+  -key-file ansible/secrets/lab-tls.key \
+  cockpit.lab.arpa \
+  jenkins.lab.arpa \
+  metabase.lab.arpa \
+  n8n.lab.arpa \
+  grafana.lab.arpa \
+  prometheus.lab.arpa \
+  portainer.lab.arpa \
+  glance.lab.arpa
+chmod 600 ansible/secrets/lab-tls.key
 ```
 
-Notas:
+Produção usa `ansible/secrets/prod-tls.crt` / `prod-tls.key` para `*.home.arpa`. Os arquivos `*.crt`/`*.key` e `k3s_token` em `vault.yml` são ignorados e nunca commitados. Cada cliente que acessar `*.lab.arpa` / `*.home.arpa` precisa confiar na CA do mkcert.
 
-- Os arquivos `ansible/secrets/local-home-arpa-tls.crt` e `ansible/secrets/local-home-arpa-tls.key` são locais e não versionados.
-- Cada cliente que acessar os hosts `*.home.arpa` precisa confiar na CA raiz do mkcert, senão o browser exibirá alerta de certificado.
+O playbook valida a presença do par `{{ environment_name }}-tls.crt/.key` antes do deploy e aplica o Secret `kube-system/traefik-tls` idempotentemente.
 
-## Portainer para Kubernetes + Docker (persistente)
+## Hostnames e resolução de nomes
 
-O deploy atual deixa o Portainer Server no namespace `tools` e adiciona:
+`lab.arpa` (lab) e `home.arpa` (prod) são os domínios base. O Ansible não modifica computadores clientes.
 
-- Portainer Agent Kubernetes no namespace `portainer`
-- Portainer Agent Docker no host (container `portainer_agent` em `<SERVER_LAN_IP>:9001`)
-- `AGENT_SECRET` compartilhado entre server e agents
-
-Antes de executar `k8s_apps_playbook.yml`, crie um segredo forte local:
+Use o gerador somente-leitura para obter os mapeamentos:
 
 ```bash
-openssl rand -hex 32 > ansible/secrets/portainer-agent-secret.txt
-chmod 600 ansible/secrets/portainer-agent-secret.txt
+./scripts/hosts/generate-hosts.sh lab
+./scripts/hosts/generate-hosts.sh prod
 ```
 
-Depois de aplicar o playbook, no Portainer UI:
+Cada comando imprime oito linhas no formato `<IP> <serviço>.<domínio>` (cockpit, glance, grafana, jenkins, metabase, n8n, portainer, prometheus) usando o IP/domínio do inventário selecionado via `ansible-inventory --list`. Nada é escrito automaticamente em `/etc/hosts`.
 
-1. Add environment -> Kubernetes -> Agent
-   - Address: `portainer-agent.portainer.svc.cluster.local:9001`
-2. Add environment -> Docker Standalone -> Agent
-   - Address: `<SERVER_LAN_IP>:9001`
+Copie manualmente a saída para o arquivo hosts do cliente quando quiser resolver por nome:
 
-Sem protocolo (`http://`/`https://`) no campo de endereço.
-
-## Como executar os playbooks
-
-Execute sempre a partir de `ansible/`.
-
-1. **Configuração inicial do servidor**
-
-   ```bash
-   ansible-playbook -i inventory.ini playbook.yml --ask-become-pass
-   ```
-
-2. **Instalar k3s**
-
-   ```bash
-   ansible-playbook -i inventory.ini k3s_playbook.yml --ask-become-pass
-   ```
-
-3. **Instalar CasaOS (nativo no host)**
-
-   ```bash
-   ansible-playbook -i inventory.ini casaos_playbook.yml --ask-become-pass
-   ```
-
-   O CasaOS permanece no host em `8081`, sem competir com Traefik em `80/443`.
-
-4. **Deploy da stack k8s (Ingress TLS + serviços externos)**
-
-   Antes de rodar:
-
-   - Crie os secrets reais a partir de `k8s/secrets/*.example.yaml`.
-   - Gere os arquivos TLS do mkcert em `ansible/secrets/`.
-
-   ```bash
-   ansible-playbook -i inventory.ini k8s_apps_playbook.yml --ask-become-pass
-   ```
-
-5. **Ambiente de desenvolvimento (opcional)**
-
-   ```bash
-   ansible-playbook -i inventory.ini nvm_node_pnpm_playbook.yml --ask-become-pass
-   ansible-playbook -i inventory.ini zsh_starship_playbook.yml --ask-become-pass
-   ansible-playbook -i inventory.ini sdkman_playbook.yml --ask-become-pass
-   ```
-
-## Acesso aos serviços
-
-Após o deploy com `k8s_apps_playbook.yml`:
-
-- CasaOS: `https://casaos.home.arpa`
-- Jenkins: `https://jenkins.home.arpa`
-- Metabase: `https://metabase.home.arpa`
-- n8n: `https://n8n.home.arpa`
-- Portainer: `https://portainer.home.arpa`
-- Grafana: `https://grafana.home.arpa`
-
-Fallback opcional atual:
-
-- Portainer NodePort: `http://<IP_DO_SERVIDOR>:30900`
-
-## DNS local / resolução de nomes
-
-Opção rápida (`/etc/hosts` no cliente):
-
-```text
-<SERVER_LAN_IP> casaos.home.arpa jenkins.home.arpa metabase.home.arpa n8n.home.arpa portainer.home.arpa grafana.home.arpa
+```bash
+./scripts/hosts/generate-hosts.sh lab > /tmp/lab.hosts
+# revisar /tmp/lab.hosts e anexar manualmente a /etc/hosts no cliente
 ```
 
-Opção recomendada: configurar DNS local (roteador, AdGuard Home, Pi-hole) com os mesmos hosts.
+Exemplos versionados em `scripts/hosts/lab.hosts.example` (`192.0.2.10`) e `scripts/hosts/prod.hosts.example` (`192.0.2.11`) são apenas documentação — não contêm IPs reais.
 
-`*.local` está descontinuado para estes acessos.
+Alternativa: configurar DNS local (roteador, AdGuard Home, Pi-hole) com os mesmos hosts.
 
-## Segurança e notas importantes
+## Acesso direto (fallback IP:porta)
 
-- Portainer agora opera com separação de responsabilidades:
-  - Portainer Server no namespace `tools`, sem mount direto de `docker.sock`
-  - Portainer Agent Kubernetes no namespace `portainer`
-  - Portainer Agent Docker no host em `<SERVER_LAN_IP>:9001`
-- `AGENT_SECRET` é obrigatório para vínculo entre server e agents.
-- Como o Docker Agent usa o socket do Docker do host, o endpoint Docker ainda é privilegiado e deve ficar restrito à rede local confiável.
-- Este fluxo trata apenas de serviços **HTTP/HTTPS** atrás de Ingress.
-- PostgreSQL puro (`15432`/`5432`) **não** deve ser exposto por Ingress HTTP; se precisar TLS para banco, tratar separadamente com solução TCP/TLS apropriada.
+Sem hostname, o Cockpit permanece acessível diretamente pela porta publicada no host:
+
+- `https://<IP_DO_SERVIDOR>:9090`
+
+Slice 1 não abre portas de aplicações futuras nem NodePorts de aplicação; apenas `22`, `80`, `443`, `9090` e `6443` a partir de `lan_cidr`/`vpn_cidr`, além do forwarding CNI.
+
+## O que o Slice 1 não faz
+
+- Não instala CasaOS.
+- Não cria Services ou EndpointSlices legados para rotear serviços host-native; serviços Compose futuros serão roteados diretamente pelo file provider do Traefik bundled, sem objetos Kubernetes.
+- Não executa restore automático de dados nem deploy de aplicações Compose.
+- Não modifica automaticamente `/etc/hosts` de clientes.
+
+## Próximos slices
+
+- **Slice 2**: Compose host-native (Jenkins, n8n, Metabase, PostgreSQL e rede de dados).
+- **Slice 3**: Dashboard Glance e observabilidade (Portainer, Grafana, Prometheus) sobre a fundação do Slice 1.
+- **Slices seguintes**: restore e automações adicionais.
+
+## Segurança e notas
+
+- Docker exposto apenas via socket Unix; sem listeners `2375`/`2376`.
+- UFW com `DEFAULT_FORWARD_POLICY="ACCEPT"` para o CNI; política de entrada `deny` e allowlist restrita ao Slice 1.
+- Não commitar IPs reais de produção, segredos ou conteúdos de certificados. O inventário real e `vault.yml` permanecem ignorados.
+- Remover NodePorts legados após Ingress estável (nenhum criado no Slice 1).

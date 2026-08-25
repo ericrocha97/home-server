@@ -1,91 +1,106 @@
 # AGENTS.md - Home Server Infrastructure Repository
 
-This repository contains Ansible playbooks and Kubernetes manifests for configuring and deploying a home server running k3s with observability tools (Prometheus/Grafana), Portainer, and external host services routed through Traefik with local HTTPS.
+This repository provisions a home server from a clean Ubuntu 26.04 lab-first workflow. Slice 1 installs the host base, Docker, Cockpit, single-node k3s and the bundled Traefik in `kube-system` with a file provider for `lab.arpa` / `home.arpa` hostnames.
 
 ## Repository Structure
 
 ```
-├── ansible/                    # Ansible playbooks
-│   ├── playbook.yml           # Base server setup
-│   ├── k3s_playbook.yml       # K3s installation
-│   ├── k8s_apps_playbook.yml  # Kubernetes apps deployment + local TLS + external services
-│   ├── casaos_playbook.yml    # CasaOS native install (host port 8081)
-│   ├── nvm_node_pnpm_playbook.yml
-│   ├── zsh_starship_playbook.yml
-│   ├── sdkman_playbook.yml
-│   ├── inventory.example.ini  # Public-safe inventory template
-│   ├── inventory.ini          # Local inventory (gitignored)
-│   └── secrets.yml            # Ansible Vault secrets (future)
+├── ansible/                    # Ansible controller
+│   ├── ansible.cfg            # controller defaults (roles_path, collections_paths)
+│   ├── site.yml               # single entry point — ansible/site.yml
+│   ├── requirements.yml       # pinned collections + xanmanning.k3s v3.6.2
+│   ├── requirements.txt       # ansible-core 2.20.1, netaddr
+│   ├── inventories/
+│   │   ├── lab/
+│   │   │   ├── hosts.yml              # ignored — real lab inventory (ansible_host / server_lan_ip)
+│   │   │   ├── hosts.example.yml      # 192.0.2.10 placeholder
+│   │   │   └── group_vars/
+│   │   │       ├── all.yml            # ignored — lab vars (base_domain: lab.arpa)
+│   │   │       ├── all.example.yml
+│   │   │       └── vault.yml          # ignored — k3s_token
+│   │   └── prod/
+│   │       ├── hosts.yml              # ignored — real prod inventory
+│   │       ├── hosts.example.yml      # 192.0.2.11 placeholder
+│   │       └── group_vars/
+│   │           ├── all.example.yml    # base_domain: home.arpa
+│   │           ├── all.yml            # ignored — prod vars
+│   │           └── vault.yml          # ignored
+│   ├── roles/
+│   │   ├── base/              # packages, timezone, SSH hardening, /srv/home-server
+│   │   ├── docker/            # Docker Engine + Compose plugin, no TCP
+│   │   ├── cockpit/           # Cockpit on 9090 with Traefik proxy awareness
+│   │   ├── k3s/               # pinned k3s single-node + LAN interface detection
+│   │   ├── firewall/          # UFW allowlist for Slice 1 + CNI forward policy
+│   │   └── k8s-platform/      # Secret kube-system/traefik-tls + HelmChartConfig
+│   └── secrets/               # ignored — lab-tls.crt/key, prod-tls.crt/key
+├── compose/                   # host-native Docker Compose services (Slice 2)
 ├── k8s/                       # Kubernetes manifests
-│   ├── external-services/      # Services + EndpointSlices for host-native/docker apps
-│   ├── ingress/
-│   ├── monitoring/
-│   ├── portainer/
-│   └── secrets/
+│   ├── ingress/README.md      # file-provider boundary (no Services/EndpointSlices for Docker)
+│   └── README.md              # Kubernetes platform overview
+├── scripts/
+│   └── hosts/
+│       ├── generate-hosts.sh      # read-only host mapping generator (lab|prod)
+│       ├── lab.hosts.example      # 8 lines 192.0.2.10 *.lab.arpa
+│       └── prod.hosts.example     # 8 lines 192.0.2.11 *.home.arpa
+├── old/                       # local ignored archive — old ansible/k8s preserved locally, never loaded
+├── .env.example
 └── .vscode/settings.json
 ```
+
+`old/` is gitignored and never executed by `ansible/site.yml`. Legacy CasaOS and EndpointSlices workflows have been removed.
 
 ## Build/Test/Lint Commands
 
 ### Ansible Playbooks
 
-All playbooks run from the `ansible/` directory:
+All playbooks run from the repository root with `ANSIBLE_CONFIG` pointing to `ansible/ansible.cfg`:
 
 ```bash
-# Base server setup (packages + Docker)
-ansible-playbook -i inventory.ini playbook.yml --ask-become-pass
+export ANSIBLE_CONFIG="$PWD/ansible/ansible.cfg"
 
-# Install K3s
-ansible-playbook -i inventory.ini k3s_playbook.yml --ask-become-pass
+# Full bootstrap (lab)
+ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml
 
-# Deploy Kubernetes apps (Portainer, Prometheus Stack, Ingress TLS, external services)
-ansible-playbook -i inventory.ini k8s_apps_playbook.yml --ask-become-pass
+# Full bootstrap (prod)
+ansible-playbook -i ansible/inventories/prod/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml
 
-# Development environment
-ansible-playbook -i inventory.ini nvm_node_pnpm_playbook.yml --ask-become-pass
-ansible-playbook -i inventory.ini zsh_starship_playbook.yml --ask-become-pass
-ansible-playbook -i inventory.ini sdkman_playbook.yml --ask-become-pass
+# Tagged runs
+ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass ansible/site.yml --tags base
+ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass ansible/site.yml --tags docker
+ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass ansible/site.yml --tags cockpit
+ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags k3s
+ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags firewall
+ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags k8s-platform
 
-# Install CasaOS
-ansible-playbook -i inventory.ini casaos_playbook.yml --ask-become-pass
+# Syntax / inventory checks (no SSH)
+ansible-playbook --syntax-check ansible/site.yml
+ansible-inventory -i ansible/inventories/lab/hosts.example.yml --graph
+ansible-inventory -i ansible/inventories/prod/hosts.example.yml --graph
 
-# Note: CasaOS is configured to run on host port 8081
-# to avoid conflict with Traefik on ports 80/443.
-
-# Generate local TLS certificate for home.arpa hosts (run on admin machine)
-mkcert -install
-mkcert \
-  -cert-file ansible/secrets/local-home-arpa-tls.crt \
-  -key-file ansible/secrets/local-home-arpa-tls.key \
-  casaos.home.arpa \
-  jenkins.home.arpa \
-  metabase.home.arpa \
-  n8n.home.arpa \
-  portainer.home.arpa \
-  grafana.home.arpa
-
-# Generate Portainer AGENT_SECRET (local-only)
-openssl rand -hex 32 > ansible/secrets/portainer-agent-secret.txt
-chmod 600 ansible/secrets/portainer-agent-secret.txt
-
-# Syntax check all playbooks
-ansible-playbook --syntax-check playbook.yml
-ansible-playbook --syntax-check k3s_playbook.yml
-ansible-playbook --syntax-check k8s_apps_playbook.yml
+# Host mapping helper (read-only, never writes /etc/hosts)
+./scripts/hosts/generate-hosts.sh lab
+./scripts/hosts/generate-hosts.sh prod
+bash -n scripts/hosts/generate-hosts.sh
 
 # List tasks without executing (dry run)
-ansible-playbook -i inventory.ini playbook.yml --list-tasks
+ansible-playbook -i ansible/inventories/lab/hosts.example.yml ansible/site.yml --list-tasks
 ```
 
-### Required Ansible Collections
+### Required Ansible Collections and Roles
 
-Install before running playbooks:
+Pinned in `ansible/requirements.yml`, install with:
 
 ```bash
-ansible-galaxy collection install kubernetes.core
-ansible-galaxy role install xanmanning.k3s
-ansible-galaxy collection install community.docker
+pip install -r ansible/requirements.txt
+ansible-galaxy collection install -r ansible/requirements.yml
+ansible-galaxy role install -r ansible/requirements.yml
 ```
+
+- `ansible.posix` `2.1.0`
+- `community.docker` `5.0.4`
+- `community.general` `12.1.0`
+- `kubernetes.core` `6.2.0`
+- `xanmanning.k3s` `v3.6.2` (from https://github.com/PyratLabs/ansible-role-k3s)
 
 ### YAML Validation
 
@@ -93,30 +108,28 @@ For Kubernetes manifests and Ansible YAML files:
 
 ```bash
 # Validate YAML syntax (requires yamllint)
-yamllint ansible/*.yml k8s/**/*.yaml
+yamllint ansible/ k8s/
 
 # Or using Python YAML parser
-python3 -c "import yaml; [yaml.safe_load_all(open(f)) for f in ['playbook.yml']]"
+python3 -c "import yaml, glob; [list(yaml.safe_load_all(open(f))) for f in glob.glob('ansible/**/*.yml', recursive=True)]"
 ```
 
 ### Kubernetes Manifests
 
+Slice 1 keeps `k8s/` minimal. Host-native Docker Compose services are **not** represented by Kubernetes Services or EndpointSlices; they are routed by the bundled Traefik file provider generated by `k8s-platform`.
+
 ```bash
-# Apply manifests (requires kubectl configured)
-kubectl apply -f k8s/ --dry-run=client  # Validate without applying
+# Validate manifests without applying (requires kubectl)
+kubectl apply -f k8s/ --dry-run=client
 
-# Validate external host-services manifests
-kubectl apply --dry-run=client -f k8s/external-services/
+# Validate ingress boundary doc
+cat k8s/ingress/README.md
 
-# Validate ingress split
-kubectl apply --dry-run=client -f k8s/ingress/tools-ingress.yaml
-kubectl apply --dry-run=client -f k8s/ingress/monitoring-ingress.yaml
+# Lint a manifest
+kubectl create --dry-run=client -o yaml -f k8s/ingress/README.md  # placeholder — use real manifests from later slices
 
-# Lint Kubernetes YAML
-kubectl create --dry-run=client -f k8s/portainer/portainer-deployment.yaml
-
-# Check Helm values files syntax
-helm lint ./k8s/monitoring/kube-prometheus-stack-values.yaml
+# Check platform README
+cat k8s/README.md
 ```
 
 ## Code Style Guidelines
@@ -196,18 +209,19 @@ helm lint ./k8s/monitoring/kube-prometheus-stack-values.yaml
 3. **Check existence in playbooks**: Validate secrets exist before applying
 4. **Permissions**: Secret files should have `0600` permissions
 5. **Local TLS files**: keep mkcert outputs local-only in `ansible/secrets/`:
-   - `local-home-arpa-tls.crt`
-   - `local-home-arpa-tls.key`
+   - `lab-tls.crt` / `lab-tls.key` for `*.lab.arpa`
+   - `prod-tls.crt` / `prod-tls.key` for `*.home.arpa`
    - never commit them
-6. **Portainer agent secret**: keep local-only in `ansible/secrets/`:
-   - `portainer-agent-secret.txt`
-   - never commit it
+6. **Vault**: `ansible/inventories/<env>/group_vars/vault.yml` holds `k3s_token` (0600, encrypted) — never commit plaintext
+7. **Ignored inventory**: `ansible/inventories/*/hosts.yml` and `ansible/inventories/*/group_vars/all.yml` are ignored; only `*.example.yml` with `192.0.2.0/24` placeholders are tracked
+8. **k8s secrets**: `k8s/secrets/*.yaml` is ignored, `!k8s/secrets/*.example.yaml` is tracked
+9. **Local archive**: `old/` is ignored and never executed
 
 ### Documentation
 
 1. **Playbook Headers**: Include `name:` for all plays and meaningful task names
 2. **Comments**: Add comments for non-obvious decisions or workarounds
-3. **README**: Keep `/k8s/README.md` updated with access instructions
+3. **README**: Keep `/k8s/README.md` and `/README.md` updated with Slice 1 access instructions (hostnames via `scripts/hosts/generate-hosts.sh`, direct `IP:9090` fallback)
 
 ### General Conventions
 
@@ -219,27 +233,30 @@ helm lint ./k8s/monitoring/kube-prometheus-stack-values.yaml
 ## Development Workflow
 
 1. **Before committing**:
-   - Run `ansible-playbook --syntax-check` on all modified playbooks
-   - Verify YAML syntax with `yamllint` (if available)
-   - Ensure no secrets are committed
+   - Run `ansible-playbook --syntax-check ansible/site.yml`
+   - Verify YAML syntax with `yamllint ansible/ k8s/`
+   - Check shell helper: `bash -n scripts/hosts/generate-hosts.sh`
+   - Ensure no secrets or real inventories are staged (`git status`, `git diff --cached`)
 
 2. **Testing Changes**:
-   - Use `--check` mode: `ansible-playbook --check playbook.yml`
-   - Use `--diff` to see changes: `ansible-playbook --diff playbook.yml`
-   - Test on a single host with `--limit`
+   - Use `--check` mode: `ansible-playbook -i ansible/inventories/lab/hosts.yml --check ansible/site.yml`
+   - Use `--diff` to see changes: `ansible-playbook -i ansible/inventories/lab/hosts.yml --diff ansible/site.yml`
+   - Test on a single host with `--limit` or by targeting `lab` only
 
-3. **Order of Execution**:
+3. **Order of Execution** (`ansible/site.yml`):
    ```
-   playbook.yml → k3s_playbook.yml → k8s_apps_playbook.yml
+   base → docker → cockpit → k3s → firewall → k8s-platform
    ```
+   The host and Docker prerequisites exist before k3s; firewall is enabled only after k3s; Traefik is configured only after the Kubernetes API is healthy.
+
+4. **Hostnames**: Generate mappings with `./scripts/hosts/generate-hosts.sh lab|prod` and copy manually to the client `/etc/hosts` if name resolution is needed. The helper never edits `/etc/hosts` automatically.
 
 ## Security Notes
 
-- Portainer Server no longer mounts `/var/run/docker.sock` directly
-- Kubernetes management is done through Portainer Agent in namespace `portainer` (ClusterRoleBinding to `cluster-admin`) - keep access control strict
-- Docker management is done through host `portainer_agent` on `<SERVER_LAN_IP>:9001` (uses Docker socket) - restrict access to trusted local network and keep `AGENT_SECRET` configured
-- Local HTTPS currently uses mkcert + trusted local CA for `*.home.arpa`
-- For production-grade cert automation, consider cert-manager
-- Remove NodePort services once Ingress is stable
-- Do not expose raw PostgreSQL (`5432`/`15432`) via HTTP Ingress; only web UIs (pgAdmin/Adminer) belong behind Ingress
-- Do not commit real LAN IPs in public docs/manifests; use placeholders and runtime variables (`SERVER_LAN_IP` / `ansible_host`)
+- Docker daemon exposed only via Unix socket; no `2375`/`2376` TCP listeners.
+- Cockpit listens on `9090` and is fronted by Traefik file provider for `cockpit.lab.arpa` / `cockpit.home.arpa` with `insecureSkipVerify` only on the host backhaul; client-facing TLS uses mkcert `traefik-tls` Secret in `kube-system`.
+- UFW default ingress `deny`, egress `allow`, `DEFAULT_FORWARD_POLICY="ACCEPT"` for k3s CNI; allowlist in Slice 1 is only `22`, `80`, `443`, `9090`, `6443` from `lan_cidr`/`vpn_cidr` plus `k3s_pod_cidr` → `k3s_service_cidr` routed and `k3s_pod_cidr` → `server_lan_ip:9090`.
+- Do not expose raw PostgreSQL (`5432`/`15432`) via HTTP Ingress; only web UIs belong behind Ingress.
+- Hostnames use `lab.arpa` (lab) and `home.arpa` (prod) resolved via manually copied hosts files from `scripts/hosts/generate-hosts.sh`; no automatic `/etc/hosts` mutation and no legacy EndpointSlices for Docker services.
+- Local archive `old/` is ignored and never loaded by the new `site.yml`; do not restore Compose data or run applications during Slice 1.
+- Do not commit real LAN IPs in public docs/manifests; use placeholders (`192.0.2.10`/`192.0.2.11`) and runtime variables (`server_lan_ip` / `ansible_host`).
