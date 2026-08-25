@@ -1,0 +1,4 @@
+---
+- name: Recarregar UFW
+  ansible.builtin.command: ufw reload
+  changed_when: true

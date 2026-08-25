@@ -1,0 +1,12 @@
+---
+firewall_backend: ufw
+firewall_trusted_cidrs:
+  - "{{ lan_cidr }}"
+firewall_optional_cidrs:
+  - "{{ vpn_cidr }}"
+firewall_slice1_tcp_ports:
+  - { port: '22', comment: 'SSH' }
+  - { port: '80', comment: 'Traefik HTTP' }
+  - { port: '443', comment: 'Traefik HTTPS' }
+  - { port: '9090', comment: 'Cockpit' }
+  - { port: '6443', comment: 'Kubernetes API' }

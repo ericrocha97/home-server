@@ -1,1 +1,68 @@
-[]
+---
+- name: Validar CIDR LAN
+  ansible.builtin.assert:
+    that:
+      - lan_cidr | length > 0
+    fail_msg: "lan_cidr deve ser definido no inventário antes de habilitar o firewall."
+
+- name: Construir origens confiáveis
+  ansible.builtin.set_fact:
+    resolved_firewall_trusted_cidrs: >-
+      {{
+        (firewall_trusted_cidrs + firewall_optional_cidrs)
+        | reject('equalto', '')
+        | list
+      }}
+
+- name: Instalar UFW
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+
+- name: Definir política de entrada como deny
+  community.general.ufw:
+    direction: in
+    policy: deny
+
+- name: Definir política de saída como allow
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+
+- name: Permitir portas de bootstrap somente da LAN/VPN
+  community.general.ufw:
+    rule: allow
+    direction: in
+    from_ip: "{{ item.0 }}"
+    port: "{{ item.1.port }}"
+    proto: tcp
+    comment: "{{ item.1.comment }}"
+  loop: "{{ resolved_firewall_trusted_cidrs | product(firewall_slice1_tcp_ports) | list }}"
+
+- name: Permitir tráfego roteado necessário para o CNI local
+  community.general.ufw:
+    rule: allow
+    route: true
+    from_ip: "{{ k3s_pod_cidr }}"
+    to_ip: "{{ k3s_service_cidr }}"
+
+- name: Configurar UFW para permitir forwarding do k3s
+  ansible.builtin.lineinfile:
+    path: /etc/default/ufw
+    regexp: '^DEFAULT_FORWARD_POLICY='
+    line: 'DEFAULT_FORWARD_POLICY="ACCEPT"'
+  notify: Recarregar UFW
+
+- name: Permitir Traefik acessar Cockpit no host
+  community.general.ufw:
+    rule: allow
+    direction: in
+    from_ip: "{{ k3s_pod_cidr }}"
+    to_ip: "{{ server_lan_ip }}"
+    port: '9090'
+    proto: tcp
+    comment: Traefik backend Cockpit
+
+- name: Habilitar UFW por último
+  community.general.ufw:
+    state: enabled
