@@ -45,6 +45,7 @@
       data:
         tls.crt: "{{ lookup('file', local_tls_cert_path) | b64encode }}"
         tls.key: "{{ lookup('file', local_tls_key_path) | b64encode }}"
+  no_log: true
 
 - name: Renderizar HelmChartConfig do Traefik
   ansible.builtin.template:

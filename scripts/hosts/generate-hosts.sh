@@ -16,7 +16,7 @@ fi
 
 inventory_json="$(ansible-inventory -i "$inventory" --list)"
 hostvars_json="$(jq -er '._meta.hostvars | to_entries[0].value' <<<"$inventory_json")"
-server_ip="$(jq -er '(.server_lan_ip // .ansible_host)' <<<"$hostvars_json")"
+server_ip="$(jq -er 'if (.server_lan_ip // "") | test("\\{\\{") then .ansible_host else .server_lan_ip // .ansible_host end' <<<"$hostvars_json")"
 base_domain="$(jq -er '.base_domain' <<<"$hostvars_json")"
 
 for service in cockpit glance grafana jenkins metabase n8n portainer prometheus; do

@@ -17,10 +17,11 @@
         k3s_flannel_interface_override
         if (k3s_flannel_interface_override | length > 0)
         else (
-          k3s_ipv4_addresses.stdout_lines
-          | select('search', server_lan_ip ~ '/')
+          (k3s_ipv4_addresses.stdout_lines
+          | select('search', ' ' ~ server_lan_ip ~ '/')
           | first
-        ).split()[1]
+          | default('')).split()[1:2] | first | default('')
+        )
       }}
 
 - name: Validar interface LAN detectada
@@ -28,6 +29,13 @@
     that:
       - resolved_k3s_flannel_interface | default('') | length > 0
     fail_msg: "Não foi possível encontrar a interface que contém server_lan_ip; defina k3s_flannel_interface no inventário local."
+
+- name: Validar token k3s
+  ansible.builtin.assert:
+    that:
+      - k3s_token | default('') | length > 0
+    fail_msg: "k3s_token não definido; defina em inventories/<env>/group_vars/vault.yml (ansible-vault)."
+  no_log: true
 
 - name: Instalar k3s single-node com versão pinada
   ansible.builtin.include_role:
