@@ -16,3 +16,12 @@ kubectl
 *.crt
 
 *.pem
+old/
+.env
+ansible/inventories/*/hosts.yml
+ansible/inventories/*/group_vars/all.yml
+ansible/inventories/*/group_vars/vault.yml
+ansible/secrets/*
+k8s/secrets/*.yaml
+!k8s/secrets/*.example.yaml
+**/node_modules/
