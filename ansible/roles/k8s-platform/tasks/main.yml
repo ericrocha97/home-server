@@ -1,1 +1,65 @@
-[]
+---
+- name: Verificar certificado TLS local
+  ansible.builtin.stat:
+    path: "{{ local_tls_cert_path }}"
+  register: traefik_tls_cert_file
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Falhar sem certificado TLS local
+  ansible.builtin.fail:
+    msg: "Certificado TLS não encontrado em {{ local_tls_cert_path }}. Gere o certificado mkcert antes do deploy."
+  when: not traefik_tls_cert_file.stat.exists
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Verificar chave TLS local
+  ansible.builtin.stat:
+    path: "{{ local_tls_key_path }}"
+  register: traefik_tls_key_file
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Falhar sem chave TLS local
+  ansible.builtin.fail:
+    msg: "Chave TLS não encontrada em {{ local_tls_key_path }}. Gere a chave mkcert antes do deploy."
+  when: not traefik_tls_key_file.stat.exists
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Aplicar Secret TLS do Traefik
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ traefik_tls_secret_name }}"
+        namespace: "{{ traefik_namespace }}"
+      type: kubernetes.io/tls
+      data:
+        tls.crt: "{{ lookup('file', local_tls_cert_path) | b64encode }}"
+        tls.key: "{{ lookup('file', local_tls_key_path) | b64encode }}"
+
+- name: Renderizar HelmChartConfig do Traefik
+  ansible.builtin.template:
+    src: traefik-helmchartconfig.yaml.j2
+    dest: "{{ traefik_dynamic_config_path }}"
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Aplicar HelmChartConfig do Traefik bundled
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    src: "{{ traefik_dynamic_config_path }}"
+
+- name: Aguardar Deployment do Traefik disponível
+  ansible.builtin.command: kubectl --kubeconfig={{ kubeconfig_path }} -n kube-system wait --for=condition=available deployment/traefik --timeout=180s
+  changed_when: false
