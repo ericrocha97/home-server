@@ -1,0 +1,7 @@
+---
+all:
+  children:
+    server:
+      hosts:
+        home-server-prod:
+          ansible_host: 192.0.2.11
