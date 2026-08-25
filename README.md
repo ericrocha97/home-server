@@ -25,11 +25,12 @@ Nada de aplicações futuras neste slice: sem Jenkins, n8n, Metabase, PostgreSQL
 │   ├── inventories/
 │   │   ├── lab/
 │   │   │   ├── hosts.yml              # ignorado — copiar de hosts.example.yml
-│   │   │   └── group_vars/all.yml     # ignorado — copiar de all.example.yml
+│   │   │   └── group_vars/all/          # ignorado — vars.yml (de all.example.yml) + vault.yml
 │   │   └── prod/
 │   │       ├── hosts.yml              # ignorado — copiar de hosts.example.yml
-│   │       └── group_vars/all.yml     # ignorado — copiar de all.example.yml
+│   │       └── group_vars/all/          # ignorado — vars.yml (de all.example.yml) + vault.yml
 │   ├── roles/{base,docker,cockpit,k3s,firewall,k8s-platform}/
+│   ├── roles/xanmanning.k3s/    # ignorada — reinstalável via ansible-galaxy (requirements.yml)
 │   └── secrets/               # ignorado — *.crt/*.key locais do mkcert
 ├── compose/                   # reservado para Slice 2 (host-native Docker Compose)
 ├── k8s/
@@ -40,6 +41,7 @@ Nada de aplicações futuras neste slice: sem Jenkins, n8n, Metabase, PostgreSQL
 │   ├── hosts/lab.hosts.example
 │   └── hosts/prod.hosts.example
 ├── old/                       # arquivo local ignorado — stack antiga preservada localmente, nunca versionada
+├── .venv/                      # ignorado — virtualenv do Ansible na máquina admin
 └── .env.example
 ```
 
@@ -47,42 +49,101 @@ Nada de aplicações futuras neste slice: sem Jenkins, n8n, Metabase, PostgreSQL
 
 ## Pré-requisitos
 
-- Ansible Core `2.20.1` na máquina de administração.
+- Python 3 na máquina de administração (o ambiente Ansible vive em `.venv/`, ignorado pelo Git).
 - Acesso SSH com chave ao host alvo.
 - `mkcert` instalado localmente para gerar TLS de `*.lab.arpa` / `*.home.arpa`.
-- Coleções/roles pinadas:
 
-  ```bash
-  pip install -r ansible/requirements.txt
-  ansible-galaxy collection install -r ansible/requirements.yml
-  ansible-galaxy role install -r ansible/requirements.yml
-  ```
+## Execução limpa (do clone ao provisionamento)
 
-- Inventário local criado a partir dos exemplos:
-
-  ```bash
-  cp ansible/inventories/lab/hosts.example.yml ansible/inventories/lab/hosts.yml
-  cp ansible/inventories/lab/group_vars/all.example.yml ansible/inventories/lab/group_vars/all.yml
-  # editar hosts.yml e all.yml com valores reais de lab (não commitar)
-  cp ansible/inventories/prod/hosts.example.yml ansible/inventories/prod/hosts.yml
-  cp ansible/inventories/prod/group_vars/all.example.yml ansible/inventories/prod/group_vars/all.yml
-  # editar para prod quando necessário (não commitar)
-  ```
-
-O `base_domain` é `lab.arpa` em `lab` e `home.arpa` em `prod`. O IP real do servidor (`ansible_host` / `server_lan_ip`) fica apenas nos `hosts.yml` ignorados.
-
-## Como executar
-
-Sempre a partir da raiz do repositório com `ANSIBLE_CONFIG` apontando para `ansible/ansible.cfg`:
+### 1. Preparar o ambiente
 
 ```bash
+git clone <repo> && cd home-server
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+python -m pip install --upgrade pip
+pip install -r ansible/requirements.txt
+
+ansible-galaxy collection install -r ansible/requirements.yml
+ansible-galaxy role install -r ansible/requirements.yml   # cria ansible/roles/xanmanning.k3s/ (ignorada)
+
 export ANSIBLE_CONFIG="$PWD/ansible/ansible.cfg"
 ```
+
+Sempre que abrir um terminal novo, reative o venv e reexporte o `ANSIBLE_CONFIG`.
+
+### 2. Preparar inventário (exemplo lab)
+
+```bash
+cp ansible/inventories/lab/hosts.example.yml \
+   ansible/inventories/lab/hosts.yml
+
+mkdir -p ansible/inventories/lab/group_vars/all
+
+cp ansible/inventories/lab/group_vars/all.example.yml \
+   ansible/inventories/lab/group_vars/all/vars.yml
+```
+
+Layout resultante (tudo ignorado pelo Git):
+
+```text
+ansible/inventories/lab/
+├── hosts.yml                 # ansible_host real do servidor
+└── group_vars/
+    └── all/
+        ├── vars.yml          # variáveis públicas (lan_cidr, k3s_version, ...)
+        └── vault.yml         # segredos (k3s_token)
+```
+
+Edite `hosts.yml` e `all/vars.yml` com os valores reais. Para `prod`, repita com o inventário `prod` (`base_domain: home.arpa`). O `base_domain` é `lab.arpa` em `lab`; o IP real (`ansible_host` / `server_lan_ip`) fica apenas nesses arquivos ignorados.
+
+### 3. Configurar o Vault
+
+```bash
+ansible-vault create ansible/inventories/lab/group_vars/all/vault.yml
+```
+
+Conteúdo mínimo (gere o token com `openssl rand -hex 32`; a senha do Vault fica fora do repositório):
+
+```yaml
+k3s_token: "<token-gerado>"
+```
+
+### 4. Validar antes de executar
+
+```bash
+ansible-playbook --syntax-check ansible/site.yml
+
+ansible-inventory -i ansible/inventories/lab/hosts.yml --graph --ask-vault-pass
+
+ansible -i ansible/inventories/lab/hosts.yml all -m ping \
+  --ask-become-pass --ask-vault-pass
+
+yamllint ansible/ k8s/          # se instalado no venv
+bash -n scripts/hosts/generate-hosts.sh
+```
+
+### 5. Gerar hosts auxiliares
+
+```bash
+./scripts/hosts/generate-hosts.sh lab
+```
+
+O script pedirá a senha do Vault automaticamente (decifra `group_vars/all/`) e imprime os mapeamentos — detalhes na seção "Hostnames" abaixo.
+
+### 6. Executar o provisionamento
 
 Bootstrap completo (lab):
 
 ```bash
-ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml
+ansible-playbook \
+  -i ansible/inventories/lab/hosts.yml \
+  -u "$HOME_SERVER_SSH_USER" \
+  --ask-become-pass \
+  --ask-vault-pass \
+  ansible/site.yml
 ```
 
 Execução por tags (exemplos):
@@ -96,16 +157,25 @@ ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER"
 ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags k8s-platform
 ```
 
-Validações locais sem SSH:
+Ordem intencional em `ansible/site.yml`: `base` → `docker` → `cockpit` → `k3s` → `firewall` → `k8s-platform`.
+
+### 7. Validar pós-provisionamento
+
+No servidor:
 
 ```bash
-ansible-playbook --syntax-check ansible/site.yml
-ansible-inventory -i ansible/inventories/lab/hosts.example.yml --graph
-yamllint ansible/ k8s/
-bash -n scripts/hosts/generate-hosts.sh
+sudo systemctl is-active docker cockpit.socket k3s
+sudo ufw status verbose
+sudo k3s kubectl get nodes
+sudo k3s kubectl get pods -A
 ```
 
-Ordem intencional em `ansible/site.yml`: `base` → `docker` → `cockpit` → `k3s` → `firewall` → `k8s-platform`.
+Acesso ao Cockpit:
+
+```text
+https://cockpit.lab.arpa        # via Traefik, cert mkcert confiável
+https://<IP_DO_SERVIDOR>:9090   # fallback direto, cert self-signed (aviso esperado)
+```
 
 ## TLS local com mkcert
 

@@ -26,4 +26,5 @@ ansible/secrets/*
 k8s/secrets/*.yaml
 !k8s/secrets/*.example.yaml
 **/node_modules/
+.venv/
 ansible/roles/xanmanning.k3s/*
