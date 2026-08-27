@@ -1,0 +1,337 @@
+---
+- name: Validar Vault obrigatório do Slice 2
+  ansible.builtin.assert:
+    that:
+      - postgres_superuser_password is defined and postgres_superuser_password | length > 0
+      - postgres_n8n_password is defined and postgres_n8n_password | length > 0
+      - postgres_metabase_password is defined and postgres_metabase_password | length > 0
+      - n8n_encryption_key is defined and n8n_encryption_key | length > 0
+      - jenkins_admin_password is defined and jenkins_admin_password | length > 0
+    fail_msg: "Vault do Slice 2 incompleto — defina postgres_superuser_password, postgres_n8n_password, postgres_metabase_password, n8n_encryption_key e jenkins_admin_password"
+  no_log: true
+
+- name: Validar referências de imagem completas e pinadas
+  ansible.builtin.assert:
+    that:
+      - compose_postgres_image is string
+      - compose_jenkins_base_image is string
+      - compose_n8n_image is string
+      - compose_metabase_image is string
+      - compose_postgres_image is match('^.+@sha256:[0-9a-f]{64}$')
+      - compose_jenkins_base_image is match('^.+@sha256:[0-9a-f]{64}$')
+      - compose_n8n_image is match('^.+@sha256:[0-9a-f]{64}$')
+      - compose_metabase_image is match('^.+@sha256:[0-9a-f]{64}$')
+      - "'latest' not in compose_postgres_image"
+      - "'latest' not in compose_jenkins_base_image"
+      - "'latest' not in compose_n8n_image"
+      - "'latest' not in compose_metabase_image"
+    fail_msg: "As quatro imagens do Slice 2 precisam de refs nome:tag@sha256:<64-hex> reais; refs vazias, somente tag e latest são proibidas."
+  no_log: true
+
+- name: Validar que senhas de DBs são distintas
+  ansible.builtin.assert:
+    that:
+      - postgres_n8n_password != postgres_metabase_password
+      - postgres_superuser_password != postgres_n8n_password
+      - postgres_superuser_password != postgres_metabase_password
+    fail_msg: "Nenhum serviço deve receber a senha do outro — use senhas distintas para n8n e metabase"
+  no_log: true
+
+- name: Validar nomes de databases e roles antes de interpolar SQL
+  ansible.builtin.assert:
+    that:
+      - compose_postgres_db_n8n is match('^[a-z_][a-z0-9_]{0,62}$')
+      - compose_postgres_db_metabase is match('^[a-z_][a-z0-9_]{0,62}$')
+      - compose_postgres_user_n8n is match('^[a-z_][a-z0-9_]{0,62}$')
+      - compose_postgres_user_metabase is match('^[a-z_][a-z0-9_]{0,62}$')
+      - compose_postgres_db_n8n != compose_postgres_db_metabase
+      - compose_postgres_user_n8n != compose_postgres_user_metabase
+    fail_msg: "Nomes de databases e roles devem usar somente [a-z0-9_], começar por letra/_ e ser distintos."
+
+- name: Criar redes Docker externas
+  community.docker.docker_network:
+    name: "{{ item }}"
+    driver: bridge
+    state: present
+  loop:
+    - "{{ compose_network_automation }}"
+    - "{{ compose_network_data }}"
+
+- name: Criar diretórios de dados com ownership por serviço
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.uid }}"
+    group: "{{ item.gid }}"
+    mode: '0750'
+  loop:
+    - { path: "{{ compose_postgres_data_dir }}", uid: "{{ compose_postgres_uid }}", gid: "{{ compose_postgres_gid }}" }
+    - { path: "{{ compose_jenkins_data_dir }}", uid: "{{ compose_jenkins_uid }}", gid: "{{ compose_jenkins_gid }}" }
+    - { path: "{{ compose_n8n_data_dir }}", uid: "{{ compose_n8n_uid }}", gid: "{{ compose_n8n_gid }}" }
+    - { path: "{{ compose_metabase_data_dir }}", uid: "{{ compose_metabase_uid }}", gid: "{{ compose_metabase_gid }}" }
+
+- name: Garantir diretório compose no host
+  ansible.builtin.file:
+    path: "{{ compose_projects_root }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop: [postgres, jenkins, n8n, metabase]
+
+- name: Copiar compose.yaml versionado para o host
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../compose/{{ item }}/compose.yaml"
+    dest: "{{ compose_projects_root }}/{{ item }}/compose.yaml"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: [postgres, jenkins, n8n, metabase]
+
+- name: Copiar Dockerfile e entrypoint custom do Jenkins para o host
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../compose/jenkins/{{ item }}"
+    dest: "{{ compose_projects_root }}/jenkins/{{ item }}"
+    owner: root
+    group: root
+    mode: "{{ '0755' if item == 'docker-entrypoint-group-fix.sh' else '0644' }}"
+  loop:
+    - Dockerfile
+    - docker-entrypoint-group-fix.sh
+
+- name: Criar diretório init.groovy.d para bootstrap de segurança Jenkins antes de qualquer up
+  ansible.builtin.file:
+    path: "{{ compose_jenkins_data_dir }}/init.groovy.d"
+    state: directory
+    owner: "{{ compose_jenkins_uid }}"
+    group: "{{ compose_jenkins_gid }}"
+    mode: '0750'
+
+- name: Renderizar Groovy de criação de admin Jenkins antes de qualquer up
+  ansible.builtin.template:
+    src: jenkins-init-admin.groovy.j2
+    dest: "{{ compose_jenkins_data_dir }}/init.groovy.d/01-admin.groovy"
+    owner: "{{ compose_jenkins_uid }}"
+    group: "{{ compose_jenkins_gid }}"
+    mode: '0640'
+  no_log: true
+
+- name: Calcular fingerprint do contexto e da imagem base custom Jenkins
+  ansible.builtin.shell: |
+    set -o pipefail
+    {
+      printf '%s\n' '{{ compose_jenkins_base_image }}'
+      sha256sum Dockerfile docker-entrypoint-group-fix.sh
+    } | sha256sum | cut -d' ' -f1
+  args:
+    chdir: "{{ compose_projects_root }}/jenkins"
+    executable: /bin/bash
+  register: jenkins_build_fingerprint
+  changed_when: false
+
+- name: Definir tag local determinística da imagem Jenkins
+  ansible.builtin.set_fact:
+    compose_jenkins_build_tag: "{{ compose_jenkins_build_tag_prefix }}-{{ jenkins_build_fingerprint.stdout[:12] }}"
+
+- name: Gerar .env postgres no host
+  ansible.builtin.template:
+    src: postgres.env.j2
+    dest: "{{ compose_projects_root }}/postgres/.env"
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Gerar .env jenkins no host
+  ansible.builtin.template:
+    src: jenkins.env.j2
+    dest: "{{ compose_projects_root }}/jenkins/.env"
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Gerar .env n8n no host
+  ansible.builtin.template:
+    src: n8n.env.j2
+    dest: "{{ compose_projects_root }}/n8n/.env"
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Gerar .env metabase no host
+  ansible.builtin.template:
+    src: metabase.env.j2
+    dest: "{{ compose_projects_root }}/metabase/.env"
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Subir PostgreSQL primeiro (pin por digest — evitar drift de tag mutável)
+  community.docker.docker_compose_v2:
+    project_src: "{{ compose_projects_root }}/postgres"
+    state: present
+    pull: missing
+
+- name: Aguardar PostgreSQL healthy (docker inspect)
+  ansible.builtin.command: docker inspect --format='{% raw %}{{.State.Health.Status}}{% endraw %}' postgres
+  register: postgres_health
+  retries: "{{ compose_health_retries }}"
+  delay: "{{ compose_health_delay }}"
+  until: postgres_health.stdout == "healthy"
+  changed_when: false
+  failed_when: postgres_health.stdout not in ["healthy", "starting"]
+
+- name: Aguardar que pg_isready aceite conexões (defense in depth)
+  ansible.builtin.command: docker exec postgres pg_isready -U postgres
+  register: postgres_ready
+  retries: 12
+  delay: 5
+  until: postgres_ready.rc == 0
+  changed_when: false
+
+- name: Inicializar databases PostgreSQL fora de transação (CREATE DATABASE não pode estar em DO $$)
+  ansible.builtin.shell: |
+    set -Eeuo pipefail
+
+    create_database_if_missing() {
+      local database="$1"
+      local exists
+      exists="$(docker exec postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -tAc \
+        "SELECT 1 FROM pg_database WHERE datname = '${database}'" | tr -d '[:space:]')"
+      if [[ "$exists" != "1" ]]; then
+        # CREATE DATABASE é um comando top-level deliberadamente separado de qualquer DO/transaction block.
+        docker exec postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
+          -c "CREATE DATABASE \"${database}\""
+      fi
+    }
+
+    create_database_if_missing '{{ compose_postgres_db_n8n }}'
+    create_database_if_missing '{{ compose_postgres_db_metabase }}'
+  args:
+    executable: /bin/bash
+  no_log: true
+  changed_when: false
+
+- name: Criar/atualizar role n8n com rotação de senha idempotente
+  ansible.builtin.shell: |
+    set -Eeuo pipefail
+    docker exec -i \
+      -e APP_DB_USER={{ compose_postgres_user_n8n | quote }} \
+      -e APP_DB_PASSWORD={{ postgres_n8n_password | quote }} \
+      postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
+    \getenv app_user APP_DB_USER
+    \getenv app_password APP_DB_PASSWORD
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'app_user') THEN
+        EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password');
+      END IF;
+    END
+    $$;
+    SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password') \gexec
+    SQL
+    docker exec postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
+      -c 'ALTER DATABASE "{{ compose_postgres_db_n8n }}" OWNER TO "{{ compose_postgres_user_n8n }}"' \
+      -c 'GRANT ALL PRIVILEGES ON DATABASE "{{ compose_postgres_db_n8n }}" TO "{{ compose_postgres_user_n8n }}"'
+  args:
+    executable: /bin/bash
+  no_log: true
+  changed_when: false
+
+- name: Criar/atualizar role Metabase com rotação de senha idempotente
+  ansible.builtin.shell: |
+    set -Eeuo pipefail
+    docker exec -i \
+      -e APP_DB_USER={{ compose_postgres_user_metabase | quote }} \
+      -e APP_DB_PASSWORD={{ postgres_metabase_password | quote }} \
+      postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
+    \getenv app_user APP_DB_USER
+    \getenv app_password APP_DB_PASSWORD
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'app_user') THEN
+        EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password');
+      END IF;
+    END
+    $$;
+    SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password') \gexec
+    SQL
+    docker exec postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
+      -c 'ALTER DATABASE "{{ compose_postgres_db_metabase }}" OWNER TO "{{ compose_postgres_user_metabase }}"' \
+      -c 'GRANT ALL PRIVILEGES ON DATABASE "{{ compose_postgres_db_metabase }}" TO "{{ compose_postgres_user_metabase }}"'
+  args:
+    executable: /bin/bash
+  no_log: true
+  changed_when: false
+
+- name: Subir n8n e Metabase (paralelo, ambos dependem só de postgres)
+  community.docker.docker_compose_v2:
+    project_src: "{{ compose_projects_root }}/{{ item }}"
+    state: present
+    pull: missing
+  loop: [n8n, metabase]
+
+- name: Aguardar n8n healthy
+  ansible.builtin.command: docker inspect --format='{% raw %}{{.State.Health.Status}}{% endraw %}' n8n
+  register: n8n_health
+  retries: "{{ compose_health_retries }}"
+  delay: "{{ compose_health_delay }}"
+  until: n8n_health.stdout == "healthy"
+  changed_when: false
+
+- name: Aguardar metabase healthy
+  ansible.builtin.command: docker inspect --format='{% raw %}{{.State.Health.Status}}{% endraw %}' metabase
+  register: metabase_health
+  retries: "{{ compose_health_retries }}"
+  delay: "{{ compose_health_delay }}"
+  until: metabase_health.stdout == "healthy"
+  changed_when: false
+
+- name: Buildar imagem custom Jenkins apenas para fingerprint novo
+  community.docker.docker_image:
+    name: "{{ compose_jenkins_image_name }}"
+    tag: "{{ compose_jenkins_build_tag }}"
+    source: build
+    force_source: false
+    build:
+      path: "{{ compose_projects_root }}/jenkins"
+      dockerfile: Dockerfile
+      pull: true
+      args:
+        JENKINS_BASE_IMAGE: "{{ compose_jenkins_base_image }}"
+
+- name: Subir Jenkins por último (requer init.groovy.d + imagem custom já buildada)
+  community.docker.docker_compose_v2:
+    project_src: "{{ compose_projects_root }}/jenkins"
+    state: present
+    pull: missing
+
+- name: Aguardar Jenkins healthy (curl já presente na imagem custom — healthcheck não quebra no primeiro boot)
+  ansible.builtin.command: docker inspect --format='{% raw %}{{.State.Health.Status}}{% endraw %}' jenkins
+  register: jenkins_health
+  retries: "{{ compose_health_retries }}"
+  delay: "{{ compose_health_delay }}"
+  until: jenkins_health.stdout == "healthy"
+  changed_when: false
+
+- name: Verificar que Jenkins exige autenticação antes de considerar 18080 seguro para LAN (pré-requisito para firewall)
+  ansible.builtin.command: curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:{{ compose_jenkins_port }}/api/json
+  register: jenkins_anon_code
+  retries: 6
+  delay: 5
+  until: jenkins_anon_code.stdout == "403"
+  changed_when: false
+  failed_when: jenkins_anon_code.stdout != "403"
+
+- name: Verificar que socket Docker está montado RW e grupo dockersock aplicado no PID 1
+  ansible.builtin.shell: |
+    set -euo pipefail
+    docker exec jenkins test -S /var/run/docker.sock
+    docker exec jenkins sh -c 'id jenkins | grep -q dockersock'
+    docker exec jenkins docker ps >/dev/null 2>&1 || docker exec jenkins sh -c 'docker ps >/dev/null'
+  args:
+    executable: /bin/bash
+  changed_when: false

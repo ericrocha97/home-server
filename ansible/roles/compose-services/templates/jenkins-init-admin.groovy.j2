@@ -1,0 +1,25 @@
+import jenkins.model.*
+import hudson.security.*
+import hudson.security.csrf.DefaultCrumbIssuer
+
+def instance = Jenkins.get()
+def env = System.getenv()
+def adminId = env['JENKINS_ADMIN_ID'] ?: 'admin'
+def adminPass = env['JENKINS_ADMIN_PASSWORD']
+if (adminPass == null || adminPass.trim().isEmpty()) {
+  throw new IllegalStateException("JENKINS_ADMIN_PASSWORD ausente — abortando bootstrap de segurança")
+}
+def hudsonRealm = new HudsonPrivateSecurityRealm(false)
+if (instance.getUser(adminId) == null) {
+  hudsonRealm.createAccount(adminId, adminPass)
+  println("Created admin user ${adminId} via init.groovy.d")
+}
+instance.setSecurityRealm(hudsonRealm)
+def authorizationStrategy = new FullControlOnceLoggedInAuthorizationStrategy()
+authorizationStrategy.setAllowAnonymousRead(false)
+instance.setAuthorizationStrategy(authorizationStrategy)
+instance.setCrumbIssuer(new DefaultCrumbIssuer(true))
+instance.save()
+def loc = JenkinsLocationConfiguration.get()
+loc.setUrl(env['JENKINS_URL'] ?: "https://jenkins.${env['BASE_DOMAIN'] ?: 'lab.arpa'}")
+loc.save()
