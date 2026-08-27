@@ -1,0 +1,53 @@
+---
+name: jenkins
+services:
+  jenkins:
+    image: "${JENKINS_IMAGE:?required role-built Jenkins image}"
+    container_name: jenkins
+    restart: unless-stopped
+    # user é tratado pelo entrypoint custom (gosu jenkins após group-fix); não fixar aqui para permitir groupmod
+    environment:
+      JENKINS_OPTS: "--prefix=/"
+      JAVA_OPTS: "-Djenkins.install.runSetupWizard=false"
+      JENKINS_URL: "${JENKINS_URL:-https://jenkins.lab.arpa}"
+      # Consumidas pelo Groovy init abaixo — nunca logar
+      JENKINS_ADMIN_ID: "${JENKINS_ADMIN_USER:-admin}"
+      JENKINS_ADMIN_PASSWORD: "${JENKINS_ADMIN_PASSWORD:?required}"
+    ports:
+      - "${JENKINS_PORT:-18080}:8080"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - jenkins_init_groovy:/usr/share/jenkins/ref/init.groovy.d:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - home-server-automation
+    healthcheck:
+      # Agora garantido pela imagem custom que instala curl; fallback mantido por robustez
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/login || wget -qO- http://localhost:8080/login || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  home-server-automation:
+    external: true
+
+volumes:
+  jenkins_home:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /srv/home-server/data/jenkins
+  jenkins_init_groovy:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /srv/home-server/data/jenkins/init.groovy.d

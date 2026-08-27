@@ -1,0 +1,47 @@
+---
+name: metabase
+services:
+  metabase:
+    image: "${METABASE_IMAGE:?required full image reference}"
+    container_name: metabase
+    restart: unless-stopped
+    user: "${METABASE_UID:-2000}:${METABASE_GID:-2000}"
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: "${METABASE_DB_NAME:-metabase}"
+      MB_DB_HOST: postgres
+      MB_DB_PORT: 5432
+      MB_DB_USER: "${METABASE_DB_USER:-metabase}"
+      MB_DB_PASS: "${METABASE_DB_PASSWORD:?required}"
+      MB_JETTY_HOST: 0.0.0.0
+      MB_JETTY_PORT: 3000
+      JAVA_TIMEZONE: "${TZ:-Etc/UTC}"
+    ports:
+      - "${METABASE_PORT:-13001}:3000"
+    volumes:
+      - metabase_data:/metabase-data
+    networks:
+      - home-server-data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/api/health || wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  home-server-data:
+    external: true
+
+volumes:
+  metabase_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /srv/home-server/data/metabase

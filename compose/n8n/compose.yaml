@@ -1,0 +1,55 @@
+---
+name: n8n
+services:
+  n8n:
+    image: "${N8N_IMAGE:?required full image reference}"
+    container_name: n8n
+    restart: unless-stopped
+    user: "${N8N_UID:-1000}:${N8N_GID:-1000}"
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: "${N8N_DB_NAME:-n8n}"
+      DB_POSTGRESDB_USER: "${N8N_DB_USER:-n8n}"
+      DB_POSTGRESDB_PASSWORD: "${N8N_DB_PASSWORD:?required}"
+      N8N_ENCRYPTION_KEY: "${N8N_ENCRYPTION_KEY:?required}"
+      N8N_HOST: "n8n.${BASE_DOMAIN:-lab.arpa}"
+      N8N_PORT: 5678
+      N8N_PROTOCOL: https
+      N8N_EDITOR_BASE_URL: "${N8N_EDITOR_BASE_URL:-https://n8n.lab.arpa}"
+      WEBHOOK_URL: "${WEBHOOK_URL:-https://n8n.lab.arpa/}"
+      GENERIC_TIMEZONE: "${TZ:-Etc/UTC}"
+      TZ: "${TZ:-Etc/UTC}"
+    ports:
+      - "${N8N_PORT_HOST:-15678}:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - home-server-automation
+      - home-server-data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz || curl -fsS http://localhost:5678/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  home-server-automation:
+    external: true
+  home-server-data:
+    external: true
+
+volumes:
+  n8n_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /srv/home-server/data/n8n
