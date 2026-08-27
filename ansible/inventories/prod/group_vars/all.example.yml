@@ -11,3 +11,22 @@ k3s_pod_cidr: 10.42.0.0/16
 k3s_service_cidr: 10.43.0.0/16
 k3s_flannel_interface: ""
 base_admin_user: "{{ ansible_user }}"
+
+# --- Slice 2 Compose ---
+# Preencher com as quatro refs completas nome:tag@sha256:<64-hex> obtidas no Step 1.
+compose_postgres_image: "postgres:17.5@sha256:aadf2c0696f5ef357aa7a68da995137f0cf17bad0bf6e1f17de06ae5c769b302"
+compose_jenkins_base_image: "jenkins/jenkins:2.504.3-lts-jdk17@sha256:dd570585c3adadefcfbeba915e27bf7feca1815a0ea8a659d46b51f54fc7ea06"
+compose_n8n_image: "n8nio/n8n:1.107.3@sha256:524bd974e19cd5a6972058c601084abb6b1b970d6a39f8bf8bbe05406a2450a1"
+compose_metabase_image: "metabase/metabase:v0.53.9@sha256:c133e3690fc5a8893d106c195bce2bae64dee85b8de03cad8a3f371f021848bc"
+compose_postgres_port: 15432
+compose_jenkins_port: 18080
+compose_n8n_port: 15678
+compose_metabase_port: 13001
+compose_postgres_uid: 999
+compose_postgres_gid: 999
+compose_jenkins_uid: 1000
+compose_jenkins_gid: 1000
+compose_n8n_uid: 1000
+compose_n8n_gid: 1000
+compose_metabase_uid: 2000
+compose_metabase_gid: 2000

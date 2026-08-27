@@ -1,0 +1,59 @@
+---
+# NUNCA usar latest; atualizar tag+digerir juntos
+# Imagens — obrigatórias no inventário; a task de validação rejeita valores vazios ou sem @sha256:.
+compose_postgres_image: "postgres:17.5@sha256:aadf2c0696f5ef357aa7a68da995137f0cf17bad0bf6e1f17de06ae5c769b302"
+compose_jenkins_base_image: "jenkins/jenkins:2.504.3-lts-jdk17@sha256:dd570585c3adadefcfbeba915e27bf7feca1815a0ea8a659d46b51f54fc7ea06"
+compose_n8n_image: "n8nio/n8n:1.107.3@sha256:524bd974e19cd5a6972058c601084abb6b1b970d6a39f8bf8bbe05406a2450a1"
+compose_metabase_image: "metabase/metabase:v0.53.9@sha256:c133e3690fc5a8893d106c195bce2bae64dee85b8de03cad8a3f371f021848bc"
+compose_jenkins_image_name: "local/jenkins-bluefin"
+compose_jenkins_build_tag_prefix: "2.504.3-lts-jdk17"
+
+# Portas publicadas (host) — overrides só por conflito comprovado
+compose_postgres_port: 15432
+compose_jenkins_port: 18080
+compose_n8n_port: 15678
+compose_metabase_port: 13001
+
+# Portas internas
+compose_postgres_internal_port: 5432
+compose_jenkins_internal_port: 8080
+compose_n8n_internal_port: 5678
+compose_metabase_internal_port: 3000
+
+# Redes externas
+compose_network_automation: home-server-automation
+compose_network_data: home-server-data
+
+# Paths
+compose_projects_root: /srv/home-server/compose
+compose_data_root: /srv/home-server/data
+compose_postgres_data_dir: "{{ compose_data_root }}/postgres"
+compose_jenkins_data_dir: "{{ compose_data_root }}/jenkins"
+compose_n8n_data_dir: "{{ compose_data_root }}/n8n"
+compose_metabase_data_dir: "{{ compose_data_root }}/metabase"
+
+# UID/GID por serviço — validar contra imagem escolhida (ex.: docker run --rm IMAGE id)
+compose_postgres_uid: 999
+compose_postgres_gid: 999
+compose_jenkins_uid: 1000
+compose_jenkins_gid: 1000
+compose_n8n_uid: 1000
+compose_n8n_gid: 1000
+compose_metabase_uid: 2000
+compose_metabase_gid: 2000
+
+# DB names/users — devem existir separados
+compose_postgres_db_n8n: n8n
+compose_postgres_user_n8n: n8n
+compose_postgres_db_metabase: metabase
+compose_postgres_user_metabase: metabase
+
+# Timeouts healthcheck
+compose_health_retries: 30
+compose_health_delay: 10
+compose_health_timeout: 5
+
+# Jenkins URL pública derivada de base_domain
+compose_jenkins_url: "https://jenkins.{{ base_domain }}"
+compose_n8n_editor_base_url: "https://n8n.{{ base_domain }}"
+compose_n8n_webhook_url: "https://n8n.{{ base_domain }}/"
