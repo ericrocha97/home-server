@@ -253,6 +253,115 @@ cat k8s/README.md
 
 4. **Hostnames**: Generate mappings with `./scripts/hosts/generate-hosts.sh lab|prod` and copy manually to the client `/etc/hosts` if name resolution is needed. The helper never edits `/etc/hosts` automatically.
 
+## Slice 2 — Shared Automation Database (`automation`) — Tasks 1–4
+
+Extends Slice 2 without changing app-internal DBs (`n8n` for n8n, `metabase` for Metabase). PostgreSQL runs only on `home-server-data`; n8n attaches to both `home-server-automation` and `home-server-data`, Jenkins only to `home-server-automation`, Metabase only to `home-server-data`. Ansible creates shared database `automation` (OWNER `automation_writer`) and roles `automation_writer`/`automation_reader`; n8n gets writer contract, Metabase gets reader contract. No application tables, workflows, dashboards, Services or EndpointSlices are created.
+
+### Topology and application boundaries
+
+Exact mapping:
+
+```text
+Jenkins --home-server-automation--> n8n
+n8n --home-server-data / automation_writer--> PostgreSQL / automation
+Metabase --home-server-data / automation_reader--> PostgreSQL / automation
+n8n --home-server-data / n8n--> PostgreSQL / n8n
+Metabase --home-server-data / metabase--> PostgreSQL / metabase
+```
+
+Jenkins has no direct PostgreSQL route, and `automation` is for shared CI/CD and automation data only. Jenkins is never attached to `home-server-data`; `automation` holds only shared CI/CD/automation data — do not store CI/CD data in `n8n` or `metabase` (they remain separate internal DBs). Least-privilege: `automation_writer` owns `automation` and has `USAGE, CREATE` on `public` + `ALL PRIVILEGES` on existing tables/sequences + default privileges for future objects; `automation_reader` has `CONNECT`, `USAGE` on `public`, `SELECT` on existing tables, `USAGE, SELECT` on sequences and matching default privileges via `ALTER DEFAULT PRIVILEGES FOR ROLE automation_writer ... GRANT ... TO automation_reader`. `REVOKE ALL` from `PUBLIC` on database and schema. `automation_reader` never gets `CREATE`/`INSERT`/`UPDATE`/`DELETE` or ownership.
+
+### Required Vault additions
+
+Both variables must be added to the environment-specific encrypted Vault before rerunning Ansible. They are stored only in the ignored, encrypted environment Vault (`ansible/inventories/<env>/group_vars/all/vault.yml`, 0600, `ansible-vault`); example inventories (`all.example.yml`) contain only non-secret names:
+
+```yaml
+compose_postgres_db_automation: automation
+compose_postgres_user_automation_writer: automation_writer
+compose_postgres_user_automation_reader: automation_reader
+```
+
+Sanitized Vault block (no real values):
+
+```yaml
+postgres_automation_writer_password: "<distinct strong password>"
+postgres_automation_reader_password: "<distinct strong password>"
+```
+
+Both must be non-empty, distinct from each other and from `postgres_superuser_password`, `postgres_n8n_password`, `postgres_metabase_password`; the role validates this with `no_log: true` and never prints values. Non-secret metadata also appears in generated host env `compose/postgres/.env` as `POSTGRES_AUTOMATION_DB=automation`, `POSTGRES_AUTOMATION_WRITER=automation_writer`, `POSTGRES_AUTOMATION_READER=automation_reader`.
+
+### Migration command and connection setup
+
+Additive migration — preserves existing n8n/Metabase data, adds only shared DB/roles and env contract:
+
+```bash
+ansible-playbook -i ansible/inventories/lab/hosts.yml \
+  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
+  ansible/site.yml --tags compose-services
+```
+
+Then restore firewall + Traefik stage (second stage already existed):
+
+```bash
+ansible-playbook -i ansible/inventories/lab/hosts.yml \
+  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
+  ansible/site.yml --tags firewall,k8s-platform
+```
+
+The first command must preserve the existing n8n and Metabase data and add only the shared database/roles and environment contract. The second command restores the firewall and Traefik stage.
+
+Connection contracts — No application tables are created by this task; `AUTOMATION_DB_*` is connection metadata only:
+
+- **n8n second PostgreSQL credential** (in addition to internal `DB_POSTGRESDB_*` → `n8n`): host `postgres`, port `5432`, database `automation`, user `automation_writer` (`postgres_automation_writer_password` → `AUTOMATION_DB_PASSWORD`). Compose `compose/n8n/compose.yaml:9-23` (`AUTOMATION_DB_HOST: "${AUTOMATION_DB_HOST:-postgres}"`, `AUTOMATION_DB_PORT: "${AUTOMATION_DB_PORT:-5432}"`, `AUTOMATION_DB_NAME: "${AUTOMATION_DB_NAME:-automation}"`, `AUTOMATION_DB_USER: "${AUTOMATION_DB_USER:-automation_writer}"`, `AUTOMATION_DB_PASSWORD: "${AUTOMATION_DB_PASSWORD:?required}"`); template `ansible/roles/compose-services/templates/n8n.env.j2` renders same with writer role/password. Internal `DB_POSTGRESDB_DATABASE=n8n` unchanged. Sanitized example `compose/n8n/.env.example`: `AUTOMATION_DB_USER=automation_writer`, `AUTOMATION_DB_PASSWORD=changeme-automation-writer`.
+
+- **Metabase data source `automation`** (same host/port/database with user `automation_reader`; `MB_DB_*` still `metabase` and must be configured via Metabase admin UI/API, not created automatically): host `postgres`, port `5432`, database `automation`, user `automation_reader` (`postgres_automation_reader_password` → `AUTOMATION_DB_PASSWORD`). Compose `compose/metabase/compose.yaml:9-18` and template `metabase.env.j2` with reader role. Sanitized example `compose/metabase/.env.example`: `AUTOMATION_DB_USER=automation_reader`, `AUTOMATION_DB_PASSWORD=changeme-automation-reader`. In both cases `AUTOMATION_DB_HOST=postgres`, `AUTOMATION_DB_PORT=5432`, `AUTOMATION_DB_NAME=automation`; generated `.env` files on host contain real Vault values and are ignored.
+
+Static validation (no Vault/host):
+
+```bash
+export ANSIBLE_CONFIG="$PWD/ansible/ansible.cfg"
+ansible-playbook --syntax-check ansible/site.yml
+yamllint ansible/ k8s/ compose/
+bash -n scripts/hosts/generate-hosts.sh
+docker compose --env-file compose/n8n/.env.example -f compose/n8n/compose.yaml config >/dev/null
+docker compose --env-file compose/metabase/.env.example -f compose/metabase/compose.yaml config >/dev/null
+git diff --check
+git status --short
+```
+
+Confirm no tracked file contains a real password, `192.168.100.179`, `latest`, or unpinned image.
+
+### Lab verification (requires Vault + live host) — documented, run on lab host
+
+These steps require `vault.yml` with the two new secrets and a running `postgres` container. Documented here with expected outputs; run on lab host when available. Never print generated `.env` contents.
+
+```bash
+# 5 — additive migration already shown above; first run preserves n8n/metabase data, second restores firewall/Traefik
+
+# 6 — DB permissions
+sudo docker exec postgres psql -X -U postgres -d postgres -c \
+  "SELECT datname FROM pg_database WHERE datname IN ('n8n', 'metabase', 'automation') ORDER BY datname"
+# expected: automation, metabase, n8n
+
+sudo docker exec postgres psql -X -U postgres -d postgres -c \
+  "SELECT rolname, rolcanlogin FROM pg_roles WHERE rolname IN ('n8n', 'metabase', 'automation_writer', 'automation_reader') ORDER BY rolname"
+# expected: 4 roles, rolcanlogin = t for each
+
+sudo docker exec postgres psql -X -U postgres -d automation -c \
+  "SELECT has_schema_privilege('automation_reader', 'public', 'USAGE') AS reader_usage, has_schema_privilege('automation_reader', 'public', 'CREATE') AS reader_create"
+# expected: reader_usage = t, reader_create = f
+
+# 7 — networks & service behavior
+sudo docker inspect n8n --format '{{json .NetworkSettings.Networks}}'
+# expected: contains both home-server-automation and home-server-data
+sudo docker inspect metabase --format '{{json .NetworkSettings.Networks}}'
+# expected: contains only home-server-data
+sudo docker inspect jenkins --format '{{json .NetworkSettings.Networks}}'
+# expected: contains only home-server-automation — Jenkins has no direct PostgreSQL route
+sudo docker exec jenkins curl -fsS http://n8n:5678/healthz >/dev/null
+# expected: exit 0 (Jenkins reaches n8n via home-server-automation)
+```
+
 ## Security Notes
 
 - Docker daemon exposed only via Unix socket; no `2375`/`2376` TCP listeners.

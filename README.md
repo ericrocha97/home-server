@@ -260,6 +260,82 @@ Detalhes:
 - Hostnames HTTPS (via Traefik file provider + `traefik-tls`): `https://jenkins.lab.arpa`, `https://n8n.lab.arpa`, `https://metabase.lab.arpa` (prod `*.home.arpa`). Exemplo placeholder lab: `192.0.2.10` para `jenkins.lab.arpa` etc. — nunca usar IP real em docs versionados, apenas placeholder `192.0.2.10`/`192.0.2.11` e runtime `server_lan_ip`.
 - Verificação pós-bootstrap: `curl -s -o /dev/null -w "%{http_code}" http://192.0.2.10:18080/login` deve retornar `403` para anônimo (autenticado), não `200` sem auth.
 
+### Shared automation database (`automation`) — extensão Slice 2 (Tasks 1–4)
+
+PostgreSQL continua apenas em `home-server-data`; n8n usa ambas as redes, Jenkins permanece em `home-server-automation`, Metabase em `home-server-data`. O Ansible cria database `automation` com owner `automation_writer` e roles `automation_writer`/`automation_reader`; n8n recebe contrato writer e Metabase contrato reader. Nenhuma tabela de aplicação, workflow n8n ou dashboard Metabase é criada aqui — apenas infraestrutura.
+
+Topologia exata:
+
+```text
+Jenkins --home-server-automation--> n8n
+n8n --home-server-data / automation_writer--> PostgreSQL / automation
+Metabase --home-server-data / automation_reader--> PostgreSQL / automation
+n8n --home-server-data / n8n--> PostgreSQL / n8n
+Metabase --home-server-data / metabase--> PostgreSQL / metabase
+```
+
+Jenkins has no direct PostgreSQL route, and `automation` is for shared CI/CD and automation data only. `automation` é exclusivamente para dados compartilhados de CI/CD/automação; manter `n8n` e `metabase` como databases internas separadas — não colocar dados de CI/CD nelas.
+
+Permissões: `automation_writer` tem `CONNECT` em `automation`, `USAGE, CREATE` em `public`, `ALL PRIVILEGES` em tabelas/sequências existentes e default privileges para objetos futuros; `automation_reader` tem `CONNECT`, `USAGE` em `public`, `SELECT` em tabelas existentes, `USAGE, SELECT` em sequências + default privileges correspondentes. `automation_reader` nunca recebe `CREATE`/`INSERT`/`UPDATE`/`DELETE` nem ownership. `REVOKE ALL` de `PUBLIC` em database e schema.
+
+Vault — adicione ao Vault criptografado do ambiente (`ansible/inventories/<env>/group_vars/all/vault.yml`, 0600, `ansible-vault`, ignorado) antes de reexecutar Ansible. Ambas as variáveis devem ser senhas fortes distintas entre si e de `postgres_superuser_password`, `postgres_n8n_password`, `postgres_metabase_password`; o Ansible valida não-vazio, distinção e nunca loga valores (`no_log: true`):
+
+```yaml
+postgres_automation_writer_password: "<distinct strong password>"
+postgres_automation_reader_password: "<distinct strong password>"
+```
+
+Sem essas duas variáveis o play falha na validação inicial.
+
+Migração aditiva (preserva dados n8n/metabase existentes — adiciona apenas database/roles/contrato):
+
+```bash
+ansible-playbook -i ansible/inventories/lab/hosts.yml \
+  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
+  ansible/site.yml --tags compose-services
+```
+
+Em seguida reaplica firewall + Traefik:
+
+```bash
+ansible-playbook -i ansible/inventories/lab/hosts.yml \
+  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
+  ansible/site.yml --tags firewall,k8s-platform
+```
+
+O primeiro comando preserva os dados existentes de n8n e Metabase e adiciona apenas a shared database/roles e o contrato de ambiente. O segundo restaura firewall e Traefik. Execução idempotente; segundo estágio já existia antes.
+
+Conexão — n8n segunda credencial PostgreSQL (além de `DB_POSTGRESDB_*` que continua em `n8n`): host `postgres`, port `5432`, database `automation`, user `automation_writer` (password do Vault → `AUTOMATION_DB_PASSWORD` no container; `AUTOMATION_DB_HOST=postgres`, `AUTOMATION_DB_PORT=5432`, `AUTOMATION_DB_NAME=automation`).
+
+Metabase data source `automation` (mesmo host/port/database, user `automation_reader`; `MB_DB_*` continua em `metabase` e precisa ser configurado via UI/API de administração do Metabase — não é criada automaticamente): host `postgres`, port `5432`, database `automation`, user `automation_reader`.
+
+Composes expõem `AUTOMATION_DB_PASSWORD: "${AUTOMATION_DB_PASSWORD:?required}"` (`n8n` com `automation_writer`, `metabase` com `automation_reader`); templates `ansible/roles/compose-services/templates/n8n.env.j2` e `metabase.env.j2` renderizam com as variáveis Vault correspondentes. Exemplos sanitizados em `compose/n8n/.env.example` (`changeme-automation-writer`) e `compose/metabase/.env.example` (`changeme-automation-reader`); `.env` gerado no host contém valores Vault reais e é ignorado. No application tables are created by this task — `AUTOMATION_DB_*` é contrato de conexão apenas.
+
+Verificação em lab (requer Vault e host vivo) — documentado para execução no host lab quando disponível (nunca imprimir `.env` gerado):
+
+```bash
+sudo docker exec postgres psql -X -U postgres -d postgres -c \
+  "SELECT datname FROM pg_database WHERE datname IN ('n8n', 'metabase', 'automation') ORDER BY datname"
+# esperado: automation | metabase | n8n
+
+sudo docker exec postgres psql -X -U postgres -d postgres -c \
+  "SELECT rolname, rolcanlogin FROM pg_roles WHERE rolname IN ('n8n', 'metabase', 'automation_writer', 'automation_reader') ORDER BY rolname"
+# esperado: 4 roles, todos rolcanlogin = t
+
+sudo docker exec postgres psql -X -U postgres -d automation -c \
+  "SELECT has_schema_privilege('automation_reader', 'public', 'USAGE') AS reader_usage, has_schema_privilege('automation_reader', 'public', 'CREATE') AS reader_create"
+# esperado: reader_usage = t, reader_create = f
+
+sudo docker inspect n8n --format '{{json .NetworkSettings.Networks}}'
+# esperado: contém home-server-automation e home-server-data
+sudo docker inspect metabase --format '{{json .NetworkSettings.Networks}}'
+# esperado: contém apenas home-server-data
+sudo docker inspect jenkins --format '{{json .NetworkSettings.Networks}}'
+# esperado: contém apenas home-server-automation (sem home-server-data) — Jenkins has no direct PostgreSQL route
+sudo docker exec jenkins curl -fsS http://n8n:5678/healthz >/dev/null
+# esperado: 0 (Jenkins alcança n8n via home-server-automation, sem rota PostgreSQL)
+```
+
 ## O que os Slices 1–2 não fazem
 
 - Não instala CasaOS.
