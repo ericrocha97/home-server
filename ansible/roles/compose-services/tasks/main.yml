@@ -51,10 +51,20 @@
     that:
       - compose_postgres_db_n8n is match('^[a-z_][a-z0-9_]{0,62}$')
       - compose_postgres_db_metabase is match('^[a-z_][a-z0-9_]{0,62}$')
+      - compose_postgres_db_automation is match('^[a-z_][a-z0-9_]{0,62}$')
       - compose_postgres_user_n8n is match('^[a-z_][a-z0-9_]{0,62}$')
       - compose_postgres_user_metabase is match('^[a-z_][a-z0-9_]{0,62}$')
+      - compose_postgres_user_automation_writer is match('^[a-z_][a-z0-9_]{0,62}$')
+      - compose_postgres_user_automation_reader is match('^[a-z_][a-z0-9_]{0,62}$')
       - compose_postgres_db_n8n != compose_postgres_db_metabase
+      - compose_postgres_db_n8n != compose_postgres_db_automation
+      - compose_postgres_db_metabase != compose_postgres_db_automation
       - compose_postgres_user_n8n != compose_postgres_user_metabase
+      - compose_postgres_user_n8n != compose_postgres_user_automation_writer
+      - compose_postgres_user_n8n != compose_postgres_user_automation_reader
+      - compose_postgres_user_metabase != compose_postgres_user_automation_writer
+      - compose_postgres_user_metabase != compose_postgres_user_automation_reader
+      - compose_postgres_user_automation_writer != compose_postgres_user_automation_reader
     fail_msg: "Nomes de databases e roles devem usar somente [a-z0-9_], começar por letra/_ e ser distintos."
 
 - name: Criar redes Docker externas
@@ -201,6 +211,33 @@
   until: postgres_ready.rc == 0
   changed_when: false
 
+- name: Criar/atualizar roles automation_writer e automation_reader com rotação de senha idempotente
+  ansible.builtin.shell: |
+    set -Eeuo pipefail
+    docker exec -i \
+      -e AUTOMATION_WRITER_USER={{ compose_postgres_user_automation_writer | quote }} \
+      -e AUTOMATION_WRITER_PASSWORD={{ postgres_automation_writer_password | quote }} \
+      -e AUTOMATION_READER_USER={{ compose_postgres_user_automation_reader | quote }} \
+      -e AUTOMATION_READER_PASSWORD={{ postgres_automation_reader_password | quote }} \
+      postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
+    \getenv writer_user AUTOMATION_WRITER_USER
+    \getenv writer_password AUTOMATION_WRITER_PASSWORD
+    \getenv reader_user AUTOMATION_READER_USER
+    \getenv reader_password AUTOMATION_READER_PASSWORD
+    SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'writer_user', :'writer_password')
+      WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'writer_user')
+      \gexec
+    SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', :'writer_user', :'writer_password') \gexec
+    SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'reader_user', :'reader_password')
+      WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'reader_user')
+      \gexec
+    SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', :'reader_user', :'reader_password') \gexec
+    SQL
+  args:
+    executable: /bin/bash
+  no_log: true
+  changed_when: false
+
 - name: Inicializar databases PostgreSQL fora de transação (CREATE DATABASE não pode estar em DO $$)
   ansible.builtin.shell: |
     set -Eeuo pipefail
@@ -219,6 +256,47 @@
 
     create_database_if_missing '{{ compose_postgres_db_n8n }}'
     create_database_if_missing '{{ compose_postgres_db_metabase }}'
+
+    automation_exists="$(docker exec postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -tAc \
+      "SELECT 1 FROM pg_database WHERE datname = '{{ compose_postgres_db_automation }}'" | tr -d '[:space:]')"
+    if [[ "$automation_exists" != "1" ]]; then
+      docker exec postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
+        -c 'CREATE DATABASE "{{ compose_postgres_db_automation }}" OWNER "{{ compose_postgres_user_automation_writer }}"'
+    else
+      docker exec postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
+        -c 'ALTER DATABASE "{{ compose_postgres_db_automation }}" OWNER TO "{{ compose_postgres_user_automation_writer }}"'
+    fi
+  args:
+    executable: /bin/bash
+  no_log: true
+  changed_when: false
+
+- name: Aplicar permissões de conexão na database automation
+  ansible.builtin.shell: |
+    set -Eeuo pipefail
+    docker exec postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
+      -c 'REVOKE ALL ON DATABASE "{{ compose_postgres_db_automation }}" FROM PUBLIC' \
+      -c 'GRANT CONNECT ON DATABASE "{{ compose_postgres_db_automation }}" TO "{{ compose_postgres_user_automation_writer }}"' \
+      -c 'GRANT CONNECT ON DATABASE "{{ compose_postgres_db_automation }}" TO "{{ compose_postgres_user_automation_reader }}"'
+  args:
+    executable: /bin/bash
+  no_log: true
+  changed_when: false
+
+- name: Aplicar permissões de schema e objetos futuros na database automation
+  ansible.builtin.shell: |
+    set -Eeuo pipefail
+    docker exec -i postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d "{{ compose_postgres_db_automation }}" <<'EOSQL'
+    REVOKE ALL ON SCHEMA public FROM PUBLIC;
+    GRANT USAGE, CREATE ON SCHEMA public TO "{{ compose_postgres_user_automation_writer }}";
+    GRANT USAGE ON SCHEMA public TO "{{ compose_postgres_user_automation_reader }}";
+    GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO "{{ compose_postgres_user_automation_writer }}";
+    GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO "{{ compose_postgres_user_automation_writer }}";
+    GRANT SELECT ON ALL TABLES IN SCHEMA public TO "{{ compose_postgres_user_automation_reader }}";
+    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "{{ compose_postgres_user_automation_reader }}";
+    ALTER DEFAULT PRIVILEGES FOR ROLE "{{ compose_postgres_user_automation_writer }}" IN SCHEMA public GRANT SELECT ON TABLES TO "{{ compose_postgres_user_automation_reader }}";
+    ALTER DEFAULT PRIVILEGES FOR ROLE "{{ compose_postgres_user_automation_writer }}" IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO "{{ compose_postgres_user_automation_reader }}";
+    EOSQL
   args:
     executable: /bin/bash
   no_log: true
