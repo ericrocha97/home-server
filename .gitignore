@@ -18,6 +18,8 @@ kubectl
 *.pem
 old/
 .env
+compose/*/.env
+compose/**/.env
 ansible/inventories/*/hosts.yml
 ansible/inventories/*/group_vars/all.yml
 ansible/inventories/*/group_vars/all/

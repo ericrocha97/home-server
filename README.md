@@ -29,10 +29,10 @@ Nada de aplicações futuras neste slice: sem Jenkins, n8n, Metabase, PostgreSQL
 │   │   └── prod/
 │   │       ├── hosts.yml              # ignorado — copiar de hosts.example.yml
 │   │       └── group_vars/all/          # ignorado — vars.yml (de all.example.yml) + vault.yml
-│   ├── roles/{base,docker,cockpit,k3s,firewall,k8s-platform}/
+│   ├── roles/{base,docker,cockpit,k3s,compose-services,firewall,k8s-platform}/
 │   ├── roles/xanmanning.k3s/    # ignorada — reinstalável via ansible-galaxy (requirements.yml)
 │   └── secrets/               # ignorado — *.crt/*.key locais do mkcert
-├── compose/                   # reservado para Slice 2 (host-native Docker Compose)
+├── compose/                   # host-native Docker Compose (postgres, jenkins, n8n, metabase) — Slice 2
 ├── k8s/
 │   ├── ingress/README.md      # limite: rotas Docker via file provider, não via K8s Service
 │   └── README.md              # plataforma Kubernetes
@@ -153,11 +153,21 @@ ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER"
 ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass ansible/site.yml --tags docker
 ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass ansible/site.yml --tags cockpit
 ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags k3s
+ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags compose-services
 ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags firewall
 ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags k8s-platform
 ```
 
-Ordem intencional em `ansible/site.yml`: `base` → `docker` → `cockpit` → `k3s` → `firewall` → `k8s-platform`.
+Ordem intencional em `ansible/site.yml`: `base` → `docker` → `cockpit` → `k3s` → `compose-services` → `firewall` → `k8s-platform`.
+
+> **Janela transitória (primeiro bootstrap completo sem `--tags`)**: `compose-services` sobe containers com portas `18080/13001/15678/15432` publicadas **antes** de `firewall` aplicar UFW/DOCKER-USER. Essa janela existe também no Slice 1 (Cockpit `9090`/`6443` antes do firewall) e é aceita; a execução recomendada no laboratório é separar os passos e fechar a janela imediatamente:
+>
+> ```bash
+> ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags compose-services
+> ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags firewall,k8s-platform
+> ```
+>
+> Agora inclui `15432` (DB) — por isso `firewall_postgres_direct_enable: false` + `DOCKER-USER DROP` padrão é crítico mesmo durante a janela. A execução completa continua suportada depois da primeira aceitação do fluxo separado. `compose-services` precisa estar antes de `firewall` (para que firewall abra portas de serviços que já existem) e antes de `k8s-platform` (para que Traefik aponte para backends já `healthy`). Se `firewall` estivesse antes, abriria portas sem alvo; se `k8s-platform` estivesse antes, Traefik healthcheck falharia até Compose subir.
 
 ### 7. Validar pós-provisionamento
 
@@ -234,19 +244,33 @@ Sem hostname, o Cockpit permanece acessível diretamente pela porta publicada no
 
 - `https://<IP_DO_SERVIDOR>:9090`
 
-Slice 1 não abre portas de aplicações futuras nem NodePorts de aplicação; apenas `22`, `80`, `443`, `9090` e `6443` a partir de `lan_cidr`/`vpn_cidr`, além do forwarding CNI.
+Slice 1 não abre portas de aplicações futuras nem NodePorts de aplicação; apenas `22`, `80`, `443`, `9090` e `6443` a partir de `lan_cidr`/`vpn_cidr`, além do forwarding CNI. Após Slice 2, Jenkins/n8n/Metabase também têm fallback direto via `server_lan_ip` (ex. `192.0.2.10:18080` para Jenkins, `15678` n8n, `13001` Metabase, `15432` PostgreSQL) mas restritos a LAN/VPN e `k3s_pod_cidr→host`.
 
-## O que o Slice 1 não faz
+## Slice 2 — Compose
+
+Redes `home-server-automation` e `home-server-data` criadas pelo Ansible.
+Serviços vazios: PostgreSQL `15432`, Jenkins `18080`, n8n `15678`, Metabase `13001`.
+Jenkins usa imagem custom local com tag derivada do fingerprint do Dockerfile/entrypoint/base image (docker.io + curl + gh) com dockersock RW montado via `/var/run/docker.sock:/var/run/docker.sock` e bootstrap de segurança `init.groovy.d/01-admin.groovy` — segunda exceção privilegiada além do Portainer Agent (spec-mãe). Acesso direto via `server_lan_ip:porta` e HTTPS via `jenkins|n8n|metabase.<base_domain>` pelo Traefik file provider. Nenhum restore é executado; Jenkins sobe vazio mas já autenticado (403 para anônimo). Portas liberadas apenas para LAN/VPN e `k3s_pod_cidr→host`, e `18080` só após verificação de auth.
+
+Detalhes:
+
+- Jenkins `8080→18080`, n8n `5678→15678`, Metabase `3000→13001`, PostgreSQL `5432→15432`.
+- Jenkins healthcheck via `curl -fsS http://localhost:8080/login`; PostgreSQL via `pg_isready`; n8n `/healthz`; Metabase `/api/health`.
+- Volumes bind em `/srv/home-server/data/<serviço>` com ownership por UID/GID (postgres 999, jenkins/n8n 1000, metabase 2000) e logging `json-file` `10m`/`3`.
+- Hostnames HTTPS (via Traefik file provider + `traefik-tls`): `https://jenkins.lab.arpa`, `https://n8n.lab.arpa`, `https://metabase.lab.arpa` (prod `*.home.arpa`). Exemplo placeholder lab: `192.0.2.10` para `jenkins.lab.arpa` etc. — nunca usar IP real em docs versionados, apenas placeholder `192.0.2.10`/`192.0.2.11` e runtime `server_lan_ip`.
+- Verificação pós-bootstrap: `curl -s -o /dev/null -w "%{http_code}" http://192.0.2.10:18080/login` deve retornar `403` para anônimo (autenticado), não `200` sem auth.
+
+## O que os Slices 1–2 não fazem
 
 - Não instala CasaOS.
-- Não cria Services ou EndpointSlices legados para rotear serviços host-native; serviços Compose futuros serão roteados diretamente pelo file provider do Traefik bundled, sem objetos Kubernetes.
-- Não executa restore automático de dados nem deploy de aplicações Compose.
+- Não cria Services ou EndpointSlices legados para rotear serviços host-native; serviços Compose (Jenkins, n8n, Metabase) são roteados diretamente pelo file provider do Traefik bundled, sem objetos Kubernetes (`k8s/ingress/README.md`).
+- Não executa restore automático de dados; Slice 2 sobe serviços **vazios** (PostgreSQL, Jenkins, n8n, Metabase) sem dados de backup.
 - Não modifica automaticamente `/etc/hosts` de clientes.
 
 ## Próximos slices
 
-- **Slice 2**: Compose host-native (Jenkins, n8n, Metabase, PostgreSQL e rede de dados).
-- **Slice 3**: Dashboard Glance e observabilidade (Portainer, Grafana, Prometheus) sobre a fundação do Slice 1.
+- **Slice 2 — Compose** (concluído): redes `home-server-automation`/`home-server-data`, PostgreSQL `15432`, Jenkins `18080` (imagem custom), n8n `15678`, Metabase `13001`, file provider para 3 backends — ver seção acima.
+- **Slice 3**: Dashboard Glance e observabilidade (Portainer, Grafana, Prometheus) sobre a fundação do Slice 1–2.
 - **Slices seguintes**: restore e automações adicionais.
 
 ## Segurança e notas

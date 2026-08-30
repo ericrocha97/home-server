@@ -1,4 +1,13 @@
 ---
+# yamllint disable rule:line-length
+# Transient window note: on first full bootstrap (site.yml without --tags),
+# compose-services publishes 18080/13001/15678/15432 before firewall applies
+# UFW/DOCKER-USER. Window also exists in Slice 1 (9090/6443 before firewall)
+# and is accepted; recommended lab first bootstrap is two-step to close it:
+#   ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags compose-services  # yamllint disable-line rule:line-length
+#   ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags firewall,k8s-platform  # yamllint disable-line rule:line-length
+# firewall_postgres_direct_enable: false + DOCKER-USER DROP remains critical
+# during the window — full run remains supported after first split execution.
 - name: Bootstrap Home Server host and k3s
   hosts: server
   become: true
@@ -12,6 +21,8 @@
       tags: [cockpit]
     - role: k3s
       tags: [k3s]
+    - role: compose-services
+      tags: [compose-services]
     - role: firewall
       tags: [firewall]
     - role: k8s-platform

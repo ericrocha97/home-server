@@ -1,6 +1,6 @@
 # AGENTS.md - Home Server Infrastructure Repository
 
-This repository provisions a home server from a clean Ubuntu 26.04 lab-first workflow. Slice 1 installs the host base, Docker, Cockpit, single-node k3s and the bundled Traefik in `kube-system` with a file provider for `lab.arpa` / `home.arpa` hostnames.
+This repository provisions a home server from a clean Ubuntu 26.04 lab-first workflow. Slice 1 installs the host base, Docker, Cockpit, single-node k3s and the bundled Traefik in `kube-system` with a file provider for `lab.arpa` / `home.arpa` hostnames. Slice 2 adds host-native Compose services (PostgreSQL, Jenkins, n8n, Metabase) with `home-server-automation`/`home-server-data` networks and 3 Traefik file-provider backends.
 
 ## Repository Structure
 
@@ -30,8 +30,9 @@ This repository provisions a home server from a clean Ubuntu 26.04 lab-first wor
 │   │   ├── docker/            # Docker Engine + Compose plugin, no TCP
 │   │   ├── cockpit/           # Cockpit on 9090 with Traefik proxy awareness
 │   │   ├── k3s/               # pinned k3s single-node + LAN interface detection
-│   │   ├── firewall/          # UFW allowlist for Slice 1 + CNI forward policy
-│   │   └── k8s-platform/      # Secret kube-system/traefik-tls + HelmChartConfig
+│   │   ├── compose-services/  # networks, .env via Vault, Jenkins custom image + dockersock RW + init.groovy.d, healthcheck order
+│   │   ├── firewall/          # UFW allowlist + DOCKER-USER + CNI forward policy (Slice 1+2)
+│   │   └── k8s-platform/      # Secret kube-system/traefik-tls + HelmChartConfig + file provider (cockpit + jenkins/n8n/metabase)
 │   └── secrets/               # ignored — lab-tls.crt/key, prod-tls.crt/key
 ├── compose/                   # host-native Docker Compose services (Slice 2)
 ├── k8s/                       # Kubernetes manifests
@@ -69,6 +70,7 @@ ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER"
 ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass ansible/site.yml --tags docker
 ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass ansible/site.yml --tags cockpit
 ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags k3s
+ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags compose-services
 ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags firewall
 ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags k8s-platform
 
@@ -245,9 +247,9 @@ cat k8s/README.md
 
 3. **Order of Execution** (`ansible/site.yml`):
    ```
-   base → docker → cockpit → k3s → firewall → k8s-platform
+   base → docker → cockpit → k3s → compose-services → firewall → k8s-platform
    ```
-   The host and Docker prerequisites exist before k3s; firewall is enabled only after k3s; Traefik is configured only after the Kubernetes API is healthy.
+   The host and Docker prerequisites exist before k3s; firewall is enabled only after k3s; `compose-services` before `firewall` ensures ports have targets and before `k8s-platform` ensures Traefik points to `healthy` backends; Traefik is configured only after the Kubernetes API is healthy.
 
 4. **Hostnames**: Generate mappings with `./scripts/hosts/generate-hosts.sh lab|prod` and copy manually to the client `/etc/hosts` if name resolution is needed. The helper never edits `/etc/hosts` automatically.
 
