@@ -5,9 +5,11 @@
       - postgres_superuser_password is defined and postgres_superuser_password | length > 0
       - postgres_n8n_password is defined and postgres_n8n_password | length > 0
       - postgres_metabase_password is defined and postgres_metabase_password | length > 0
+      - postgres_automation_writer_password is defined and postgres_automation_writer_password | length > 0
+      - postgres_automation_reader_password is defined and postgres_automation_reader_password | length > 0
       - n8n_encryption_key is defined and n8n_encryption_key | length > 0
       - jenkins_admin_password is defined and jenkins_admin_password | length > 0
-    fail_msg: "Vault do Slice 2 incompleto — defina postgres_superuser_password, postgres_n8n_password, postgres_metabase_password, n8n_encryption_key e jenkins_admin_password"
+    fail_msg: "Vault do Slice 2 incompleto — defina postgres_superuser_password, postgres_n8n_password, postgres_metabase_password, postgres_automation_writer_password, postgres_automation_reader_password, n8n_encryption_key e jenkins_admin_password"
   no_log: true
 
 - name: Validar referências de imagem completas e pinadas
@@ -34,7 +36,14 @@
       - postgres_n8n_password != postgres_metabase_password
       - postgres_superuser_password != postgres_n8n_password
       - postgres_superuser_password != postgres_metabase_password
-    fail_msg: "Nenhum serviço deve receber a senha do outro — use senhas distintas para n8n e metabase"
+      - postgres_superuser_password != postgres_automation_writer_password
+      - postgres_superuser_password != postgres_automation_reader_password
+      - postgres_n8n_password != postgres_automation_writer_password
+      - postgres_n8n_password != postgres_automation_reader_password
+      - postgres_metabase_password != postgres_automation_writer_password
+      - postgres_metabase_password != postgres_automation_reader_password
+      - postgres_automation_writer_password != postgres_automation_reader_password
+    fail_msg: "Todas as senhas do Slice 2 devem ser distintas — use senhas distintas para postgres_superuser_password, postgres_n8n_password, postgres_metabase_password, postgres_automation_writer_password e postgres_automation_reader_password"
   no_log: true
 
 - name: Validar nomes de databases e roles antes de interpolar SQL
@@ -224,13 +233,9 @@
       postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
     \getenv app_user APP_DB_USER
     \getenv app_password APP_DB_PASSWORD
-    DO $$
-    BEGIN
-      IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'app_user') THEN
-        EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password');
-      END IF;
-    END
-    $$;
+    SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password')
+      WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'app_user')
+      \gexec
     SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password') \gexec
     SQL
     docker exec postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
@@ -250,13 +255,9 @@
       postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
     \getenv app_user APP_DB_USER
     \getenv app_password APP_DB_PASSWORD
-    DO $$
-    BEGIN
-      IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'app_user') THEN
-        EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password');
-      END IF;
-    END
-    $$;
+    SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password')
+      WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'app_user')
+      \gexec
     SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password') \gexec
     SQL
     docker exec postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \

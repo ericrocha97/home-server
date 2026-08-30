@@ -30,3 +30,6 @@ compose_n8n_uid: 1000
 compose_n8n_gid: 1000
 compose_metabase_uid: 2000
 compose_metabase_gid: 2000
+compose_postgres_db_automation: automation
+compose_postgres_user_automation_writer: automation_writer
+compose_postgres_user_automation_reader: automation_reader

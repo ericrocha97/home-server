@@ -47,6 +47,9 @@ compose_postgres_db_n8n: n8n
 compose_postgres_user_n8n: n8n
 compose_postgres_db_metabase: metabase
 compose_postgres_user_metabase: metabase
+compose_postgres_db_automation: automation
+compose_postgres_user_automation_writer: automation_writer
+compose_postgres_user_automation_reader: automation_reader
 
 # Timeouts healthcheck
 compose_health_retries: 30
