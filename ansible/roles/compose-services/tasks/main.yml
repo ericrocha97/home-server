@@ -118,6 +118,114 @@
     - Dockerfile
     - docker-entrypoint-group-fix.sh
 
+- name: Validar opt-in explícito para reset limpo do Jenkins
+  ansible.builtin.assert:
+    that:
+      - jenkins_clean_reset_confirmed is defined
+      - jenkins_clean_reset_confirmed is sameas true
+    fail_msg: "Jenkins clean reset requer jenkins_clean_reset_confirmed: true no inventário real — ajuste apenas para o baseline limpo (exemplo mantém false)"
+
+- name: Validar que diretório Jenkins alvo é exatamente /srv/home-server/data/jenkins
+  ansible.builtin.assert:
+    that:
+      - compose_jenkins_data_dir == "/srv/home-server/data/jenkins"
+    fail_msg: "Caminho Jenkins inesperado — abortando para não remover diretório errado"
+
+- name: Verificar se container Jenkins existe
+  ansible.builtin.command: docker inspect jenkins
+  register: jenkins_container_check
+  changed_when: false
+  failed_when: false
+
+- name: Definir fato se container Jenkins existe
+  ansible.builtin.set_fact:
+    jenkins_container_exists: "{{ jenkins_container_check.rc == 0 }}"
+
+- name: Consultar Jenkins API para preflight zero-state (jobs sem builds) — quando container existe
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ compose_jenkins_port }}/api/json?tree=jobs[name,builds[number]]"
+    user: "admin"
+    password: "{{ jenkins_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    status_code: [200]
+    timeout: 10
+  register: jenkins_api_preflight
+  no_log: true
+  when: jenkins_container_exists
+
+- name: Assert Jenkins está em zero-state via API (zero jobs e zero builds)
+  ansible.builtin.assert:
+    that:
+      - jenkins_api_preflight.json is defined
+      - jenkins_api_preflight.json.jobs is defined
+      - jenkins_api_preflight.json.jobs | length == 0
+    fail_msg: "Jenkins preflight via API falhou — jobs ou builds existem, abortando reset limpo e deixando dados intactos"
+  no_log: true
+  when: jenkins_container_exists
+
+- name: Verificar existência do diretório de jobs no disco (quando container ausente)
+  ansible.builtin.stat:
+    path: "/srv/home-server/data/jenkins/jobs"
+  register: jenkins_jobs_dir_stat
+  when: not jenkins_container_exists
+
+- name: Listar jobs no disco quando container ausente
+  ansible.builtin.command: find "/srv/home-server/data/jenkins/jobs" -mindepth 1 -maxdepth 1 -type d -print
+  register: jenkins_jobs_on_disk
+  changed_when: false
+  failed_when: false
+  when: not jenkins_container_exists and jenkins_jobs_dir_stat.stat.exists
+
+- name: Assert diretório de jobs vazio no disco (container ausente)
+  ansible.builtin.assert:
+    that:
+      - jenkins_jobs_on_disk.stdout_lines | length == 0
+    fail_msg: "Jenkins preflight on-disk falhou — diretórios de jobs existem, abortando e deixando dados intactos"
+  when: not jenkins_container_exists and jenkins_jobs_dir_stat.stat.exists
+
+- name: Verificar builds no disco (container ausente)
+  ansible.builtin.shell: find "/srv/home-server/data/jenkins/jobs" -type d -path "*/builds/[0-9]*" -print | head -n 20
+  args:
+    executable: /bin/bash
+  register: jenkins_builds_on_disk
+  changed_when: false
+  failed_when: false
+  when: not jenkins_container_exists and jenkins_jobs_dir_stat.stat.exists
+
+- name: Assert nenhum build no disco (container ausente)
+  ansible.builtin.assert:
+    that:
+      - jenkins_builds_on_disk.stdout_lines | length == 0
+    fail_msg: "Jenkins preflight on-disk falhou — builds existem, abortando"
+  when: not jenkins_container_exists and jenkins_jobs_dir_stat.stat.exists
+
+- name: Parar e remover container Jenkins antes do reset limpo (após preflight OK)
+  community.docker.docker_container:
+    name: jenkins
+    state: absent
+  when: jenkins_container_exists
+
+- name: Remover diretório Jenkins apenas após preflight zero-state OK — container existe
+  ansible.builtin.file:
+    path: "/srv/home-server/data/jenkins"
+    state: absent
+  when: jenkins_container_exists
+
+- name: Remover diretório Jenkins quando container ausente e disco confirmado limpo
+  ansible.builtin.file:
+    path: "/srv/home-server/data/jenkins"
+    state: absent
+  when: not jenkins_container_exists
+
+- name: Recriar diretório Jenkins limpo com ownership correto
+  ansible.builtin.file:
+    path: "/srv/home-server/data/jenkins"
+    state: directory
+    owner: "{{ compose_jenkins_uid }}"
+    group: "{{ compose_jenkins_gid }}"
+    mode: '0750'
+
 - name: Criar diretório init.groovy.d para bootstrap de segurança Jenkins antes de qualquer up
   ansible.builtin.file:
     path: "{{ compose_jenkins_data_dir }}/init.groovy.d"
