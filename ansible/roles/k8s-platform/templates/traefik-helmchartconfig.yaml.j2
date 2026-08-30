@@ -22,6 +22,24 @@ spec:
                   - websecure
                 service: cockpit
                 tls: {}
+              jenkins:
+                rule: "Host(`jenkins.{{ base_domain }}`)"
+                entryPoints:
+                  - websecure
+                service: jenkins
+                tls: {}
+              n8n:
+                rule: "Host(`n8n.{{ base_domain }}`)"
+                entryPoints:
+                  - websecure
+                service: n8n
+                tls: {}
+              metabase:
+                rule: "Host(`metabase.{{ base_domain }}`)"
+                entryPoints:
+                  - websecure
+                service: metabase
+                tls: {}
             services:
               cockpit:
                 loadBalancer:
@@ -33,6 +51,30 @@ spec:
                     path: /
                     interval: 10s
                     timeout: 3s
+              jenkins:
+                loadBalancer:
+                  servers:
+                    - url: "http://{{ server_lan_ip }}:{{ jenkins_port }}"
+                  healthCheck:
+                    path: /login
+                    interval: 10s
+                    timeout: 3s
+              n8n:
+                loadBalancer:
+                  servers:
+                    - url: "http://{{ server_lan_ip }}:{{ n8n_port }}"
+                  healthCheck:
+                    path: /healthz
+                    interval: 10s
+                    timeout: 3s
+              metabase:
+                loadBalancer:
+                  servers:
+                    - url: "http://{{ server_lan_ip }}:{{ metabase_port }}"
+                  healthCheck:
+                    path: /api/health
+                    interval: 15s
+                    timeout: 5s
             serversTransports:
               cockpit-transport:
                 insecureSkipVerify: true
