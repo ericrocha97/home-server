@@ -10,3 +10,20 @@ firewall_slice1_tcp_ports:
   - { port: '443', comment: 'Traefik HTTPS' }
   - { port: '9090', comment: 'Cockpit' }
   - { port: '6443', comment: 'Kubernetes API' }
+firewall_slice2_tcp_ports:
+  - { port: "{{ compose_jenkins_port | default(18080) }}", comment: 'Jenkins' }
+  - { port: "{{ compose_metabase_port | default(13001) }}", comment: 'Metabase' }
+  - { port: "{{ compose_n8n_port | default(15678) }}", comment: 'n8n' }
+# Backhaul Traefik (k3s pod CIDR -> host)
+firewall_compose_backend_ports:
+  - { port: "{{ compose_jenkins_port | default(18080) }}", comment: 'Traefik backend Jenkins' }
+  - { port: "{{ compose_metabase_port | default(13001) }}", comment: 'Traefik backend Metabase' }
+  - { port: "{{ compose_n8n_port | default(15678) }}", comment: 'Traefik backend n8n' }
+# PostgreSQL direto é bloqueado por padrão
+firewall_postgres_direct_enable: false
+firewall_postgres_port: "{{ compose_postgres_port | default(15432) }}"
+# Mitigação Docker iptables bypass; não desabilitar enquanto houver portas publicadas
+firewall_docker_user_chain_fix: true
+firewall_docker_user_chain: HOME_SERVER_DOCKER
+firewall_docker_user_script_path: /usr/local/sbin/home-server-docker-user.sh
+firewall_docker_user_unit_name: home-server-docker-user.service

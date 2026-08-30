@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+iptables_bin=/usr/sbin/iptables
+docker_user_chain="{{ firewall_docker_user_chain }}"
+
+for attempt in {1..30}; do
+  if "$iptables_bin" -nL DOCKER-USER >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+"$iptables_bin" -nL DOCKER-USER >/dev/null 2>&1 || {
+  printf 'DOCKER-USER chain is unavailable after Docker start\n' >&2
+  exit 1
+}
+
+"$iptables_bin" -N "$docker_user_chain" 2>/dev/null || true
+"$iptables_bin" -F "$docker_user_chain"
+
+# Remove duplicate/stale jumps, then install ours before Docker's default RETURN.
+while "$iptables_bin" -C DOCKER-USER -j "$docker_user_chain" 2>/dev/null; do
+  "$iptables_bin" -D DOCKER-USER -j "$docker_user_chain"
+done
+"$iptables_bin" -I DOCKER-USER 1 -j "$docker_user_chain"
+
+# DOCKER-USER runs after Docker DNAT. --ctorigdst/--ctorigdstport retain the
+# original host address and published port instead of the container address.
+{% for source in resolved_firewall_trusted_cidrs + [k3s_pod_cidr] %}
+{% for item in firewall_slice2_tcp_ports %}
+"$iptables_bin" -A "$docker_user_chain" -s "{{ source }}" -p tcp \
+  -m conntrack --ctstate NEW --ctorigdst "{{ server_lan_ip }}" \
+  --ctorigdstport "{{ item.port }}" -m comment \
+  --comment "Allow {{ source }} to {{ item.comment }}" -j RETURN
+{% endfor %}
+{% endfor %}
+
+{% if firewall_postgres_direct_enable %}
+{% for source in resolved_firewall_trusted_cidrs %}
+"$iptables_bin" -A "$docker_user_chain" -s "{{ source }}" -p tcp \
+  -m conntrack --ctstate NEW --ctorigdst "{{ server_lan_ip }}" \
+  --ctorigdstport "{{ firewall_postgres_port }}" -m comment \
+  --comment "Allow {{ source }} to PostgreSQL" -j RETURN
+{% endfor %}
+{% endif %}
+
+{% for item in firewall_slice2_tcp_ports %}
+"$iptables_bin" -A "$docker_user_chain" -p tcp \
+  -m conntrack --ctstate NEW --ctorigdst "{{ server_lan_ip }}" \
+  --ctorigdstport "{{ item.port }}" -m comment \
+  --comment "Drop non-trusted to {{ item.comment }}" -j DROP
+{% endfor %}
+{% if not firewall_postgres_direct_enable %}
+"$iptables_bin" -A "$docker_user_chain" -p tcp \
+  -m conntrack --ctstate NEW --ctorigdst "{{ server_lan_ip }}" \
+  --ctorigdstport "{{ firewall_postgres_port }}" -m comment \
+  --comment "Drop direct PostgreSQL by default" -j DROP
+{% endif %}
+
+# Other forwarded traffic remains under Docker/k3s policy.
+"$iptables_bin" -A "$docker_user_chain" -j RETURN
