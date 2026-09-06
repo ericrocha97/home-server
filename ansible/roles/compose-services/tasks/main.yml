@@ -139,18 +139,23 @@
     - plugins.txt
     - docker-entrypoint-group-fix.sh
 
-- name: Validar opt-in explícito para reset limpo do Jenkins
-  ansible.builtin.assert:
-    that:
-      - jenkins_clean_reset_confirmed is defined
-      - jenkins_clean_reset_confirmed is sameas true
-    fail_msg: "Jenkins clean reset requer jenkins_clean_reset_confirmed: true no inventário real — ajuste apenas para o baseline limpo (exemplo mantém false)"
-
+# Jenkins clean baseline — one-shot destructive reset with steady-state no-op.
+# Reruns are no-ops when the marker exists (already clean); to re-run the
+# one-shot, remove the marker file below AND set jenkins_clean_reset_confirmed: true
+# in the real (ignored) inventory. Never remove any other path: the exact-path
+# assert stays fail-closed. No backup/restore/migration is performed anywhere.
 - name: Validar que diretório Jenkins alvo é exatamente /srv/home-server/data/jenkins
   ansible.builtin.assert:
     that:
       - compose_jenkins_data_dir == "/srv/home-server/data/jenkins"
     fail_msg: "Caminho Jenkins inesperado — abortando para não remover diretório errado"
+
+- name: Verificar marcador one-shot do baseline limpo Jenkins
+  ansible.builtin.stat:
+    path: "{{ compose_jenkins_data_dir }}/.clean-baseline-complete"
+    follow: false
+  register: jenkins_baseline_marker
+  changed_when: false
 
 - name: Verificar se container Jenkins existe
   ansible.builtin.command: docker inspect jenkins
@@ -183,7 +188,9 @@
       - jenkins_api_preflight.json.jobs | length == 0
     fail_msg: "Jenkins preflight via API falhou — jobs ou builds existem, abortando reset limpo e deixando dados intactos"
   no_log: true
-  when: jenkins_container_exists
+  when:
+    - jenkins_container_exists
+    - not jenkins_baseline_marker.stat.exists
 
 - name: Verificar existência do diretório de jobs no disco (quando container ausente)
   ansible.builtin.stat:
@@ -203,7 +210,10 @@
     that:
       - jenkins_jobs_on_disk.stdout_lines | length == 0
     fail_msg: "Jenkins preflight on-disk falhou — diretórios de jobs existem, abortando e deixando dados intactos"
-  when: not jenkins_container_exists and jenkins_jobs_dir_stat.stat.exists
+  when:
+    - not jenkins_container_exists
+    - jenkins_jobs_dir_stat.stat.exists
+    - not jenkins_baseline_marker.stat.exists
 
 - name: Verificar builds no disco (container ausente)
   ansible.builtin.shell: find "/srv/home-server/data/jenkins/jobs" -type d -path "*/builds/[0-9]*" -print | head -n 20
@@ -219,25 +229,75 @@
     that:
       - jenkins_builds_on_disk.stdout_lines | length == 0
     fail_msg: "Jenkins preflight on-disk falhou — builds existem, abortando"
-  when: not jenkins_container_exists and jenkins_jobs_dir_stat.stat.exists
+  when:
+    - not jenkins_container_exists
+    - jenkins_jobs_dir_stat.stat.exists
+    - not jenkins_baseline_marker.stat.exists
+
+- name: Definir fato se preflight Jenkins já está limpo (zero jobs/builds ou dir ausente)
+  ansible.builtin.set_fact:
+    jenkins_preflight_clean: >-
+      {{
+        (jenkins_container_exists and jenkins_api_preflight.json is defined
+          and jenkins_api_preflight.json.jobs is defined
+          and (jenkins_api_preflight.json.jobs | length == 0))
+        or (not jenkins_container_exists and (
+          (jenkins_jobs_dir_stat is not defined)
+          or (jenkins_jobs_dir_stat.stat is defined and not jenkins_jobs_dir_stat.stat.exists)
+          or ((jenkins_jobs_on_disk.stdout_lines | default([]) | length == 0)
+            and (jenkins_builds_on_disk.stdout_lines | default([]) | length == 0))
+        ))
+      }}
+  no_log: true
+
+- name: Validar opt-in explícito para reset limpo do Jenkins (one-shot, apenas quando marcador ausente)
+  ansible.builtin.assert:
+    that:
+      - jenkins_clean_reset_confirmed is defined
+      - jenkins_clean_reset_confirmed is sameas true or jenkins_preflight_clean
+    fail_msg: "Jenkins clean reset requer jenkins_clean_reset_confirmed: true no inventário real — ajuste apenas para o baseline limpo (exemplo mantém false). Quando preflight já está limpo e sem confirmação, o reset é pulado com aviso; quando sujo e sem confirmação, falha fechado."
+  no_log: true
+  when: not jenkins_baseline_marker.stat.exists
+
+- name: Avisar baseline Jenkins já concluído — rerun é no-op (steady state)
+  ansible.builtin.debug:
+    msg: "Jenkins clean baseline already complete (marker present) — skipping destructive reset (steady-state no-op). To re-run one-shot, remove {{ compose_jenkins_data_dir }}/.clean-baseline-complete and set jenkins_clean_reset_confirmed: true."
+  when: jenkins_baseline_marker.stat.exists
+
+- name: Avisar reset pulado — preflight limpo sem confirmação (sem wipe)
+  ansible.builtin.debug:
+    msg: "Jenkins preflight already clean and jenkins_clean_reset_confirmed != true — skipping destructive reset with warning (fail-closed only when dirty)."
+  when:
+    - not jenkins_baseline_marker.stat.exists
+    - jenkins_preflight_clean
+    - jenkins_clean_reset_confirmed is not sameas true
 
 - name: Parar e remover container Jenkins antes do reset limpo (após preflight OK)
   community.docker.docker_container:
     name: jenkins
     state: absent
-  when: jenkins_container_exists
+  when:
+    - jenkins_container_exists
+    - not jenkins_baseline_marker.stat.exists
+    - jenkins_clean_reset_confirmed is sameas true
 
 - name: Remover diretório Jenkins apenas após preflight zero-state OK — container existe
   ansible.builtin.file:
     path: "/srv/home-server/data/jenkins"
     state: absent
-  when: jenkins_container_exists
+  when:
+    - jenkins_container_exists
+    - not jenkins_baseline_marker.stat.exists
+    - jenkins_clean_reset_confirmed is sameas true
 
 - name: Remover diretório Jenkins quando container ausente e disco confirmado limpo
   ansible.builtin.file:
     path: "/srv/home-server/data/jenkins"
     state: absent
-  when: not jenkins_container_exists
+  when:
+    - not jenkins_container_exists
+    - not jenkins_baseline_marker.stat.exists
+    - jenkins_clean_reset_confirmed is sameas true
 
 - name: Recriar diretório Jenkins limpo com ownership correto
   ansible.builtin.file:
@@ -246,6 +306,17 @@
     owner: "{{ compose_jenkins_uid }}"
     group: "{{ compose_jenkins_gid }}"
     mode: '0750'
+
+- name: Registrar marcador one-shot do baseline limpo Jenkins (após wipe confirmado)
+  ansible.builtin.copy:
+    dest: "{{ compose_jenkins_data_dir }}/.clean-baseline-complete"
+    content: "clean-baseline-complete\n"
+    owner: "{{ compose_jenkins_uid }}"
+    group: "{{ compose_jenkins_gid }}"
+    mode: '0644'
+  when:
+    - not jenkins_baseline_marker.stat.exists
+    - jenkins_clean_reset_confirmed is sameas true
 
 - name: Criar diretório init.groovy.d para bootstrap de segurança Jenkins antes de qualquer up
   ansible.builtin.file:

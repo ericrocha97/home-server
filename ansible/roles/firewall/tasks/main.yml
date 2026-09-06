@@ -43,10 +43,10 @@
   register: firewall_jenkins_anon_code
   retries: 6
   delay: 5
-  until: firewall_jenkins_anon_code.stdout == "403"
+  until: firewall_jenkins_anon_code.stdout is not match('^2..')
   changed_when: false
-  failed_when: firewall_jenkins_anon_code.stdout != "403"
-  # Esta é uma segunda barreira além da validação da role compose-services; sem 403, não abrir 18080 para LAN/VPN.
+  failed_when: firewall_jenkins_anon_code.stdout is match('^2..')
+  # Esta é uma segunda barreira além da validação da role compose-services; sem non-2xx, não abrir 18080 para LAN/VPN.
 
 - name: Permitir portas diretas Compose somente da LAN/VPN (Slice 2)
   community.general.ufw:

@@ -264,6 +264,7 @@ Detalhes:
 - Volumes bind em `/srv/home-server/data/<serviço>` com ownership por UID/GID (postgres 999, jenkins/n8n 1000, metabase 2000) e logging `json-file` `10m`/`3`.
 - Hostnames HTTPS (via Traefik file provider + `traefik-tls`): `https://jenkins.lab.arpa`, `https://n8n.lab.arpa`, `https://metabase.lab.arpa` (prod `*.home.arpa`). Exemplo placeholder lab: `192.0.2.10` para `jenkins.lab.arpa` etc. — nunca usar IP real em docs versionados, apenas placeholder `192.0.2.10`/`192.0.2.11` e runtime `server_lan_ip`.
 - Verificação pós-bootstrap: `curl -s -o /dev/null -w "%{http_code}" http://192.0.2.10:18080/login` deve retornar `403` para anônimo (autenticado), não `200` sem auth.
+- Jenkins clean baseline é one-shot com steady-state no-op: o reset destrutivo (`/srv/home-server/data/jenkins`) roda apenas quando o marcador `/srv/home-server/data/jenkins/.clean-baseline-complete` está ausente **e** `jenkins_clean_reset_confirmed: true` no inventário real (exemplos mantêm `false`). Reruns com marcador presente são no-ops; preflight limpo sem confirmação pula com aviso; sujo sem confirmação falha fechado sem apagar dados. Para reverter o one-shot, remova o marcador e confirme explicitamente.
 
 ### Shared automation database (`automation`) — extensão Slice 2 (Tasks 1–4)
 

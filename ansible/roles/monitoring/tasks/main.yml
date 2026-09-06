@@ -207,7 +207,7 @@
         ports:
           - name: http
             protocol: TCP
-            port: "{{ monitoring_prometheus_service_port }}"
+            port: "{{ monitoring_prometheus_service_port | int }}"
             targetPort: 9090
 
 - name: Assert stable Prometheus Service has ready endpoints
@@ -249,7 +249,7 @@
         ports:
           - name: http
             protocol: TCP
-            port: "{{ monitoring_grafana_service_port }}"
+            port: "{{ monitoring_grafana_service_port | int }}"
             targetPort: 3000
 
 - name: Assert stable Grafana Service has ready endpoints

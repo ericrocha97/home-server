@@ -57,7 +57,7 @@ spec:
   ports:
     - name: agent
       protocol: TCP
-      port: "{{ portainer_agent_port }}"
+      port: {{ portainer_agent_port | int }}
       targetPort: 9001
 ---
 apiVersion: apps/v1

@@ -22,10 +22,13 @@ firewall_compose_backend_ports:
 # Read-only Docker provider backhaul (k3s pod CIDR -> host only, never LAN/VPN)
 firewall_provider_backhaul_ports:
   - { port: '12375', comment: 'Docker socket proxy (read-only)' }
-# Human-facing NodePorts reachable from LAN/VPN (Slice 3: Portainer UI only —
-# 12375 must never join this allowlist; the socket proxy stays pod-only).
+# Human-facing NodePorts reachable from LAN/VPN (Slice 3: Portainer UI +
+# Grafana + Prometheus — 12375 must never join this allowlist; the socket
+# proxy stays pod-only).
 firewall_nodeport_allowlist:
   - { port: '30900', comment: 'Portainer UI' }
+  - { port: '30300', comment: 'Grafana UI' }
+  - { port: '30909', comment: 'Prometheus UI' }
 # Portainer Docker Agent backhaul (k3s pod CIDR -> host only, never LAN/VPN)
 firewall_portainer_agent_backhaul_ports:
   - { port: '9001', comment: 'Portainer Docker Agent (admin)' }

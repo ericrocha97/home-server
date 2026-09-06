@@ -40,6 +40,11 @@ compose_postgres_user_automation_reader: automation_reader
 # --- Slice 3 platform foundation (non-secret) ---
 docker_socket_proxy_port: 12375
 docker_metrics_exporter_port: 9797
+# Exporter prod override (commented example — lab keeps local build+import flow).
+# Prod sets this in the ignored inventory (ansible/inventories/prod/group_vars/all.yml)
+# with a registry digest, e.g.:
+# docker_metrics_exporter_mode: built
+# docker_metrics_exporter_image: "registry.home.arpa/labmonitor-docker-exporter:1.0.0@sha256:<64-hex-digest>"
 monitoring_chart_version: "88.6.1"
 monitoring_prometheus_service_name: prometheus
 monitoring_prometheus_service_port: 9090

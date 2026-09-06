@@ -1228,8 +1228,14 @@ class TestSlice3Task6Portainer(unittest.TestCase):
         server = read(PORTAINER_SERVER_TEMPLATE)
         self.assertIn("type: NodePort", server,
                       f"{PORTAINER_SERVER_TEMPLATE} Server Service must be NodePort")
-        self.assertIn('nodePort: "{{ portainer_nodeport }}"', server,
-                      f"{PORTAINER_SERVER_TEMPLATE} must use {{{{ portainer_nodeport }}}}")
+        self.assertIn("nodePort: {{ portainer_nodeport | int }}", server,
+                      f"{PORTAINER_SERVER_TEMPLATE} must render nodePort as native int")
+        self.assertIn("port: {{ portainer_service_port | int }}", server,
+                      f"{PORTAINER_SERVER_TEMPLATE} must render port as native int")
+        self.assertNotIn('port: "{{ portainer_service_port }}"', server,
+                         f"{PORTAINER_SERVER_TEMPLATE} must not quote Service port as string")
+        self.assertNotIn('nodePort: "{{ portainer_nodeport }}"', server,
+                         f"{PORTAINER_SERVER_TEMPLATE} must not quote nodePort as string")
         self.assertNotIn("30900", server,
                          f"{PORTAINER_SERVER_TEMPLATE} must use the variable, not a literal")
         agent = read(PORTAINER_AGENT_TEMPLATE)
@@ -1237,10 +1243,15 @@ class TestSlice3Task6Portainer(unittest.TestCase):
                       f"{PORTAINER_AGENT_TEMPLATE} Agent Service must stay ClusterIP")
         self.assertNotIn("nodePort", agent,
                          f"{PORTAINER_AGENT_TEMPLATE} must not expose a NodePort")
+        self.assertIn("port: {{ portainer_agent_port | int }}", agent,
+                      f"{PORTAINER_AGENT_TEMPLATE} must render port as native int")
+        self.assertNotIn('port: "{{ portainer_agent_port }}"', agent,
+                         f"{PORTAINER_AGENT_TEMPLATE} must not quote Service port as string")
         fw_defaults = read(FIREWALL_DEFAULTS)
         allowlist = top_level_block(fw_defaults, "firewall_nodeport_allowlist")
-        self.assertIn("30900", allowlist,
-                      f"{FIREWALL_DEFAULTS} NodePort allowlist must contain 30900")
+        for nodeport in ("30900", "30300", "30909"):
+            self.assertIn(nodeport, allowlist,
+                          f"{FIREWALL_DEFAULTS} NodePort allowlist must contain {nodeport}")
         self.assertNotIn("12375", allowlist,
                          f"{FIREWALL_DEFAULTS} NodePort allowlist must never contain 12375")
         backhaul = top_level_block(fw_defaults, "firewall_portainer_agent_backhaul_ports")
@@ -1906,6 +1917,170 @@ class TestSlice3Task9Verification(unittest.TestCase):
             re.search(r"\biptables\s+(-A|-I|-D|-F|-X|-Z)\b", content),
             f"{VERIFY_SCRIPT} must never mutate iptables (read-only '-S'/'-L' only)",
         )
+
+
+class TestSlice3FinalFixWave(unittest.TestCase):
+    """Final review fix-wave: conditional reset, non-2xx gate, int ports,
+    full NodePort allowlist, exporter prod story."""
+
+    def test_jenkins_reset_is_conditional_no_wipe_when_clean_unconfirmed(self):
+        """Destruction is gated on the one-shot marker + explicit opt-in."""
+        tasks = read(COMPOSE_TASKS)
+        # One-shot marker gates every destructive path.
+        self.assertIn(".clean-baseline-complete", tasks,
+                      f"{COMPOSE_TASKS} must stat/create the one-shot marker")
+        self.assertIn("jenkins_baseline_marker", tasks,
+                      f"{COMPOSE_TASKS} must gate destruction on the marker fact")
+        # Every `state: absent` removal of the exact Jenkins path is conditional.
+        absent_blocks = [m.start() for m in re.finditer(r"state:\s*absent", tasks)]
+        self.assertGreaterEqual(len(absent_blocks), 2,
+                                f"{COMPOSE_TASKS} must keep exact-path removals — got {len(absent_blocks)}")
+        for idx in absent_blocks:
+            window = tasks[max(0, idx - 500):idx + 800]
+            self.assertIn("/srv/home-server/data/jenkins", window,
+                          f"{COMPOSE_TASKS} absent removal must target the exact Jenkins path")
+            self.assertIn("jenkins_baseline_marker", window,
+                          f"{COMPOSE_TASKS} absent removal must check the marker (no unconditional wipe)")
+            self.assertIn("jenkins_clean_reset_confirmed", window,
+                          f"{COMPOSE_TASKS} absent removal must require explicit opt-in")
+        # Container removal is equally gated.
+        self.assertIn("jenkins_clean_reset_confirmed is sameas true", tasks,
+                      f"{COMPOSE_TASKS} must keep explicit opt-in (sameas true)")
+        # Skip-with-warning when clean+unconfirmed; steady-state no-op when marked.
+        self.assertIn("jenkins_preflight_clean", tasks,
+                      f"{COMPOSE_TASKS} must compute preflight-clean for skip-vs-fail")
+        lowered = tasks.lower()
+        self.assertIn("no-op", lowered,
+                      f"{COMPOSE_TASKS} must document the steady-state no-op rerun")
+        self.assertIn("skipping destructive reset", lowered,
+                      f"{COMPOSE_TASKS} must warn (not fail) when clean+unconfirmed")
+        # Fail-closed + invariants preserved.
+        self.assertIn('compose_jenkins_data_dir == "/srv/home-server/data/jenkins"', tasks,
+                      f"{COMPOSE_TASKS} must keep the exact path check")
+        self.assertIn("jobs[name,builds[number]]", tasks,
+                      f"{COMPOSE_TASKS} must keep the zero jobs/builds preflight query")
+        self.assertIn("no_log: true", tasks,
+                      f"{COMPOSE_TASKS} must keep no_log around secrets")
+        for forbidden in ("backup", "restore", "migration"):
+            for line in tasks.splitlines():
+                if forbidden in line.lower() and not line.strip().startswith("#"):
+                    self.fail(f"{COMPOSE_TASKS} must not add {forbidden} path — found: {line.strip()}")
+        # One-shot revert is documented in role comments and README.
+        self.assertIn("To re-run one-shot, remove", tasks,
+                      f"{COMPOSE_TASKS} must document the one-shot revert")
+        self.assertIn("one-shot", read(REPO / "README.md").lower(),
+                      "README.md must document the Jenkins one-shot revert")
+
+    def test_firewall_anon_gate_is_non_2xx(self):
+        """Anonymous /api/json gate aligns to the Task 3 non-2xx contract."""
+        tasks = read(FIREWALL_TASKS)
+        self.assertIn("is not match('^2..')", tasks,
+                      f"{FIREWALL_TASKS} until must assert non-2xx")
+        self.assertIn("is match('^2..')", tasks,
+                      f"{FIREWALL_TASKS} failed_when must stay fail-closed on 2xx")
+        self.assertNotIn('stdout == "403"', tasks,
+                         f"{FIREWALL_TASKS} must not require exactly 403")
+        self.assertNotIn('stdout != "403"', tasks,
+                         f"{FIREWALL_TASKS} must not fail on non-403 non-2xx")
+
+    def test_k8s_service_ports_render_as_native_ints(self):
+        """Service port/nodePort render with | int and parse as int when rendered."""
+        server = read(PORTAINER_SERVER_TEMPLATE)
+        agent = read(PORTAINER_AGENT_TEMPLATE)
+        monitoring = read(MONITORING_TASKS)
+        # Templates render unquoted native ints (rendered manifests safe_load as int).
+        for path, content, markers in (
+            (PORTAINER_SERVER_TEMPLATE, server,
+             ("port: {{ portainer_service_port | int }}",
+              "nodePort: {{ portainer_nodeport | int }}")),
+            (PORTAINER_AGENT_TEMPLATE, agent,
+             ("port: {{ portainer_agent_port | int }}",)),
+        ):
+            for marker in markers:
+                self.assertIn(marker, content,
+                              f"{path} must render {marker} as native int")
+        # Ansible task definitions stay valid YAML (quoted) but convert via | int,
+        # so the templated dict carries native ints.
+        for marker in ("port: \"{{ monitoring_prometheus_service_port | int }}\"",
+                       "port: \"{{ monitoring_grafana_service_port | int }}\""):
+            self.assertIn(marker, monitoring,
+                          f"{MONITORING_TASKS} must render {marker} (| int)")
+        for content, quoted in (
+            (server, ['port: "{{ portainer_service_port }}"',
+                      'nodePort: "{{ portainer_nodeport }}"']),
+            (agent, ['port: "{{ portainer_agent_port }}"']),
+            (monitoring, ['port: "{{ monitoring_prometheus_service_port }}"',
+                          'port: "{{ monitoring_grafana_service_port }}"']),
+        ):
+            for marker in quoted:
+                self.assertNotIn(marker, content,
+                                 f"must not render quoted string without | int: {marker}")
+        # Render with dummy ints and verify yaml parses port/nodePort as int.
+        try:
+            import yaml as _yaml
+        except Exception:
+            self.skipTest("PyYAML unavailable for int parse check")
+            return
+        rendered_server = server.replace("{{ portainer_service_port | int }}", "9000") \
+            .replace("{{ portainer_nodeport | int }}", "30900") \
+            .replace("{{ portainer_namespace }}", "portainer") \
+            .replace("{{ portainer_service_name }}", "portainer") \
+            .replace("{{ portainer_data_size }}", "5Gi") \
+            .replace("{{ portainer_agent_secret_name }}", "portainer-agent") \
+            .replace("{{ base_domain }}", "lab.arpa")
+        docs = [d for d in _yaml.safe_load_all(rendered_server) if isinstance(d, dict)]
+        svc = next(d for d in docs if d.get("kind") == "Service")
+        for key in ("port", "nodePort"):
+            val = svc["spec"]["ports"][0][key]
+            self.assertIsInstance(val, int,
+                                  f"server Service {key} must parse as int — got {val!r}")
+        self.assertEqual(svc["spec"]["ports"][0]["port"], 9000)
+        self.assertEqual(svc["spec"]["ports"][0]["nodePort"], 30900)
+
+    def test_firewall_allowlist_covers_all_human_nodeports(self):
+        """UFW allowlist is LAN/VPN-scoped for 30900 + 30300 + 30909."""
+        fw_defaults = read(FIREWALL_DEFAULTS)
+        allowlist = top_level_block(fw_defaults, "firewall_nodeport_allowlist")
+        for nodeport in ("30900", "30300", "30909"):
+            self.assertIn(nodeport, allowlist,
+                          f"{FIREWALL_DEFAULTS} allowlist must contain {nodeport}")
+        self.assertNotIn("12375", allowlist,
+                         f"{FIREWALL_DEFAULTS} allowlist must never contain 12375")
+        self.assertNotIn("9001", allowlist,
+                         f"{FIREWALL_DEFAULTS} allowlist must never contain pod-only 9001")
+        fw_tasks = read(FIREWALL_TASKS)
+        self.assertIn("firewall_nodeport_allowlist", fw_tasks,
+                      f"{FIREWALL_TASKS} must loop the NodePort allowlist to LAN/VPN")
+        self.assertIn("resolved_firewall_trusted_cidrs", fw_tasks,
+                      f"{FIREWALL_TASKS} NodePort allow must stay LAN/VPN-scoped")
+
+    def test_exporter_prod_override_is_documented(self):
+        """Lab keeps local build+import; prod override path is commented in defaults+examples."""
+        defaults = read(MONITORING_DEFAULTS)
+        self.assertIn('docker_metrics_exporter_image: "labmonitor-docker-exporter:1.0.0"',
+                      defaults,
+                      f"{MONITORING_DEFAULTS} must keep the lab local build image")
+        self.assertIn("docker_metrics_exporter_mode: built", defaults,
+                      f"{MONITORING_DEFAULTS} must keep lab built mode")
+        for marker in ("ignored inventory", "registry.", "@sha256:",
+                       "docker_metrics_exporter_image",
+                       "lab keeps", "never use `latest`"):
+            self.assertIn(marker.lower(), defaults.lower(),
+                          f"{MONITORING_DEFAULTS} must document prod override ({marker})")
+        for path in (LAB_EXAMPLE, PROD_EXAMPLE):
+            example = read(path)
+            self.assertIn("docker_metrics_exporter_image", example,
+                          f"{path} must document the exporter override var")
+            self.assertIn("@sha256:", example,
+                          f"{path} must show a digest-pinned registry example")
+            self.assertIn("ignored inventory", example.lower(),
+                          f"{path} must point at the ignored inventory override path")
+        # Lab build+import flow stays intact.
+        tasks = read(MONITORING_TASKS)
+        for marker in ("docker save", "k3s ctr images import",
+                       "docker_metrics_exporter_mode == 'built'"):
+            self.assertIn(marker, tasks,
+                          f"{MONITORING_TASKS} must keep the lab build+import flow")
 
 
 if __name__ == "__main__":
