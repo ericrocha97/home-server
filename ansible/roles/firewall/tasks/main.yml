@@ -69,6 +69,17 @@
     comment: "{{ item.comment }}"
   loop: "{{ firewall_compose_backend_ports }}"
 
+- name: Permitir provider Docker read-only somente do k3s pod CIDR (nunca LAN/VPN)
+  community.general.ufw:
+    rule: allow
+    direction: in
+    from_ip: "{{ k3s_pod_cidr }}"
+    to_ip: "{{ server_lan_ip }}"
+    port: "{{ item.port }}"
+    proto: tcp
+    comment: "{{ item.comment }}"
+  loop: "{{ firewall_provider_backhaul_ports }}"
+
 - name: Bloquear PostgreSQL direto por padrão (sem allowlist)
   community.general.ufw:
     rule: deny

@@ -19,6 +19,9 @@ firewall_compose_backend_ports:
   - { port: "{{ compose_jenkins_port | default(18080) }}", comment: 'Traefik backend Jenkins' }
   - { port: "{{ compose_metabase_port | default(13001) }}", comment: 'Traefik backend Metabase' }
   - { port: "{{ compose_n8n_port | default(15678) }}", comment: 'Traefik backend n8n' }
+# Read-only Docker provider backhaul (k3s pod CIDR -> host only, never LAN/VPN)
+firewall_provider_backhaul_ports:
+  - { port: '12375', comment: 'Docker socket proxy (read-only)' }
 # PostgreSQL direto é bloqueado por padrão
 firewall_postgres_direct_enable: false
 firewall_postgres_port: "{{ compose_postgres_port | default(15432) }}"

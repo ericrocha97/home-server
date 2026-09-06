@@ -1,6 +1,8 @@
 ---
 # Slice 3 Docker provider (read-only socket proxy) — non-secret defaults.
-# Task 2 pins the image digest; Task 1 only wires the contract.
+# Image pinned to exact upstream version (never latest); env names verified
+# against tecnativa/docker-socket-proxy 0.3.0 (CONTAINERS/IMAGES/NETWORKS/INFO/
+# VERSION granted, POST and all mutating sections revoked for a GET-only API).
 docker_socket_proxy_image: "tecnativa/docker-socket-proxy:0.3.0"
 docker_socket_proxy_port: 12375
 docker_socket_proxy_bind_ip: "{{ server_lan_ip }}"

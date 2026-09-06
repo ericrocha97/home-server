@@ -57,5 +57,21 @@ done
   --comment "Drop direct PostgreSQL by default" -j DROP
 {% endif %}
 
+# Read-only Docker provider boundary: only k3s pods reach server_lan_ip:12375.
+# First-match ALLOW before the final DROP; 12375 is never in the LAN/VPN loop.
+{% for item in firewall_provider_backhaul_ports %}
+"$iptables_bin" -A "$docker_user_chain" -s "{{ k3s_pod_cidr }}" -p tcp \
+  -m conntrack --ctstate NEW --ctorigdst "{{ server_lan_ip }}" \
+  --ctorigdstport "{{ item.port }}" -m comment \
+  --comment "Allow k3s pods to {{ item.comment }}" -j RETURN
+{% endfor %}
+
+{% for item in firewall_provider_backhaul_ports %}
+"$iptables_bin" -A "$docker_user_chain" -p tcp \
+  -m conntrack --ctstate NEW --ctorigdst "{{ server_lan_ip }}" \
+  --ctorigdstport "{{ item.port }}" -m comment \
+  --comment "Drop non-k3s to {{ item.comment }}" -j DROP
+{% endfor %}
+
 # Other forwarded traffic remains under Docker/k3s policy.
 "$iptables_bin" -A "$docker_user_chain" -j RETURN

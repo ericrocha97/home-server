@@ -25,6 +25,7 @@ PORTAINER_DEFAULTS = REPO / "ansible/roles/portainer/defaults/main.yml"
 PORTAINER_TASKS = REPO / "ansible/roles/portainer/tasks/main.yml"
 LABMONITOR_DEFAULTS = REPO / "ansible/roles/labmonitor-foundation/defaults/main.yml"
 LABMONITOR_TASKS = REPO / "ansible/roles/labmonitor-foundation/tasks/main.yml"
+PROVIDER_COMPOSE = REPO / "compose/docker-provider/compose.yaml"
 
 EXPECTED_ORDER = [
     "base",
@@ -68,6 +69,40 @@ EXPECTED_VARS = {
 
 SECRET_KEY_RE = re.compile(r"password|passwd|token|secret|credentials?", re.IGNORECASE)
 DIGEST_RE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
+
+# tecnativa/docker-socket-proxy capability contract (env names verified against
+# 0.3.0): read endpoints granted, every mutating section revoked. POST=0 forces
+# GET/HEAD only, which is what allows /version, /info, /containers/json,
+# /containers/{id}/json, /containers/{id}/stats?stream=false, /images/json and
+# /networks while blocking all writes.
+PROVIDER_READ_ENV = {
+    "CONTAINERS": "1",
+    "IMAGES": "1",
+    "NETWORKS": "1",
+    "INFO": "1",
+    "VERSION": "1",
+}
+PROVIDER_DISABLED_ENV = {
+    "POST": "0",
+    "BUILD": "0",
+    "COMMIT": "0",
+    "CONFIGS": "0",
+    "DISTRIBUTION": "0",
+    "EXEC": "0",
+    "PLUGINS": "0",
+    "SECRETS": "0",
+    "SERVICES": "0",
+    "SWARM": "0",
+    "SYSTEM": "0",
+    "TASKS": "0",
+    "VOLUMES": "0",
+}
+# Mutating capabilities that must never be granted (PUT/PATCH/DELETE/PULL have
+# no dedicated env flags; POST=0 blocks those methods globally).
+PROVIDER_FORBIDDEN_CAPS = {
+    "POST", "PUT", "PATCH", "DELETE", "EXEC", "BUILD",
+    "PULL", "VOLUMES", "SECRETS", "CONFIGS", "SWARM",
+}
 
 
 def read(path: pathlib.Path) -> str:
@@ -207,6 +242,137 @@ class TestSlice3Contract(unittest.TestCase):
                 if "@sha256:" in val:
                     self.assertRegex(val, DIGEST_RE,
                                      f"{path} {key} digest must match ^.+@sha256:[0-9a-f]{{64}}$ — got {val}")
+
+    def test_socket_proxy_is_the_only_read_only_docker_consumer(self):
+        """compose/docker-provider/compose.yaml holds the only :ro socket mount, in docker-socket-proxy."""
+        self.assertTrue(PROVIDER_COMPOSE.is_file(), f"missing {PROVIDER_COMPOSE}")
+        services = parse_compose_services(PROVIDER_COMPOSE)
+        self.assertIn("docker-socket-proxy", services,
+                      f"{PROVIDER_COMPOSE} must define service docker-socket-proxy — got {sorted(services)}")
+        mounts = {
+            name: [v for v in svc["volumes"] if "/var/run/docker.sock" in v]
+            for name, svc in services.items()
+        }
+        total = sum(len(v) for v in mounts.values())
+        self.assertEqual(total, 1,
+                         f"{PROVIDER_COMPOSE} must contain exactly one docker.sock mount — got {mounts}")
+        mount = mounts["docker-socket-proxy"][0]
+        self.assertTrue(mount.startswith("/var/run/docker.sock:/var/run/docker.sock"),
+                        f"{PROVIDER_COMPOSE} socket mount source must be /var/run/docker.sock — got {mount}")
+        self.assertTrue(mount.endswith(":ro"),
+                        f"{PROVIDER_COMPOSE} socket mount must be read-only (:ro) — got {mount}")
+        # Repo-wide: no other Compose project may mount the socket, except the
+        # pre-existing Slice 2 Jenkins RW build exception (never read-only).
+        for project in sorted((REPO / "compose").glob("*/compose.yaml")):
+            if project == PROVIDER_COMPOSE:
+                continue
+            if "/var/run/docker.sock" in read(project):
+                self.assertEqual(project.parent.name, "jenkins",
+                                 f"{project} unexpectedly mounts the Docker socket — "
+                                 "only jenkins (Slice 2 RW build exception) and "
+                                 "docker-provider (read-only proxy) may do so")
+
+    def test_socket_proxy_has_only_read_mount_and_no_mutating_flags(self):
+        """Proxy service mounts only the :ro socket and grants read-only API sections."""
+        self.assertTrue(PROVIDER_COMPOSE.is_file(), f"missing {PROVIDER_COMPOSE}")
+        services = parse_compose_services(PROVIDER_COMPOSE)
+        svc = services["docker-socket-proxy"]
+        self.assertEqual(svc["volumes"], ["/var/run/docker.sock:/var/run/docker.sock:ro"],
+                         f"{PROVIDER_COMPOSE} docker-socket-proxy must mount only the "
+                         f"read-only socket — got {svc['volumes']}")
+        env = svc["environment"]
+        for key, expected in PROVIDER_READ_ENV.items():
+            self.assertEqual(env.get(key), expected,
+                             f"{PROVIDER_COMPOSE} {key} must be {expected} — got {env.get(key)}")
+        for key, expected in PROVIDER_DISABLED_ENV.items():
+            self.assertEqual(env.get(key), expected,
+                             f"{PROVIDER_COMPOSE} {key} must be {expected} — got {env.get(key)}")
+        for cap in sorted(PROVIDER_FORBIDDEN_CAPS):
+            if cap in env:
+                self.assertEqual(env[cap], "0",
+                                 f"{PROVIDER_COMPOSE} mutating capability {cap} must stay "
+                                 f"disabled — got {env[cap]}")
+
+    def test_socket_proxy_publishes_only_port_12375(self):
+        """docker-socket-proxy publishes exactly one host port: 12375 -> 2375."""
+        self.assertTrue(PROVIDER_COMPOSE.is_file(), f"missing {PROVIDER_COMPOSE}")
+        services = parse_compose_services(PROVIDER_COMPOSE)
+        for name, svc in services.items():
+            if name == "docker-socket-proxy":
+                continue
+            self.assertEqual(svc["ports"], [],
+                             f"{PROVIDER_COMPOSE} service {name} must not publish ports — "
+                             f"got {svc['ports']}")
+        ports = services["docker-socket-proxy"]["ports"]
+        self.assertEqual(len(ports), 1,
+                         f"{PROVIDER_COMPOSE} docker-socket-proxy must publish exactly one "
+                         f"port — got {ports}")
+        entry = ports[0]
+        m = re.search(r":(\d+):(\d+)\s*$", entry)
+        self.assertIsNotNone(m,
+                             f"{PROVIDER_COMPOSE} port entry must be host:container — got {entry}")
+        host, container = m.groups() if m is not None else ("", "")
+        self.assertEqual(host, "12375",
+                         f"{PROVIDER_COMPOSE} host port must be 12375 — got {entry}")
+        self.assertEqual(container, "2375",
+                         f"{PROVIDER_COMPOSE} container port must be 2375 — got {entry}")
+        self.assertIn("DOCKER_SOCKET_PROXY_BIND_IP", entry,
+                      f"{PROVIDER_COMPOSE} port entry must bind via "
+                      f"DOCKER_SOCKET_PROXY_BIND_IP — got {entry}")
+
+
+def parse_compose_services(path: pathlib.Path) -> dict:
+    """Minimal indentation-based Compose parser (stdlib only).
+
+    Returns {service_name: {"volumes": [...], "ports": [...], "environment": {k: v}}}.
+    Supports mapping-style (`KEY: "v"`) and list-style (`- KEY=v`) environment entries.
+    """
+    services: dict = {}
+    current_service: str | None = None
+    current_key: str | None = None
+    in_services = False
+    for raw in read(path).splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip() or line.strip() == "---":
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        stripped = line.strip()
+        if indent == 0:
+            in_services = stripped == "services:"
+            current_service = None
+            current_key = None
+            continue
+        if not in_services:
+            continue
+        if indent == 2 and stripped.endswith(":"):
+            current_service = stripped[:-1]
+            services[current_service] = {"volumes": [], "ports": [], "environment": {}}
+            current_key = None
+        elif indent == 4 and current_service is not None:
+            if stripped.endswith(":"):
+                key = stripped[:-1]
+                current_key = key if key in ("volumes", "ports", "environment") else None
+            else:
+                current_key = None
+        elif indent == 6 and current_service is not None and current_key in ("volumes", "ports"):
+            m = re.match(r"^-\s+(.*)$", stripped)
+            if m:
+                val = m.group(1).strip()
+                if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+                    val = val[1:-1]
+                services[current_service][current_key].append(val)
+        elif indent == 6 and current_service is not None and current_key == "environment":
+            if stripped.startswith("-"):
+                m = re.match(r"^-\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)$", stripped)
+                if m:
+                    services[current_service]["environment"][m.group(1)] = m.group(2).strip().strip("'\"")
+            elif ":" in stripped:
+                key, val = stripped.split(":", 1)
+                val = val.strip()
+                if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+                    val = val[1:-1]
+                services[current_service]["environment"][key.strip()] = val
+    return services
 
 
 if __name__ == "__main__":

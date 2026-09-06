@@ -4,3 +4,40 @@
     that:
       - docker_socket_proxy_image is string
       - docker_socket_proxy_port == 12375
+
+- name: Validate socket proxy image is immutably pinned
+  ansible.builtin.assert:
+    that:
+      - docker_socket_proxy_image | length > 0
+      - "'latest' not in docker_socket_proxy_image"
+    fail_msg: "docker_socket_proxy_image must be pinned to an exact version or digest, never latest."
+
+- name: Ensure docker-provider Compose project directory exists
+  ansible.builtin.file:
+    path: "{{ compose_projects_root }}/{{ docker_provider_compose_project }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Copy versioned docker-provider compose.yaml to host
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../compose/docker-provider/compose.yaml"
+    dest: "{{ compose_projects_root }}/{{ docker_provider_compose_project }}/compose.yaml"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Render docker-provider .env on host
+  ansible.builtin.template:
+    src: docker-provider.env.j2
+    dest: "{{ compose_projects_root }}/{{ docker_provider_compose_project }}/.env"
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Start Docker socket proxy
+  community.docker.docker_compose_v2:
+    project_src: "{{ compose_projects_root }}/docker-provider"
+    state: present
+    pull: missing
