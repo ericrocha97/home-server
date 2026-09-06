@@ -36,3 +36,27 @@ compose_metabase_gid: 2000
 compose_postgres_db_automation: automation
 compose_postgres_user_automation_writer: automation_writer
 compose_postgres_user_automation_reader: automation_reader
+
+# --- Slice 3 platform foundation (non-secret) ---
+docker_socket_proxy_port: 12375
+docker_metrics_exporter_port: 9797
+monitoring_chart_version: "88.6.1"
+monitoring_prometheus_service_name: prometheus
+monitoring_prometheus_service_port: 9090
+prometheus_nodeport: 30909
+monitoring_grafana_service_name: grafana
+monitoring_grafana_service_port: 3000
+grafana_nodeport: 30300
+monitoring_prometheus_retention: 15d
+monitoring_prometheus_storage_size: 20Gi
+monitoring_grafana_storage_size: 5Gi
+portainer_service_name: portainer
+portainer_service_port: 9000
+portainer_nodeport: 30900
+labmonitor_namespace: labmonitor
+labmonitor_service_account: labmonitor-api
+jenkins_labmonitor_user: labmonitor-api
+jenkins_prometheus_user: prometheus-scraper
+compose_jenkins_labmonitor_id: jenkins
+compose_n8n_labmonitor_id: n8n
+compose_metabase_labmonitor_id: metabase

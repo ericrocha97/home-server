@@ -1,0 +1,5 @@
+---
+- name: Validate Portainer defaults
+  ansible.builtin.assert:
+    that:
+      - portainer_nodeport == 30900

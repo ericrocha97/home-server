@@ -1,0 +1,6 @@
+---
+- name: Validate LabMonitor foundation defaults
+  ansible.builtin.assert:
+    that:
+      - labmonitor_namespace == 'labmonitor'
+      - labmonitor_service_account == 'labmonitor-api'

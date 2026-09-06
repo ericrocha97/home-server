@@ -1,0 +1,7 @@
+---
+# Slice 3 Docker provider (read-only socket proxy) — non-secret defaults.
+# Task 2 pins the image digest; Task 1 only wires the contract.
+docker_socket_proxy_image: "tecnativa/docker-socket-proxy:0.3.0"
+docker_socket_proxy_port: 12375
+docker_socket_proxy_bind_ip: "{{ server_lan_ip }}"
+docker_provider_compose_project: docker-provider

@@ -1,0 +1,10 @@
+---
+# Slice 3 Portainer — non-secret defaults.
+# Task 6 pins digests; Task 1 only wires the contract.
+portainer_namespace: portainer
+portainer_service_name: portainer
+portainer_service_port: 9000
+portainer_nodeport: 30900
+portainer_image: "portainer/portainer-ce:2.19.5"
+portainer_agent_image: "portainer/agent:2.19.5"
+portainer_agent_port: 9001

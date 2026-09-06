@@ -1,0 +1,9 @@
+---
+- name: Validate monitoring defaults
+  ansible.builtin.assert:
+    that:
+      - monitoring_chart_version is string
+      - monitoring_prometheus_retention is string
+      - monitoring_prometheus_retention | length > 0
+      - prometheus_nodeport == 30909
+      - grafana_nodeport == 30300

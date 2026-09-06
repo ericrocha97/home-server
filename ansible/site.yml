@@ -23,7 +23,15 @@
       tags: [k3s]
     - role: compose-services
       tags: [compose-services]
+    - role: docker-provider
+      tags: [docker-provider]
     - role: firewall
       tags: [firewall]
+    - role: monitoring
+      tags: [monitoring]
+    - role: portainer
+      tags: [portainer]
+    - role: labmonitor-foundation
+      tags: [labmonitor-foundation]
     - role: k8s-platform
       tags: [k8s-platform]

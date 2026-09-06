@@ -60,3 +60,10 @@ compose_health_timeout: 5
 compose_jenkins_url: "https://jenkins.{{ base_domain }}"
 compose_n8n_editor_base_url: "https://n8n.{{ base_domain }}"
 compose_n8n_webhook_url: "https://n8n.{{ base_domain }}/"
+
+# Slice 3 LabMonitor metadata (non-secret, stable IDs — Task 3 renders labels)
+compose_jenkins_labmonitor_id: jenkins
+compose_n8n_labmonitor_id: n8n
+compose_metabase_labmonitor_id: metabase
+jenkins_labmonitor_user: labmonitor-api
+jenkins_prometheus_user: prometheus-scraper

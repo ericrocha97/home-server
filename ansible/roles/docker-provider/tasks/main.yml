@@ -1,0 +1,6 @@
+---
+- name: Validate Docker provider defaults
+  ansible.builtin.assert:
+    that:
+      - docker_socket_proxy_image is string
+      - docker_socket_proxy_port == 12375

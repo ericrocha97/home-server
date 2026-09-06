@@ -1,0 +1,28 @@
+---
+# Slice 3 monitoring (kube-prometheus-stack) — non-secret defaults.
+# Task 4 selects the Docker exporter image/mode; Task 5 renders full Helm values
+# and reconciles component images against `helm template` for chart 88.6.1.
+monitoring_chart_version: "88.6.1"
+monitoring_release_name: monitoring
+monitoring_namespace: monitoring
+docker_metrics_exporter_port: 9797
+monitoring_prometheus_service_name: prometheus
+monitoring_prometheus_service_port: 9090
+prometheus_nodeport: 30909
+monitoring_grafana_service_name: grafana
+monitoring_grafana_service_port: 3000
+grafana_nodeport: 30300
+monitoring_prometheus_retention: 15d
+monitoring_prometheus_storage_size: 20Gi
+monitoring_grafana_storage_size: 5Gi
+# Component images pinned to immutable versions matching the chart era.
+# Every Docker-style reference must be name:tag@sha256:<64-hex> or an exact
+# immutable version tag; never use `latest`. Task 5 records digests where the
+# component supports them.
+monitoring_prometheus_image: "quay.io/prometheus/prometheus:v3.5.0"
+monitoring_grafana_image: "docker.io/grafana/grafana:12.1.0"
+monitoring_node_exporter_image: "quay.io/prometheus/node-exporter:v1.9.1"
+monitoring_kube_state_metrics_image: "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.17.0"
+monitoring_alertmanager_image: "quay.io/prometheus/alertmanager:v0.28.1"
+monitoring_operator_image: "quay.io/prometheus-operator/prometheus-operator:v0.86.0"
+monitoring_config_reloader_image: "quay.io/prometheus-operator/prometheus-config-reloader:v0.86.0"
