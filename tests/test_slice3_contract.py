@@ -585,6 +585,158 @@ class TestSlice3Task3JenkinsProviders(unittest.TestCase):
                       f"{COMPOSE_TASKS} must ship plugins.txt to the host and fingerprint it")
 
 
+EXPORTER_DEPLOYMENT = REPO / "ansible/roles/monitoring/templates/docker-exporter-deployment.yaml.j2"
+EXPORTER_SERVICE = REPO / "ansible/roles/monitoring/templates/docker-exporter-service.yaml.j2"
+EXPORTER_SERVICEMONITOR = REPO / "ansible/roles/monitoring/templates/docker-exporter-servicemonitor.yaml.j2"
+EXPORTER_RECORDING_RULES = REPO / "ansible/roles/monitoring/templates/docker-exporter-recording-rules.yaml.j2"
+EXPORTER_APP = REPO / "k8s/monitoring/docker-metrics-exporter/app.py"
+EXPORTER_TEST = REPO / "k8s/monitoring/docker-metrics-exporter/test_app.py"
+EXPORTER_REQUIREMENTS = REPO / "k8s/monitoring/docker-metrics-exporter/requirements.txt"
+EXPORTER_DOCKERFILE = REPO / "k8s/monitoring/docker-metrics-exporter/Dockerfile"
+
+REQUIRED_EXPORTER_SERIES = [
+    "labmonitor_docker_container_info",
+    "labmonitor_docker_container_cpu_usage_seconds_total",
+    "labmonitor_docker_container_memory_usage_bytes",
+    "labmonitor_docker_container_memory_limit_bytes",
+    "labmonitor_docker_container_network_receive_bytes_total",
+    "labmonitor_docker_container_network_transmit_bytes_total",
+    "labmonitor_docker_container_block_read_bytes_total",
+    "labmonitor_docker_container_block_write_bytes_total",
+    "labmonitor_docker_container_restarts_total",
+    "labmonitor_docker_container_health_status",
+]
+
+
+class TestSlice3Task4DockerExporter(unittest.TestCase):
+    def test_exporter_mode_is_built_with_immutable_image(self):
+        """Gate result is recorded as built with a pinned local image."""
+        mon = parse_simple_vars(MONITORING_DEFAULTS)
+        self.assertEqual(mon.get("docker_metrics_exporter_mode"), "built",
+                         f"{MONITORING_DEFAULTS} mode must be built after the failed gate")
+        image = mon.get("docker_metrics_exporter_image", "")
+        self.assertTrue(image.startswith("labmonitor-docker-exporter:"),
+                        f"{MONITORING_DEFAULTS} built image must be the local fallback — got {image}")
+        self.assertNotIn("latest", image.lower(),
+                         f"{MONITORING_DEFAULTS} exporter image must not use latest — got {image}")
+        self.assertEqual(mon.get("docker_metrics_exporter_port"), "9797",
+                         f"{MONITORING_DEFAULTS} docker_metrics_exporter_port must be 9797")
+
+    def test_exporter_deployment_uses_proxy_url_and_no_socket(self):
+        """Deployment points at the proxy URL, exposes 9797, mounts nothing."""
+        self.assertTrue(EXPORTER_DEPLOYMENT.is_file(), f"missing {EXPORTER_DEPLOYMENT}")
+        content = read(EXPORTER_DEPLOYMENT)
+        for marker in ("DOCKER_API_URL", "server_lan_ip", "docker_socket_proxy_port",
+                       "METRICS_PORT", "9797", "docker_metrics_exporter_image",
+                       "imagePullPolicy: IfNotPresent", "/healthz", "/metrics",
+                       "runAsNonRoot", "docker-metrics-exporter"):
+            self.assertIn(marker, content,
+                          f"{EXPORTER_DEPLOYMENT} must contain {marker}")
+        # Port and address stay variable-driven, never literals.
+        self.assertNotIn("12375", content,
+                         f"{EXPORTER_DEPLOYMENT} must use docker_socket_proxy_port, not a literal")
+        self.assertIsNone(re.search(r"192\.168\.\d+", content),
+                          f"{EXPORTER_DEPLOYMENT} must not embed a LAN IP literal")
+        for forbidden in ("hostPort", "hostNetwork", "NodePort", "portainer",
+                          "privileged: true", "2375", "latest"):
+            self.assertNotIn(forbidden.lower(), content.lower(),
+                             f"{EXPORTER_DEPLOYMENT} must not contain {forbidden}")
+        # Socket references are assembled here so this file never holds them.
+        socket_fragment = "docker" + "." + "sock"
+        unix_scheme = "unix" + "://"
+        self.assertNotIn(socket_fragment, content,
+                         f"{EXPORTER_DEPLOYMENT} must not mount a socket file")
+        self.assertNotIn(unix_scheme, content,
+                         f"{EXPORTER_DEPLOYMENT} must not build a socket URL")
+
+    def test_exporter_service_is_clusterip_metrics_only(self):
+        """Service is a ClusterIP named docker-metrics-exporter on 9797."""
+        self.assertTrue(EXPORTER_SERVICE.is_file(), f"missing {EXPORTER_SERVICE}")
+        content = read(EXPORTER_SERVICE)
+        for marker in ("kind: Service", "type: ClusterIP", "name: docker-metrics-exporter",
+                       "port: 9797", "targetPort: 9797", "app: docker-metrics-exporter"):
+            self.assertIn(marker, content,
+                          f"{EXPORTER_SERVICE} must contain {marker}")
+        for forbidden in ("NodePort", "LoadBalancer", "hostPort", "portainer"):
+            self.assertNotIn(forbidden, content,
+                             f"{EXPORTER_SERVICE} must not contain {forbidden}")
+
+    def test_exporter_servicemonitor_scrapes_metrics(self):
+        """ServiceMonitor is selected by the Prometheus release on /metrics."""
+        self.assertTrue(EXPORTER_SERVICEMONITOR.is_file(), f"missing {EXPORTER_SERVICEMONITOR}")
+        content = read(EXPORTER_SERVICEMONITOR)
+        for marker in ("kind: ServiceMonitor", "monitoring_release_name", "path: /metrics",
+                       "port: metrics", "app: docker-metrics-exporter",
+                       "monitoring_namespace"):
+            self.assertIn(marker, content,
+                          f"{EXPORTER_SERVICEMONITOR} must contain {marker}")
+        self.assertNotIn("portainer", content.lower(),
+                         f"{EXPORTER_SERVICEMONITOR} must not reference Portainer")
+
+    def test_exporter_artifacts_match_selected_mode(self):
+        """Built mode ships fallback source and skips recording rules; upstream is the reverse."""
+        mode = parse_simple_vars(MONITORING_DEFAULTS).get("docker_metrics_exporter_mode")
+        if mode == "built":
+            for path in (EXPORTER_APP, EXPORTER_TEST, EXPORTER_REQUIREMENTS, EXPORTER_DOCKERFILE):
+                self.assertTrue(path.is_file(), f"missing {path} in built mode")
+            self.assertFalse(EXPORTER_RECORDING_RULES.exists(),
+                             f"{EXPORTER_RECORDING_RULES} must not exist in built mode "
+                             "(fallback names are already stable)")
+            dockerfile = read(EXPORTER_DOCKERFILE)
+            self.assertRegex(dockerfile, r"FROM python:3\.12-slim@sha256:[0-9a-f]{64}",
+                             f"{EXPORTER_DOCKERFILE} must pin the Python base by digest")
+            self.assertNotIn("latest", dockerfile.lower(),
+                             f"{EXPORTER_DOCKERFILE} must not use latest")
+            for marker in ("USER 65534", "EXPOSE 9797", "HEALTHCHECK", "/healthz"):
+                self.assertIn(marker, dockerfile,
+                              f"{EXPORTER_DOCKERFILE} must contain {marker}")
+            requirements = read(EXPORTER_REQUIREMENTS).strip()
+            self.assertRegex(requirements, r"^prometheus_client==\d+\.\d+\.\d+\s*$",
+                             f"{EXPORTER_REQUIREMENTS} must pin one exact client version")
+        else:
+            for path in (EXPORTER_APP, EXPORTER_TEST, EXPORTER_REQUIREMENTS, EXPORTER_DOCKERFILE):
+                self.assertFalse(path.exists(),
+                                 f"{path} must not exist in upstream mode")
+
+    def test_fallback_collector_covers_required_series(self):
+        """Fallback source defines the interfaces, paths, series, and bounded labels."""
+        self.assertTrue(EXPORTER_APP.is_file(), f"missing {EXPORTER_APP}")
+        content = read(EXPORTER_APP)
+        for marker in ("class DockerApiClient", "def get_json", "def collect_container_metrics",
+                       "def render_prometheus", "/version", "/containers/json?all=1",
+                       "/containers/%s/json", "stats?stream=false"):
+            self.assertIn(marker, content,
+                          f"{EXPORTER_APP} must contain {marker}")
+        for series in REQUIRED_EXPORTER_SERIES:
+            self.assertIn(series, content,
+                          f"{EXPORTER_APP} must expose stable series {series}")
+        for label in ("container_id", "container_name", "image", "state", "network", "health"):
+            self.assertIn(label, content,
+                          f"{EXPORTER_APP} must use bounded label {label}")
+        for value in ("healthy", "unhealthy", "starting", "none"):
+            self.assertIn(value, content,
+                          f"{EXPORTER_APP} must bound health values (missing {value})")
+        socket_fragment = "docker" + "." + "sock"
+        unix_scheme = "unix" + "://"
+        self.assertNotIn(socket_fragment, content,
+                         f"{EXPORTER_APP} must never reference a socket file")
+        self.assertNotIn(unix_scheme, content,
+                         f"{EXPORTER_APP} must never build a socket URL")
+
+    def test_exporter_tasks_cover_build_and_deploy(self):
+        """Monitoring tasks build/import the fallback image and apply the manifests."""
+        self.assertTrue(MONITORING_TASKS.is_file(), f"missing {MONITORING_TASKS}")
+        tasks = read(MONITORING_TASKS)
+        for marker in ("docker_metrics_exporter_mode in ['upstream', 'built']",
+                       "docker save", "k3s ctr images import",
+                       "docker-exporter-deployment.yaml",
+                       "docker-exporter-service.yaml",
+                       "docker-exporter-servicemonitor.yaml",
+                       "deployment/docker-metrics-exporter"):
+            self.assertIn(marker, tasks,
+                          f"{MONITORING_TASKS} must contain {marker}")
+
+
 def parse_compose_services(path: pathlib.Path) -> dict:
     """Minimal indentation-based Compose parser (stdlib only).
 

@@ -7,3 +7,99 @@
       - monitoring_prometheus_retention | length > 0
       - prometheus_nodeport == 30909
       - grafana_nodeport == 30300
+
+- name: Validate Docker exporter selection
+  ansible.builtin.assert:
+    that:
+      - docker_metrics_exporter_mode in ['upstream', 'built']
+      - docker_metrics_exporter_image is string
+      - docker_metrics_exporter_image | length > 0
+      - "'latest' not in docker_metrics_exporter_image"
+      - docker_metrics_exporter_port == 9797
+    fail_msg: >-
+      docker_metrics_exporter_mode must be upstream or built with a pinned
+      docker_metrics_exporter_image (never latest) on port 9797.
+
+- name: Ensure docker-metrics-exporter build directory exists
+  ansible.builtin.file:
+    path: "{{ docker_metrics_exporter_build_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: docker_metrics_exporter_mode == 'built'
+
+- name: Copy docker-metrics-exporter build context to host
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../k8s/monitoring/docker-metrics-exporter/{{ item }}"
+    dest: "{{ docker_metrics_exporter_build_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - app.py
+    - requirements.txt
+    - Dockerfile
+  when: docker_metrics_exporter_mode == 'built'
+
+- name: Build docker-metrics-exporter image on host
+  community.docker.docker_image:
+    name: "{{ docker_metrics_exporter_image }}"
+    source: build
+    build:
+      path: "{{ docker_metrics_exporter_build_dir }}"
+  when: docker_metrics_exporter_mode == 'built'
+
+- name: Check docker-metrics-exporter image in k3s containerd
+  ansible.builtin.shell: |
+    k3s ctr images ls -q | grep -Fx "{{ docker_metrics_exporter_image }}"
+  register: exporter_image_present
+  changed_when: false
+  failed_when: false
+  when: docker_metrics_exporter_mode == 'built'
+
+- name: Import docker-metrics-exporter image into k3s containerd
+  ansible.builtin.shell: |
+    docker save "{{ docker_metrics_exporter_image }}" | k3s ctr images import -
+  changed_when: true
+  when:
+    - docker_metrics_exporter_mode == 'built'
+    - (exporter_image_present.rc | default(1)) != 0
+
+- name: Ensure monitoring namespace exists
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ monitoring_namespace }}"
+
+- name: Render docker-metrics-exporter manifests
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/tmp/home-server-{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - docker-exporter-deployment.yaml
+    - docker-exporter-service.yaml
+    - docker-exporter-servicemonitor.yaml
+
+- name: Apply docker-metrics-exporter manifests
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    src: "/tmp/home-server-{{ item }}"
+  loop:
+    - docker-exporter-deployment.yaml
+    - docker-exporter-service.yaml
+    - docker-exporter-servicemonitor.yaml
+
+- name: Wait for docker-metrics-exporter Deployment
+  ansible.builtin.command: >-
+    kubectl --kubeconfig={{ kubeconfig_path }} -n {{ monitoring_namespace }}
+    wait --for=condition=available deployment/docker-metrics-exporter --timeout=180s
+  changed_when: false

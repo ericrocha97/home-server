@@ -1,0 +1,20 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: docker-metrics-exporter
+  namespace: "{{ monitoring_namespace }}"
+  labels:
+    release: "{{ monitoring_release_name }}"
+    app: docker-metrics-exporter
+spec:
+  selector:
+    matchLabels:
+      app: docker-metrics-exporter
+  namespaceSelector:
+    matchNames:
+      - "{{ monitoring_namespace }}"
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
