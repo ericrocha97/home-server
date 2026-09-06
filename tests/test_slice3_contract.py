@@ -262,15 +262,17 @@ class TestSlice3Contract(unittest.TestCase):
         self.assertTrue(mount.endswith(":ro"),
                         f"{PROVIDER_COMPOSE} socket mount must be read-only (:ro) — got {mount}")
         # Repo-wide: no other Compose project may mount the socket, except the
-        # pre-existing Slice 2 Jenkins RW build exception (never read-only).
+        # pre-existing Slice 2 Jenkins RW build exception (never read-only) and
+        # the Task 6 Portainer Docker Agent RW admin exception (never read-only).
         for project in sorted((REPO / "compose").glob("*/compose.yaml")):
             if project == PROVIDER_COMPOSE:
                 continue
             if "/var/run/docker.sock" in read(project):
-                self.assertEqual(project.parent.name, "jenkins",
-                                 f"{project} unexpectedly mounts the Docker socket — "
-                                 "only jenkins (Slice 2 RW build exception) and "
-                                 "docker-provider (read-only proxy) may do so")
+                self.assertIn(project.parent.name, ("jenkins", "portainer-agent"),
+                              f"{project} unexpectedly mounts the Docker socket — "
+                              "only jenkins (Slice 2 RW build exception), "
+                              "portainer-agent (Task 6 RW admin exception), and "
+                              "docker-provider (read-only proxy) may do so")
 
     def test_socket_proxy_has_only_read_mount_and_no_mutating_flags(self):
         """Proxy service mounts only the :ro socket and grants read-only API sections."""
@@ -1062,6 +1064,195 @@ def parse_compose_services(path: pathlib.Path) -> dict:
                     val = val[1:-1]
                 services[current_service]["environment"][key.strip()] = val
     return services
+
+
+PORTAINER_SERVER_TEMPLATE = REPO / "ansible/roles/portainer/templates/server.yaml.j2"
+PORTAINER_AGENT_TEMPLATE = REPO / "ansible/roles/portainer/templates/kubernetes-agent.yaml.j2"
+PORTAINER_AGENT_ENV_TEMPLATE = REPO / "ansible/roles/portainer/templates/portainer-agent.env.j2"
+PORTAINER_AGENT_COMPOSE = REPO / "compose/portainer-agent/compose.yaml"
+PORTAINER_AGENT_ENV_EXAMPLE = REPO / "compose/portainer-agent/.env.example"
+FIREWALL_DEFAULTS = REPO / "ansible/roles/firewall/defaults/main.yml"
+FIREWALL_TASKS = REPO / "ansible/roles/firewall/tasks/main.yml"
+FIREWALL_DOCKER_USER_TEMPLATE = REPO / "ansible/roles/firewall/templates/home-server-docker-user.sh.j2"
+
+
+def top_level_block(content: str, key: str) -> str:
+    """Return the lines under a top-level `key:` mapping (stdlib fallback for PyYAML)."""
+    lines = content.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith(key + ":"))
+    block: list = []
+    for line in lines[start + 1:]:
+        if line.strip() == "" or line.startswith("#"):
+            block.append(line)
+            continue
+        if not line[0].isspace():
+            break
+        block.append(line)
+    return "\n".join(block)
+
+
+class TestSlice3Task6Portainer(unittest.TestCase):
+    def test_portainer_resources_use_portainer_namespace(self):
+        """Server and Kubernetes Agent manifests live in the portainer namespace."""
+        for path in (PORTAINER_SERVER_TEMPLATE, PORTAINER_AGENT_TEMPLATE):
+            self.assertTrue(path.is_file(), f"missing {path}")
+            content = read(path)
+            self.assertIn('namespace: "{{ portainer_namespace }}"', content,
+                          f"{path} must scope namespaced resources to "
+                          "'{{ portainer_namespace }}'")
+            for other in ("kube-system", "monitoring", "labmonitor", "default",
+                          "kube-public"):
+                self.assertNotIn(f"namespace: {other}", content,
+                                 f"{path} must not place resources in {other}")
+                self.assertNotIn(f'namespace: "{other}"', content,
+                                 f"{path} must not place resources in {other}")
+        defaults = parse_simple_vars(PORTAINER_DEFAULTS)
+        self.assertEqual(defaults.get("portainer_namespace"), "portainer",
+                         f"{PORTAINER_DEFAULTS} portainer_namespace must be portainer")
+        tasks = read(PORTAINER_TASKS)
+        self.assertIn("portainer_namespace", tasks,
+                      f"{PORTAINER_TASKS} must reference portainer_namespace")
+        # Service discovery metadata rides on the Server Service only.
+        server = read(PORTAINER_SERVER_TEMPLATE)
+        for marker in ('labmonitor.enabled: "true"',
+                       'labmonitor.id: "portainer"',
+                       'labmonitor.category: "administration"',
+                       'labmonitor.icon: "portainer"',
+                       'labmonitor.name: "Portainer"',
+                       'labmonitor.open.url: "https://portainer.{{ base_domain }}"'):
+            self.assertIn(marker, server,
+                          f"{PORTAINER_SERVER_TEMPLATE} must carry metadata {marker}")
+
+    def test_labmonitor_service_account_is_not_reused_by_portainer(self):
+        """No Portainer file may reference labmonitor-api; agents use dedicated identities."""
+        for path in (PORTAINER_SERVER_TEMPLATE, PORTAINER_AGENT_TEMPLATE,
+                     PORTAINER_TASKS, PORTAINER_DEFAULTS,
+                     PORTAINER_AGENT_ENV_TEMPLATE,
+                     PORTAINER_AGENT_COMPOSE, PORTAINER_AGENT_ENV_EXAMPLE):
+            self.assertTrue(path.is_file(), f"missing {path}")
+            self.assertNotIn("labmonitor-api", read(path),
+                             f"{path} must never reuse the labmonitor-api ServiceAccount")
+        server = read(PORTAINER_SERVER_TEMPLATE)
+        self.assertIn("kind: ServiceAccount", server,
+                      f"{PORTAINER_SERVER_TEMPLATE} must define a dedicated ServiceAccount")
+        self.assertIn("serviceAccountName:", server,
+                      f"{PORTAINER_SERVER_TEMPLATE} must run under its own ServiceAccount")
+        agent = read(PORTAINER_AGENT_TEMPLATE)
+        self.assertIn("kind: ServiceAccount", agent,
+                      f"{PORTAINER_AGENT_TEMPLATE} must define a dedicated Agent ServiceAccount")
+        self.assertIn("kind: ClusterRoleBinding", agent,
+                      f"{PORTAINER_AGENT_TEMPLATE} must bind its own ClusterRole")
+        idx = agent.find("kind: ClusterRoleBinding")
+        window = agent[idx:idx + 2000]
+        self.assertIn("portainer_k8s_agent_service_name", window,
+                      f"{PORTAINER_AGENT_TEMPLATE} ClusterRoleBinding must bind "
+                      "the dedicated Agent ServiceAccount")
+        # The shared agent credential is a dedicated Secret from Vault, never printed.
+        for marker in ("secretKeyRef", "portainer_agent_secret_name"):
+            self.assertIn(marker, server,
+                          f"{PORTAINER_SERVER_TEMPLATE} must consume {marker}")
+            self.assertIn(marker, agent,
+                          f"{PORTAINER_AGENT_TEMPLATE} must consume {marker}")
+        tasks = read(PORTAINER_TASKS)
+        self.assertIn("portainer_agent_secret", tasks,
+                      f"{PORTAINER_TASKS} must validate the Vault agent secret")
+        self.assertIn("no_log: true", tasks,
+                      f"{PORTAINER_TASKS} must never print the agent secret")
+
+    def test_portainer_docker_agent_is_the_only_new_admin_socket_mount(self):
+        """Host Docker Agent is the only new RW socket mount, bound to 9001 via Vault secret."""
+        self.assertTrue(PORTAINER_AGENT_COMPOSE.is_file(), f"missing {PORTAINER_AGENT_COMPOSE}")
+        services = parse_compose_services(PORTAINER_AGENT_COMPOSE)
+        self.assertIn("portainer-agent", services,
+                      f"{PORTAINER_AGENT_COMPOSE} must define service portainer-agent "
+                      f"— got {sorted(services)}")
+        svc = services["portainer-agent"]
+        mounts = [v for v in svc["volumes"] if "/var/run/docker.sock" in v]
+        self.assertEqual(len(mounts), 1,
+                         f"{PORTAINER_AGENT_COMPOSE} must mount the socket exactly once "
+                         f"— got {svc['volumes']}")
+        self.assertTrue(mounts[0].startswith("/var/run/docker.sock:/var/run/docker.sock"),
+                        f"{PORTAINER_AGENT_COMPOSE} socket source must be "
+                        f"/var/run/docker.sock — got {mounts[0]}")
+        self.assertFalse(mounts[0].endswith(":ro"),
+                         f"{PORTAINER_AGENT_COMPOSE} is the explicit admin exception: "
+                         f"RW mount, never :ro — got {mounts[0]}")
+        self.assertEqual(svc["environment"].get("AGENT_SECRET"), "${AGENT_SECRET:?required}",
+                         f"{PORTAINER_AGENT_COMPOSE} AGENT_SECRET must come from Vault "
+                         f"— got {svc['environment']}")
+        content = read(PORTAINER_AGENT_COMPOSE)
+        self.assertNotIn("DOCKER_SOCKET_PROXY", content,
+                         f"{PORTAINER_AGENT_COMPOSE} must have no relation to "
+                         "docker-socket-proxy credentials")
+        self.assertNotIn("labmonitor.open.url", content,
+                         f"{PORTAINER_AGENT_COMPOSE} is a provider, not an app card")
+        ports = svc["ports"]
+        self.assertEqual(len(ports), 1,
+                         f"{PORTAINER_AGENT_COMPOSE} must publish exactly one port "
+                         f"— got {ports}")
+        m = re.search(r":(\d+):(\d+)\s*$", ports[0])
+        self.assertIsNotNone(m,
+                              f"{PORTAINER_AGENT_COMPOSE} port entry must be "
+                              f"host:container — got {ports[0]}")
+        host, container = m.groups() if m is not None else ("", "")
+        self.assertEqual(host, "9001",
+                         f"{PORTAINER_AGENT_COMPOSE} host port must be 9001 — got {ports[0]}")
+        self.assertEqual(container, "9001",
+                         f"{PORTAINER_AGENT_COMPOSE} container port must be 9001 — got {ports[0]}")
+        self.assertIn("PORTAINER_AGENT_BIND_IP", ports[0],
+                      f"{PORTAINER_AGENT_COMPOSE} port entry must bind via "
+                      f"PORTAINER_AGENT_BIND_IP (server_lan_ip only) — got {ports[0]}")
+        # Kubernetes manifests never touch the socket; only the host agent does.
+        for path in (PORTAINER_SERVER_TEMPLATE, PORTAINER_AGENT_TEMPLATE):
+            self.assertNotIn("docker.sock", read(path),
+                             f"{path} must never mount the Docker socket")
+        # Repo-wide: exactly the two pre-existing mounts plus the new admin agent.
+        mounters = sorted(p.parent.name for p in (REPO / "compose").glob("*/compose.yaml")
+                          if "/var/run/docker.sock" in read(p))
+        self.assertEqual(mounters, ["docker-provider", "jenkins", "portainer-agent"],
+                         "socket mounts are limited to docker-provider (:ro), "
+                         f"jenkins (Slice 2 RW), portainer-agent (admin RW) — got {mounters}")
+
+    def test_portainer_uses_fixed_nodeport_30900(self):
+        """Server stays on NodePort 30900 for LAN/VPN; agent port 9001 stays pod-only."""
+        self.assertEqual(parse_simple_vars(PORTAINER_DEFAULTS).get("portainer_nodeport"),
+                         "30900",
+                         f"{PORTAINER_DEFAULTS} portainer_nodeport must be 30900")
+        server = read(PORTAINER_SERVER_TEMPLATE)
+        self.assertIn("type: NodePort", server,
+                      f"{PORTAINER_SERVER_TEMPLATE} Server Service must be NodePort")
+        self.assertIn('nodePort: "{{ portainer_nodeport }}"', server,
+                      f"{PORTAINER_SERVER_TEMPLATE} must use {{{{ portainer_nodeport }}}}")
+        self.assertNotIn("30900", server,
+                         f"{PORTAINER_SERVER_TEMPLATE} must use the variable, not a literal")
+        agent = read(PORTAINER_AGENT_TEMPLATE)
+        self.assertIn("type: ClusterIP", agent,
+                      f"{PORTAINER_AGENT_TEMPLATE} Agent Service must stay ClusterIP")
+        self.assertNotIn("nodePort", agent,
+                         f"{PORTAINER_AGENT_TEMPLATE} must not expose a NodePort")
+        fw_defaults = read(FIREWALL_DEFAULTS)
+        allowlist = top_level_block(fw_defaults, "firewall_nodeport_allowlist")
+        self.assertIn("30900", allowlist,
+                      f"{FIREWALL_DEFAULTS} NodePort allowlist must contain 30900")
+        self.assertNotIn("12375", allowlist,
+                         f"{FIREWALL_DEFAULTS} NodePort allowlist must never contain 12375")
+        backhaul = top_level_block(fw_defaults, "firewall_portainer_agent_backhaul_ports")
+        self.assertIn("9001", backhaul,
+                      f"{FIREWALL_DEFAULTS} agent backhaul must cover 9001")
+        self.assertNotIn("12375", read(FIREWALL_TASKS),
+                         f"{FIREWALL_TASKS} must not add a literal 12375 rule")
+        fw_tasks = read(FIREWALL_TASKS)
+        self.assertGreaterEqual(fw_tasks.count("firewall_portainer_agent_backhaul_ports"), 2,
+                                f"{FIREWALL_TASKS} must loop the agent backhaul var for "
+                                "both the pod-CIDR allow and the LAN/VPN deny")
+        self.assertGreaterEqual(fw_tasks.count("rule: deny"), 2,
+                                f"{FIREWALL_TASKS} must deny LAN/VPN to the agent port")
+        self.assertIn("firewall_nodeport_allowlist", fw_tasks,
+                      f"{FIREWALL_TASKS} must open the NodePort allowlist to LAN/VPN")
+        docker_user = read(FIREWALL_DOCKER_USER_TEMPLATE)
+        self.assertIn("firewall_portainer_agent_backhaul_ports", docker_user,
+                      f"{FIREWALL_DOCKER_USER_TEMPLATE} must filter the published "
+                      "agent port (Docker bypasses UFW)")
 
 
 if __name__ == "__main__":

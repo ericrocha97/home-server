@@ -80,6 +80,39 @@
     comment: "{{ item.comment }}"
   loop: "{{ firewall_provider_backhaul_ports }}"
 
+- name: Permitir Portainer Server (k3s pod CIDR) acessar Docker Agent no host
+  community.general.ufw:
+    rule: allow
+    direction: in
+    from_ip: "{{ k3s_pod_cidr }}"
+    to_ip: "{{ server_lan_ip }}"
+    port: "{{ item.port }}"
+    proto: tcp
+    comment: "{{ item.comment }}"
+  loop: "{{ firewall_portainer_agent_backhaul_ports }}"
+
+# Ordem-dependente no UFW (first-match): o allow específico do pod CIDR acima
+# precede este deny global, então o backhaul continua permitido e qualquer
+# outra origem (LAN/VPN/internet) é negada na porta do Agent.
+- name: Negar acesso de qualquer outra origem à porta do Portainer Docker Agent
+  community.general.ufw:
+    rule: deny
+    direction: in
+    port: "{{ item.port }}"
+    proto: tcp
+    comment: "Deny non-k3s to {{ item.comment }}"
+  loop: "{{ firewall_portainer_agent_backhaul_ports }}"
+
+- name: Permitir NodePorts humanas (Portainer UI) somente da LAN/VPN
+  community.general.ufw:
+    rule: allow
+    direction: in
+    from_ip: "{{ item.0 }}"
+    port: "{{ item.1.port }}"
+    proto: tcp
+    comment: "{{ item.1.comment }}"
+  loop: "{{ resolved_firewall_trusted_cidrs | product(firewall_nodeport_allowlist) | list }}"
+
 - name: Bloquear PostgreSQL direto por padrão (sem allowlist)
   community.general.ufw:
     rule: deny

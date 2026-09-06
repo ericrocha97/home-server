@@ -73,5 +73,24 @@ done
   --comment "Drop non-k3s to {{ item.comment }}" -j DROP
 {% endfor %}
 
+# Portainer Docker Agent boundary: only k3s pods reach server_lan_ip:9001.
+# The agent is an explicit administrative exception (RW socket mount in the
+# separate portainer-agent Compose project); Docker DNAT bypasses UFW for the
+# published port, so LAN/VPN sources are dropped here. First-match ALLOW
+# before the DROP; 9001 is never in the LAN/VPN loop.
+{% for item in firewall_portainer_agent_backhaul_ports %}
+"$iptables_bin" -A "$docker_user_chain" -s "{{ k3s_pod_cidr }}" -p tcp \
+  -m conntrack --ctstate NEW --ctorigdst "{{ server_lan_ip }}" \
+  --ctorigdstport "{{ item.port }}" -m comment \
+  --comment "Allow k3s pods to {{ item.comment }}" -j RETURN
+{% endfor %}
+
+{% for item in firewall_portainer_agent_backhaul_ports %}
+"$iptables_bin" -A "$docker_user_chain" -p tcp \
+  -m conntrack --ctstate NEW --ctorigdst "{{ server_lan_ip }}" \
+  --ctorigdstport "{{ item.port }}" -m comment \
+  --comment "Drop non-k3s to {{ item.comment }}" -j DROP
+{% endfor %}
+
 # Other forwarded traffic remains under Docker/k3s policy.
 "$iptables_bin" -A "$docker_user_chain" -j RETURN

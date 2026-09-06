@@ -1,0 +1,19 @@
+---
+# Portainer Docker Agent — explicit administrative exception (Task 6).
+# Separate Compose project from the read-only docker-socket-proxy provider:
+# this RW socket mount is reachable only from k3s pods via server_lan_ip:9001
+# (UFW backhaul + DOCKER-USER DROP for any other source). AGENT_SECRET comes
+# from Vault `portainer_agent_secret` and has no relation to proxy credentials
+# (the proxy needs none). Provider-only project: no navigable discovery URL.
+name: portainer-agent
+services:
+  portainer-agent:
+    image: "${PORTAINER_AGENT_IMAGE:?required}"
+    container_name: portainer-agent
+    restart: unless-stopped
+    environment:
+      AGENT_SECRET: "${AGENT_SECRET:?required}"
+    ports:
+      - "${PORTAINER_AGENT_BIND_IP:?required}:9001:9001"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
