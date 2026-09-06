@@ -5,6 +5,12 @@
 monitoring_chart_version: "88.6.1"
 monitoring_release_name: monitoring
 monitoring_namespace: monitoring
+# Helm v3 binary. The role shells out via kubernetes.core helm modules, which
+# need `helm repo` — removed in Helm v4 — so stay on the latest v3 line.
+# Pinned version verified 2026-09-06 via the helm releases API.
+monitoring_helm_version: "v3.21.4"
+monitoring_helm_download_url: "https://github.com/helm/helm/releases/download/v3.21.4/helm-v3.21.4-linux-amd64.tar.gz"
+monitoring_helm_binary_path: /usr/local/bin/helm
 docker_metrics_exporter_port: 9797
 monitoring_prometheus_service_name: prometheus
 monitoring_prometheus_service_port: 9090

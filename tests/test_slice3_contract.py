@@ -884,6 +884,15 @@ class TestSlice3Task5Monitoring(unittest.TestCase):
                          f"{MONITORING_DEFAULTS} grafana_nodeport must stay 30300")
         self.assertEqual(mon.get("monitoring_jenkins_metrics_path"), "/prometheus/",
                          f"{MONITORING_DEFAULTS} Jenkins metrics path must stay /prometheus/")
+        # Helm v3 binary: the helm modules shell out to it, and v4 removed
+        # `helm repo`, so the role must install the pinned v3 before use.
+        self.assertEqual(mon.get("monitoring_helm_version"), "v3.21.4",
+                         f"{MONITORING_DEFAULTS} Helm must stay pinned v3.21.4")
+        tasks = read(MONITORING_TASKS)
+        self.assertIn("monitoring_helm_download_url", tasks,
+                      f"{MONITORING_TASKS} must download Helm from the pinned URL")
+        self.assertIn("helm version --short", tasks,
+                      f"{MONITORING_TASKS} must assert the installed Helm version")
         for marker in ("monitoring_prometheus_retention",
                        "monitoring_prometheus_storage_size",
                        "monitoring_grafana_storage_size",

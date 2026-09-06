@@ -38,6 +38,30 @@
       jenkins_prometheus_api_token before installing the stack.
   no_log: true
 
+- name: Check installed Helm version
+  ansible.builtin.command: helm version --short
+  register: helm_version_check
+  changed_when: false
+  failed_when: false
+
+- name: Install pinned Helm v3 when missing or mismatched
+  ansible.builtin.shell: |
+    set -Eeuo pipefail
+    tmpdir="$(mktemp -d)"
+    trap 'rm -rf "$tmpdir"' EXIT
+    curl -fsSL -o "$tmpdir/helm.tar.gz" "{{ monitoring_helm_download_url }}"
+    tar -xzf "$tmpdir/helm.tar.gz" -C "$tmpdir"
+    install -m 0755 "$tmpdir/linux-amd64/helm" "{{ monitoring_helm_binary_path }}"
+  args:
+    executable: /bin/bash
+  when: helm_version_check.rc != 0 or monitoring_helm_version not in helm_version_check.stdout
+
+- name: Assert Helm reports the pinned version
+  ansible.builtin.command: helm version --short
+  register: helm_version_final
+  changed_when: false
+  failed_when: monitoring_helm_version not in helm_version_final.stdout
+
 - name: Ensure docker-metrics-exporter build directory exists
   ansible.builtin.file:
     path: "{{ docker_metrics_exporter_build_dir }}"
