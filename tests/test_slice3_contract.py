@@ -564,8 +564,8 @@ class TestSlice3Task3JenkinsProviders(unittest.TestCase):
         lines = [ln.strip() for ln in read(JENKINS_PLUGINS).splitlines()
                  if ln.strip() and not ln.strip().startswith("#")]
         self.assertEqual(sorted(lines),
-                         sorted(["prometheus:860.v532442b_44e9_", "matrix-auth:3.3"]),
-                         f"{JENKINS_PLUGINS} must pin exactly prometheus:860.v532442b_44e9_ "
+                         sorted(["prometheus:860.v532442b_44e9a_", "matrix-auth:3.3"]),
+                         f"{JENKINS_PLUGINS} must pin exactly prometheus:860.v532442b_44e9a_ "
                          f"and matrix-auth:3.3 — got {lines}")
         self.assertEqual(len(lines), 2,
                          f"{JENKINS_PLUGINS} must contain exactly two pinned plugins — got {lines}")

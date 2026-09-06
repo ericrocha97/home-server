@@ -21,7 +21,7 @@ COPY docker-entrypoint-group-fix.sh /usr/local/bin/docker-entrypoint-group-fix.s
 RUN chmod 0755 /usr/local/bin/docker-entrypoint-group-fix.sh
 
 # Slice 3: pin and install Jenkins plugins compatible with 2.568.2-lts-jdk21.
-# Prometheus 860.v532442b_44e9_ requires Jenkins 2.479.3; matrix-auth 3.3
+# Prometheus 860.v532442b_44e9a_ requires Jenkins 2.479.3; matrix-auth 3.3
 # requires Jenkins 2.528.3. Base image stays in the required build arg only.
 COPY plugins.txt /usr/share/jenkins/ref/plugins.txt
 RUN jenkins-plugin-cli --plugin-file /usr/share/jenkins/ref/plugins.txt
