@@ -7,8 +7,11 @@ LABEL org.opencontainers.image.base.name="${JENKINS_BASE_IMAGE}"
 
 USER root
 
+# NOTE: Debian trixie split the CLI out of docker.io (now only Recommends:
+# docker-cli). With --no-install-recommends the daemon alone ships no
+# /usr/bin/docker, so docker-cli must be listed explicitly.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      docker.io curl gpg ca-certificates gosu tini \
+      docker.io docker-cli curl gpg ca-certificates gosu tini \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
          -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \

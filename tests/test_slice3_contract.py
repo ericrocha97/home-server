@@ -602,6 +602,10 @@ class TestSlice3Task3JenkinsProviders(unittest.TestCase):
                       f"{JENKINS_DOCKERFILE} must build FROM ${{JENKINS_BASE_IMAGE}}")
         self.assertNotIn("FROM jenkins/jenkins:", dockerfile,
                          f"{JENKINS_DOCKERFILE} must not hardcode the base image reference")
+        # Debian trixie split the CLI out of docker.io (Recommends only); with
+        # --no-install-recommends the image would ship no /usr/bin/docker.
+        self.assertIn("docker-cli", dockerfile,
+                      f"{JENKINS_DOCKERFILE} must install docker-cli explicitly for the dockersock check")
         self.assertIn("plugins.txt", dockerfile,
                       f"{JENKINS_DOCKERFILE} must copy plugins.txt")
         self.assertIn("jenkins-plugin-cli", dockerfile,
