@@ -10,6 +10,7 @@ for the final removal check.
 import pathlib
 import re
 import unittest
+from collections.abc import Iterator
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 
@@ -1580,6 +1581,255 @@ class TestSlice3Task7Labmonitor(unittest.TestCase):
         for marker in ("monitoring_namespace", "portainer_namespace", "labmonitor"):
             self.assertIn(marker, platform_tasks,
                           f"{K8S_PLATFORM_TASKS} must gate the discovery contract ({marker})")
+
+
+PLATFORM_INGRESS_TEMPLATE = REPO / "ansible/roles/k8s-platform/templates/platform-ingress.yaml.j2"
+PLATFORM_DEFAULTS = REPO / "ansible/roles/k8s-platform/defaults/main.yml"
+TRAEFIK_HELMCHART_TEMPLATE = REPO / "ansible/roles/k8s-platform/templates/traefik-helmchartconfig.yaml.j2"
+HOSTS_GENERATOR = REPO / "scripts/hosts/generate-hosts.sh"
+LAB_HOSTS_EXAMPLE = REPO / "scripts/hosts/lab.hosts.example"
+PROD_HOSTS_EXAMPLE = REPO / "scripts/hosts/prod.hosts.example"
+ROOT_README = REPO / "README.md"
+K8S_README = REPO / "k8s/README.md"
+INGRESS_README = REPO / "k8s/ingress/README.md"
+
+# Final navigable services (Task 8): the legacy dashboard is gone, so the
+# helper and examples emit exactly these seven names.
+EXPECTED_ACTIVE_SERVICES = (
+    "cockpit",
+    "grafana",
+    "jenkins",
+    "metabase",
+    "n8n",
+    "portainer",
+    "prometheus",
+)
+
+# Human HTTPS routes: Compose/Cockpit stay on the Traefik file provider,
+# Kubernetes apps use Ingress-to-Service routing.
+FILE_PROVIDER_SERVICES = ("cockpit", "jenkins", "n8n", "metabase")
+INGRESS_SERVICES = {
+    "grafana": ("monitoring_namespace", "monitoring_grafana_service_name",
+                "monitoring_grafana_service_port"),
+    "prometheus": ("monitoring_namespace", "monitoring_prometheus_service_name",
+                   "monitoring_prometheus_service_port"),
+    "portainer": ("portainer_namespace", "portainer_service_name",
+                  "portainer_service_port"),
+}
+
+
+def hosts_example_services(path: pathlib.Path) -> list:
+    """Parse `<ip> <service>.<domain>` lines into service names."""
+    services: list = []
+    for raw in read(path).splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        self_host = parts[-1]
+        self_service = self_host.split(".")[0]
+        services.append(self_service)
+    return services
+
+
+def iter_active_files() -> Iterator[pathlib.Path]:
+    """Yield every active-tree text file (ansible/compose/k8s/scripts + READMEs).
+
+    Excludes tests/ (assertions legitimately name legacy concepts), the
+    vendored xanmanning.k3s role, and ignored history (docs/, old/).
+    """
+    roots = [REPO / "ansible", REPO / "compose", REPO / "k8s", REPO / "scripts"]
+    skip_dirs = {"__pycache__", "xanmanning.k3s"}
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            if any(part in skip_dirs for part in path.parts):
+                continue
+            yield path
+    for path in (ROOT_README, K8S_README, INGRESS_README):
+        if path.is_file():
+            yield path
+
+
+class TestSlice3Task8FinalRoutes(unittest.TestCase):
+    def test_hosts_generator_lists_only_active_services(self):
+        """Helper and examples emit exactly the seven active services, no legacy."""
+        self.assertTrue(HOSTS_GENERATOR.is_file(), f"missing {HOSTS_GENERATOR}")
+        helper = read(HOSTS_GENERATOR)
+        m = re.search(r"^for service in (.+?); do\s*$", helper, re.M)
+        self.assertIsNotNone(m,
+                             f"{HOSTS_GENERATOR} must iterate a fixed service list")
+        assert m is not None
+        helper_services = m.group(1).split()
+        self.assertEqual(sorted(helper_services), sorted(EXPECTED_ACTIVE_SERVICES),
+                         f"{HOSTS_GENERATOR} must list exactly "
+                         f"{sorted(EXPECTED_ACTIVE_SERVICES)} — got {sorted(helper_services)}")
+        self.assertNotIn("glance", helper,
+                         f"{HOSTS_GENERATOR} must not list the legacy dashboard")
+        for path, domain in ((LAB_HOSTS_EXAMPLE, "lab.arpa"),
+                             (PROD_HOSTS_EXAMPLE, "home.arpa")):
+            self.assertTrue(path.is_file(), f"missing {path}")
+            services = hosts_example_services(path)
+            self.assertEqual(len(services), 7,
+                             f"{path} must hold exactly seven lines — got {services}")
+            self.assertEqual(sorted(services), sorted(EXPECTED_ACTIVE_SERVICES),
+                             f"{path} must list exactly "
+                             f"{sorted(EXPECTED_ACTIVE_SERVICES)} — got {sorted(services)}")
+            for raw in read(path).splitlines():
+                if raw.strip():
+                    self.assertIn(domain, raw,
+                                  f"{path} line must use domain {domain} — got {raw!r}")
+
+    def test_no_active_glance_or_builds_api_runtime_reference(self):
+        """No active Ansible/Compose/K8s/script/README path loads legacy concepts."""
+        legacy_res = (
+            re.compile(r"glance", re.IGNORECASE),
+            re.compile(r"builds[-_]?api", re.IGNORECASE),
+            re.compile(r"slice\s*[-_]?4", re.IGNORECASE),
+        )
+        offenders: list = []
+        scanned = 0
+        for path in iter_active_files():
+            try:
+                content = read(path)
+            except (UnicodeDecodeError, OSError):
+                continue
+            scanned += 1
+            for rx in legacy_res:
+                if rx.search(content):
+                    offenders.append(f"{path.relative_to(REPO)} matches {rx.pattern}")
+        self.assertGreater(scanned, 0, "active-tree scan must cover real files")
+        self.assertEqual(offenders, [],
+                         "active tree must not reference legacy runtime concepts — "
+                         f"got {offenders}")
+
+    def test_ingress_routes_only_human_interfaces(self):
+        """File provider + Ingress cover exactly the seven human HTTPS hosts."""
+        self.assertTrue(PLATFORM_INGRESS_TEMPLATE.is_file(),
+                        f"missing {PLATFORM_INGRESS_TEMPLATE}")
+        self.assertTrue(TRAEFIK_HELMCHART_TEMPLATE.is_file(),
+                        f"missing {TRAEFIK_HELMCHART_TEMPLATE}")
+        ingress = read(PLATFORM_INGRESS_TEMPLATE)
+        provider = read(TRAEFIK_HELMCHART_TEMPLATE)
+        # File provider keeps the four Compose/Cockpit human routes.
+        for service in FILE_PROVIDER_SERVICES:
+            marker = "Host(`" + service + ".{{ base_domain }}`)"
+            self.assertIn(marker, provider,
+                          f"{TRAEFIK_HELMCHART_TEMPLATE} must route human host {marker}")
+        # Ingress covers exactly the three Kubernetes human interfaces.
+        docs = split_yaml_docs(ingress)
+        self.assertEqual(len(docs), 3,
+                         f"{PLATFORM_INGRESS_TEMPLATE} must hold exactly three "
+                         f"Ingress docs — got {len(docs)}")
+        rule_hosts = re.findall(r"^\s*-\s*host:\s*\"?([a-z]+)\.\{\{\s*base_domain\s*\}\}\"?",
+                                ingress, re.M)
+        tls_hosts = re.findall(r"^\s*-\s*\"?([a-z]+)\.\{\{\s*base_domain\s*\}\}\"?",
+                               ingress, re.M)
+        for origin, found in (("rule", rule_hosts), ("TLS", tls_hosts)):
+            self.assertEqual(sorted(found), ["grafana", "portainer", "prometheus"],
+                             f"{PLATFORM_INGRESS_TEMPLATE} every Ingress needs one "
+                             f"{origin} host — got {found}")
+        self.assertEqual(ingress.count("ingressClassName: traefik"), 3,
+                         f"{PLATFORM_INGRESS_TEMPLATE} every Ingress must set "
+                         "ingressClassName: traefik")
+        self.assertEqual(ingress.count("pathType: Prefix"), 3,
+                         f"{PLATFORM_INGRESS_TEMPLATE} every Ingress must use "
+                         "pathType: Prefix")
+        # Backends resolve through role vars to the Ready Services.
+        merged: dict = {}
+        for path in (MONITORING_DEFAULTS, PORTAINER_DEFAULTS):
+            merged.update(parse_simple_vars(path))
+        for service, (ns_var, name_var, port_var) in INGRESS_SERVICES.items():
+            for var in (ns_var, name_var, port_var):
+                self.assertIn("{{ %s }}" % var, ingress,
+                              f"{PLATFORM_INGRESS_TEMPLATE} {service} must stay "
+                              f"variable-driven via {{{{ {var} }}}}")
+            self.assertIn('name: "%s"' % service,
+                          ingress.replace("{{ %s }}" % name_var, service),
+                          f"{PLATFORM_INGRESS_TEMPLATE} {service} backend must "
+                          f"resolve to Service {service}")
+            self.assertIn("number: %s" % merged[port_var], ingress.replace(
+                "{{ %s }}" % port_var, merged[port_var]),
+                f"{PLATFORM_INGRESS_TEMPLATE} {service} backend must resolve "
+                f"to port {merged[port_var]}")
+        # No Ingress for the future API, the Docker proxy, or the exporter.
+        for forbidden in ("labmonitor", "12375", "9797", "exporter", "proxy"):
+            self.assertNotIn(forbidden, ingress,
+                             f"{PLATFORM_INGRESS_TEMPLATE} must not route {forbidden}")
+        routers_block = provider.split("routers:", 1)[1].split("services:", 1)[0]
+        routers = re.findall(r"^ {14}([a-z0-9-]+):\s*$", routers_block, re.M)
+        self.assertEqual(sorted(routers), sorted(FILE_PROVIDER_SERVICES),
+                         f"{TRAEFIK_HELMCHART_TEMPLATE} routers must stay exactly "
+                         f"{sorted(FILE_PROVIDER_SERVICES)} — got {sorted(routers)}")
+
+    def test_provider_ports_have_no_ingress_or_nodeport(self):
+        """12375/exporter ports stay ClusterIP-only: no Ingress, NodePort, or host port."""
+        tasks = read(K8S_PLATFORM_TASKS)
+        # k8s-platform stays the only Traefik owner with the explicit final order:
+        # TLS Secret -> HelmChartConfig -> wait Traefik -> platform Ingress ->
+        # wait backends. The Task 7 discovery gate stays ahead of the Ingress stage.
+        order_markers = (
+            "Aplicar Secret TLS do Traefik",
+            "Aplicar HelmChartConfig do Traefik bundled",
+            "Aguardar Deployment do Traefik",
+            "Assert LabMonitor discovery metadata on Services",
+            "Renderizar Ingress da plataforma",
+            "Aplicar Ingress da plataforma",
+            "Aguardar backends do Ingress da plataforma",
+        )
+        indexes = [tasks.find(marker) for marker in order_markers]
+        for marker, idx in zip(order_markers, indexes):
+            self.assertNotEqual(idx, -1,
+                                f"{K8S_PLATFORM_TASKS} must contain stage '{marker}'")
+        self.assertEqual(indexes, sorted(indexes),
+                         f"{K8S_PLATFORM_TASKS} Traefik stages must stay ordered "
+                         f"{list(order_markers)}")
+        self.assertIn("k8s_platform_ingress_path", tasks,
+                      f"{K8S_PLATFORM_TASKS} must render the Ingress via "
+                      "k8s_platform_ingress_path")
+        self.assertIn("k8s_platform_ingress_path", read(PLATFORM_DEFAULTS),
+                      f"{PLATFORM_DEFAULTS} must define k8s_platform_ingress_path")
+        # No NodePort may carry a provider port anywhere in the active tree.
+        # NodePorts stay variable-driven, so resolve each reference via defaults.
+        all_defaults: dict = {}
+        for defaults_path in sorted((REPO / "ansible/roles").glob("*/defaults/main.yml")):
+            all_defaults.update(parse_simple_vars(defaults_path))
+        nodeports: list = []
+        for path in iter_active_files():
+            if path.suffix not in (".yml", ".yaml", ".j2"):
+                continue
+            try:
+                content = read(path)
+            except (UnicodeDecodeError, OSError):
+                continue
+            for match in re.finditer(
+                    r"nodePort:\s*[\"']?(?:(\d+)[\"']?|\{\{\s*([A-Za-z_][A-Za-z0-9_]*))",
+                    content):
+                if match.group(1) is not None:
+                    nodeports.append(match.group(1))
+                else:
+                    var = match.group(2)
+                    self.assertIn(var, all_defaults,
+                                  f"{path} nodePort var {var} must resolve via role defaults")
+                    nodeports.append(str(all_defaults[var]))
+        self.assertEqual(sorted(set(nodeports)), ["30300", "30900", "30909"],
+                         "active tree NodePorts must stay exactly the human "
+                         f"contracts 30300/30909/30900 — got {sorted(set(nodeports))}")
+        for path in (EXPORTER_DEPLOYMENT, EXPORTER_SERVICE, EXPORTER_SERVICEMONITOR,
+                     PROVIDER_COMPOSE):
+            content = read(path)
+            self.assertNotIn("kind: Ingress", content,
+                             f"{path} provider must not define an Ingress")
+            self.assertNotIn("NodePort", content,
+                             f"{path} provider must not use a NodePort")
+        # The provider host port never gains a hostname.
+        for text, origin in ((read(PLATFORM_INGRESS_TEMPLATE), "platform Ingress"),
+                             (read(TRAEFIK_HELMCHART_TEMPLATE), "file provider")):
+            self.assertNotIn("12375", text,
+                             f"{origin} must not expose the Docker proxy port")
 
 
 if __name__ == "__main__":

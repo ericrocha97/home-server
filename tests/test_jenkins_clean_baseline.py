@@ -309,7 +309,13 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
                     self.fail(f"tasks must not declare example jobs: {line}")
 
     def test_existing_admin_is_the_only_baseline_account(self):
-        """Only the existing admin is created; no provider users, no Prometheus/matrix-auth plugins in Task 0."""
+        """Phase-one bootstrap creates only the existing admin; providers arrive in phase two.
+
+        Task 0 baseline: admin-only phase-one Groovy, no provider users before
+        the admin checkpoint. Task 3 evolution adds phase-two provider
+        reconciliation (labmonitor-api, prometheus-scraper) to the same tasks
+        file — allowed only after the phase-two render marker.
+        """
         groovy = read(GROOVY)
         tasks = read(TASKS)
         dockerfile = read(DOCKERFILE)
@@ -322,31 +328,54 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
                       "groovy must reference JENKINS_ADMIN_PASSWORD")
         self.assertIn("HudsonPrivateSecurityRealm", groovy,
                       "groovy must use HudsonPrivateSecurityRealm for admin")
-        # must not create provider users in Task 0
+        # phase-one groovy stays admin-only: no provider users in Task 0 baseline
+        # nor in the Task 3 phase-one template.
         for user in ("labmonitor-api", "labmonitor", "prometheus-scraper", "prometheus_scraper"):
             self.assertNotIn(user, groovy.lower(),
                              f"groovy must not create provider user {user} in Task 0 baseline")
-            self.assertNotIn(user, tasks.lower(),
-                             f"tasks must not create provider user {user} in Task 0")
+        # tasks may reference provider users only in the Task 3 phase-two
+        # segment (at/after the phase-two render), never in the baseline portion.
+        phase2_marker = "jenkins-provider-users.groovy.j2"
+        phase2_idx = tasks.find(phase2_marker)
+        self.assertNotEqual(phase2_idx, -1,
+                            f"tasks must render {phase2_marker} (Task 3 phase two)")
+        baseline_segment = tasks[:phase2_idx].lower()
+        for user in ("labmonitor-api", "prometheus-scraper", "prometheus_scraper"):
+            self.assertNotIn(user, baseline_segment,
+                             f"tasks baseline segment must not create provider user {user} "
+                             "before the phase-two render")
+        for user in ("labmonitor-api", "prometheus-scraper"):
+            self.assertIn(user, tasks.lower(),
+                          f"tasks phase-two segment must reconcile provider user {user}")
 
-        # must not add prometheus or matrix-auth plugins in Task 0
-        for plugin_keyword in ("prometheus:", "matrix-auth", "matrix_auth"):
-            self.assertNotIn(plugin_keyword, dockerfile.lower(),
-                             f"Dockerfile must not add {plugin_keyword} in Task 0 — Task 3 does")
-            self.assertNotIn(plugin_keyword, tasks.lower(),
-                             f"tasks must not install {plugin_keyword} in Task 0")
+        # Task 3 pins exactly the prometheus + matrix-auth plugins in
+        # plugins.txt, installed via the image-provided installer; the Task 0
+        # invariants stay: ARG-fed base image, no hardcoded FROM ref, never `latest`.
+        plugins = read(REPO / "compose/jenkins/plugins.txt")
+        for plugin_keyword in ("prometheus:", "matrix-auth"):
+            self.assertIn(plugin_keyword, plugins.lower(),
+                          f"plugins.txt must pin Task 3 plugin {plugin_keyword}")
+        self.assertIn("plugins.txt", dockerfile,
+                      "Dockerfile must reference plugins.txt (Task 3 evolution)")
+        self.assertIn("jenkins-plugin-cli", dockerfile,
+                      "Dockerfile must run the image-provided plugin installer")
+        self.assertNotIn("latest", dockerfile.lower(),
+                         "Dockerfile must never use 'latest'")
 
-        # Dockerfile must not contain plugin install for those
-        self.assertNotIn("plugins.txt", dockerfile,
-                         "Dockerfile must not reference plugins.txt in Task 0 baseline")
-
-        # compose .env.example must not contain provider tokens
+        # compose .env.example carries Task 3 provider placeholders only —
+        # changeme values, never Vault interpolation or real secrets.
         if ENV_EXAMPLE.is_file():
             env_ex = read(ENV_EXAMPLE)
-            self.assertNotIn("labmonitor", env_ex.lower(),
-                             ".env.example must not contain labmonitor provider in Task 0")
-            self.assertNotIn("prometheus-scraper", env_ex.lower(),
-                             ".env.example must not contain prometheus-scraper in Task 0")
+            self.assertIn("JENKINS_LABMONITOR_USER=labmonitor-api", env_ex,
+                          ".env.example must document the labmonitor provider placeholder")
+            self.assertIn("JENKINS_PROMETHEUS_USER=prometheus-scraper", env_ex,
+                          ".env.example must document the prometheus provider placeholder")
+            self.assertNotIn("{{", env_ex,
+                             ".env.example must not interpolate Vault values")
+            for line in env_ex.splitlines():
+                if "PASSWORD" in line or "TOKEN" in line:
+                    self.assertIn("changeme", line.lower(),
+                                  f".env.example secret placeholder must use changeme — got {line!r}")
 
         # groovy must still be admin-only — check that authorization strategy remains FullControl or is at least not provider-permissive
         # In Task 0 baseline, it uses FullControlOnceLoggedInAuthorizationStrategy (checked in audit) — allow either that or future GlobalMatrix after Task 3, but Task 0 must not yet add provider perms

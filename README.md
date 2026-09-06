@@ -12,7 +12,7 @@ O Slice 1 prepara host e plataforma:
 - k3s single-node pinado (`v1.36.3+k3s1`) com containerd, CoreDNS e ServiceLB.
 - Traefik bundled em `kube-system` com file provider (`watch: true`) e Secret `traefik-tls` em `kube-system` alimentado por mkcert local.
 
-Nada de aplicações futuras neste slice: sem Jenkins, n8n, Metabase, PostgreSQL, Portainer, Grafana, Prometheus, Glance ou restore de dados.
+Nada de aplicações futuras neste slice: sem Jenkins, n8n, Metabase, PostgreSQL, Portainer, Grafana, Prometheus ou restore de dados.
 
 ## Estrutura de arquivos
 
@@ -203,8 +203,7 @@ mkcert \
   n8n.lab.arpa \
   grafana.lab.arpa \
   prometheus.lab.arpa \
-  portainer.lab.arpa \
-  glance.lab.arpa
+  portainer.lab.arpa
 chmod 600 ansible/secrets/lab-tls.key
 ```
 
@@ -223,7 +222,7 @@ Use o gerador somente-leitura para obter os mapeamentos:
 ./scripts/hosts/generate-hosts.sh prod
 ```
 
-Cada comando imprime oito linhas no formato `<IP> <serviço>.<domínio>` (cockpit, glance, grafana, jenkins, metabase, n8n, portainer, prometheus) usando o IP/domínio do inventário selecionado via `ansible-inventory --list`. Nada é escrito automaticamente em `/etc/hosts`.
+Cada comando imprime sete linhas no formato `<IP> <serviço>.<domínio>` (cockpit, grafana, jenkins, metabase, n8n, portainer, prometheus) usando o IP/domínio do inventário selecionado via `ansible-inventory --list`. Nada é escrito automaticamente em `/etc/hosts`.
 
 Como o inventário contém um Vault (`group_vars/all/vault.yml`), o script pedirá a senha do Vault para decifrar as variáveis do grupo — comportamento esperado.
 
@@ -346,8 +345,8 @@ sudo docker exec jenkins curl -fsS http://n8n:5678/healthz >/dev/null
 ## Próximos slices
 
 - **Slice 2 — Compose** (concluído): redes `home-server-automation`/`home-server-data`, PostgreSQL `15432`, Jenkins `18080` (imagem custom), n8n `15678`, Metabase `13001`, file provider para 3 backends — ver seção acima.
-- **Slice 3**: Dashboard Glance e observabilidade (Portainer, Grafana, Prometheus) sobre a fundação do Slice 1–2.
-- **Slices seguintes**: restore e automações adicionais.
+- **Slice 3 — Platform foundation** (concluído, final infrastructure): observabilidade técnica (Prometheus, Grafana + dashboards), providers read-only (Docker socket proxy, Docker metrics exporter, Jenkins providers), administração Portainer, fundação de discovery (RBAC + provider endpoints + catálogo) e rotas Traefik finais — file provider para Compose/Cockpit, Ingress para Grafana/Prometheus/Portainer. Nenhum produto é deployado neste slice.
+- Restore e automações adicionais vivem fora deste projeto.
 
 ## Segurança e notas
 

@@ -96,3 +96,36 @@
     kubectl --kubeconfig={{ kubeconfig_path }} -n labmonitor \
       get serviceaccount labmonitor-api -o name
   changed_when: false
+
+# Final platform Ingress stage (Task 8): Traefik Ingress only for human
+# interfaces (Grafana, Prometheus, Portainer). The file provider keeps
+# routing the Compose/Cockpit backends; providers stay ClusterIP-only with
+# no Ingress or NodePort.
+- name: Renderizar Ingress da plataforma (Grafana, Prometheus, Portainer)
+  ansible.builtin.template:
+    src: platform-ingress.yaml.j2
+    dest: "{{ k8s_platform_ingress_path }}"
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Aplicar Ingress da plataforma
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    src: "{{ k8s_platform_ingress_path }}"
+
+- name: Aguardar backends do Ingress da plataforma (Grafana, Prometheus, Portainer)
+  ansible.builtin.command: >-
+    kubectl --kubeconfig={{ kubeconfig_path }}
+    -n {{ item.namespace }} get endpoints {{ item.service }}
+    -o jsonpath='{.subsets[*].addresses[*].ip}'
+  register: platform_ingress_backends
+  retries: 60
+  delay: 5
+  until: platform_ingress_backends.stdout | length > 0
+  changed_when: false
+  loop:
+    - { namespace: "{{ monitoring_namespace }}", service: "{{ monitoring_grafana_service_name }}" }
+    - { namespace: "{{ monitoring_namespace }}", service: "{{ monitoring_prometheus_service_name }}" }
+    - { namespace: "{{ portainer_namespace }}", service: "{{ portainer_service_name }}" }

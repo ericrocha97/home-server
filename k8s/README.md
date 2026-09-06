@@ -1,7 +1,11 @@
 # Kubernetes platform
 
 Slice 1 installs the single-node k3s platform and configures the bundled Traefik
-instance in `kube-system`. Later slices add monitoring, Portainer and Glance.
+instance in `kube-system`. Slice 3 completes the platform as the final
+infrastructure layer: monitoring (Prometheus/Grafana), Portainer
+administration, read-only providers, and the LabMonitor provider foundation.
+No product is deployed; restore and additional automations live outside this
+project.
 
 Host-native Docker Compose services are routed directly by Traefik's file provider;
 they are not represented by Kubernetes Services or EndpointSlices.
