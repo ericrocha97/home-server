@@ -1224,6 +1224,17 @@ class TestSlice3Task6Portainer(unittest.TestCase):
         self.assertIn("no_log: true", tasks,
                       f"{PORTAINER_TASKS} must never print the agent secret")
 
+    def test_portainer_agent_headless_service_publishes_unready_addresses(self):
+        """Agent peer discovery cannot wait for the agent readiness gate."""
+        agent = read(PORTAINER_AGENT_TEMPLATE)
+        headless_index = agent.index("name: s-portainer-agent-headless")
+        headless_service = agent[headless_index:headless_index + 800]
+        self.assertIn("clusterIP: None", headless_service,
+                      f"{PORTAINER_AGENT_TEMPLATE} must define a headless agent Service")
+        self.assertIn("publishNotReadyAddresses: true", headless_service,
+                      f"{PORTAINER_AGENT_TEMPLATE} must publish unready endpoints so "
+                      "agents can resolve their peer-discovery Service before readiness")
+
     def test_portainer_docker_agent_is_the_only_new_admin_socket_mount(self):
         """Host Docker Agent is the only new RW socket mount, bound to 9001 via Vault secret."""
         self.assertTrue(PORTAINER_AGENT_COMPOSE.is_file(), f"missing {PORTAINER_AGENT_COMPOSE}")

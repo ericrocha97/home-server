@@ -74,6 +74,9 @@ metadata:
 spec:
   type: ClusterIP
   clusterIP: None
+  # The agent resolves this Service before its readiness probe can pass.
+  # Publish its endpoint immediately to avoid a DNS/readiness deadlock.
+  publishNotReadyAddresses: true
   selector:
     app: "{{ portainer_k8s_agent_service_name }}"
   ports:
