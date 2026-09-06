@@ -888,6 +888,12 @@ class TestSlice3Task5Monitoring(unittest.TestCase):
         # `helm repo`, so the role must install the pinned v3 before use.
         self.assertEqual(mon.get("monitoring_helm_version"), "v3.21.4",
                          f"{MONITORING_DEFAULTS} Helm must stay pinned v3.21.4")
+        self.assertIn("get.helm.sh", mon.get("monitoring_helm_download_url", ""),
+                      f"{MONITORING_DEFAULTS} Helm must download from get.helm.sh "
+                      f"(GitHub v3.21.4 release has no tarball asset)")
+        self.assertRegex(mon.get("monitoring_helm_tarball_sha256", ""),
+                         r"^[0-9a-f]{64}$",
+                         f"{MONITORING_DEFAULTS} Helm tarball checksum must be pinned")
         tasks = read(MONITORING_TASKS)
         self.assertIn("monitoring_helm_download_url", tasks,
                       f"{MONITORING_TASKS} must download Helm from the pinned URL")

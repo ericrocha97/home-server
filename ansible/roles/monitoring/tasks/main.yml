@@ -50,6 +50,7 @@
     tmpdir="$(mktemp -d)"
     trap 'rm -rf "$tmpdir"' EXIT
     curl -fsSL -o "$tmpdir/helm.tar.gz" "{{ monitoring_helm_download_url }}"
+    echo "{{ monitoring_helm_tarball_sha256 }}  $tmpdir/helm.tar.gz" | sha256sum -c -
     tar -xzf "$tmpdir/helm.tar.gz" -C "$tmpdir"
     install -m 0755 "$tmpdir/linux-amd64/helm" "{{ monitoring_helm_binary_path }}"
   args:
