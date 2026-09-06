@@ -452,6 +452,13 @@ class TestSlice3Task3JenkinsProviders(unittest.TestCase):
                       f"{PHASE2_GROOVY} must use hudson.model.User")
         self.assertIn("jenkins.security.ApiTokenProperty", groovy,
                       f"{PHASE2_GROOVY} must apply tokens via ApiTokenProperty")
+        # Only the scripting-intended token API survives core upgrades: private
+        # store fields (e.g. @apiTokenStore, removed in 2.568.x) abort the boot
+        # script with MissingFieldException and leave users without tokens.
+        self.assertNotIn("@apiTokenStore", groovy,
+                         f"{PHASE2_GROOVY} must not access the removed private apiTokenStore field")
+        self.assertIn("addFixedNewToken", groovy,
+                      f"{PHASE2_GROOVY} must set Vault tokens via addFixedNewToken")
         self.assertIn("IllegalStateException", groovy,
                       f"{PHASE2_GROOVY} must fail when the pinned API cannot set a Vault token")
         self.assertNotIn("JENKINS_ADMIN_PASSWORD", groovy,

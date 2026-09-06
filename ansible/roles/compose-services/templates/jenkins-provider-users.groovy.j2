@@ -45,14 +45,16 @@ def ensureApiToken = { User u, String tokenValue ->
     u.addProperty(new ApiTokenProperty())
     prop = u.getProperty(ApiTokenProperty)
   }
+  // Use only the scripting-intended ApiTokenProperty API (verified against
+  // Jenkins 2.568.2 source). Never touch private token-store fields via
+  // property access: the legacy field no longer exists and aborts the
+  // script with MissingFieldException.
+  // revokeAllTokens + addFixedNewToken is idempotent for these dedicated
+  // provider users and self-heals on the next boot if interrupted.
   try {
-    def store = prop.@apiTokenStore
-    def existing = store.getTokenListSortedByName().find { it.name == "vault-token" }
-    if (existing != null) {
-      store.revokeToken(existing.uuid)
-    }
-    store.addFixedNewToken("vault-token", tokenValue)
-  } catch (MissingMethodException | MissingPropertyException e) {
+    prop.revokeAllTokens()
+    prop.addFixedNewToken("vault-token", tokenValue)
+  } catch (Exception e) {
     throw new IllegalStateException("Pinned Jenkins core/plugin set cannot set Vault token deterministically — abortando sem gerar token nao rastreado: ${e.getMessage()}")
   }
   u.save()
