@@ -178,6 +178,7 @@
     chart_version: "{{ monitoring_chart_version }}"
     release_namespace: "{{ monitoring_namespace }}"
     create_namespace: true
+    kubeconfig: "{{ kubeconfig_path }}"
     values_files:
       - "{{ monitoring_values_path }}"
     state: present
