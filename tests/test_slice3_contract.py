@@ -376,6 +376,11 @@ class TestSlice3Task3JenkinsProviders(unittest.TestCase):
         content = read(PHASE1_GROOVY)
         self.assertIn("GlobalMatrixAuthorizationStrategy", content,
                       f"{PHASE1_GROOVY} must install GlobalMatrixAuthorizationStrategy")
+        # Every bare class referenced by the script must be imported; a missing
+        # import aborts the script at boot (MissingPropertyException), leaving
+        # Jenkins unsecured (anon 200) and the admin checkpoint failing.
+        self.assertIn("hudson.model.User", content,
+                      f"{PHASE1_GROOVY} uses User.getById and must import hudson.model.User")
         self.assertIn("Jenkins.ADMINISTER", content,
                       f"{PHASE1_GROOVY} must grant admin via Jenkins.ADMINISTER constant")
         self.assertNotIn("FullControlOnceLoggedInAuthorizationStrategy", content,
