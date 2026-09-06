@@ -29,7 +29,9 @@
       - jenkins_prometheus_password != jenkins_labmonitor_api_token
       - jenkins_prometheus_password != jenkins_prometheus_api_token
       - jenkins_labmonitor_api_token != jenkins_prometheus_api_token
-    fail_msg: "Vault do Slice 3 incompleto — defina jenkins_labmonitor_password, jenkins_labmonitor_api_token, jenkins_prometheus_password e jenkins_prometheus_api_token distintos do admin"
+      - jenkins_labmonitor_api_token is match('^11[a-f0-9]{32}$')
+      - jenkins_prometheus_api_token is match('^11[a-f0-9]{32}$')
+    fail_msg: "Vault do Slice 3 incompleto — defina jenkins_labmonitor_password, jenkins_labmonitor_api_token, jenkins_prometheus_password e jenkins_prometheus_api_token distintos do admin; os dois api_token devem usar o formato fixo do Jenkins 11 + 32 hex minusculos (34 chars, ex.: python3 -c \"import secrets; print('11' + secrets.token_hex(16))\")"
   no_log: true
 
 - name: Validar referências de imagem completas e pinadas

@@ -498,6 +498,17 @@ class TestSlice3Task3JenkinsProviders(unittest.TestCase):
         self.assertNotIn("jenkins_labmonitor_password", example,
                          f"{JENKINS_ENV_EXAMPLE} must not embed Vault variable names")
 
+    def test_jenkins_api_tokens_use_jenkins_fixed_format(self):
+        """Vault API tokens must match Jenkins addFixedNewToken format (11 + 32 lowercase hex).
+
+        Anything else aborts the phase-two boot script with IllegalArgumentException
+        and leaves provider users without tokens (401 on REST).
+        """
+        tasks = read(COMPOSE_TASKS)
+        for var in ("jenkins_labmonitor_api_token", "jenkins_prometheus_api_token"):
+            self.assertIn(f"{var} is match('^11[a-f0-9]{{32}}$')", tasks,
+                          f"{COMPOSE_TASKS} must validate {var} against the Jenkins fixed-token format")
+
     def test_compose_apps_have_environment_derived_labmonitor_labels(self):
         """Jenkins/n8n/Metabase expose the six labmonitor.* labels via environment interpolation."""
         required_labels = [
