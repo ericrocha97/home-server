@@ -42,7 +42,10 @@ spec:
             timeoutSeconds: 3
           readinessProbe:
             httpGet:
-              path: /metrics
+              # /healthz never touches the Docker API; /metrics does a full
+              # per-container stats sweep (~1s each) and can exceed any
+              # probe timeout, so it must not gate readiness.
+              path: /healthz
               port: 9797
             initialDelaySeconds: 5
             periodSeconds: 30

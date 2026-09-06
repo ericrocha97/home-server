@@ -90,6 +90,10 @@ prometheus-node-exporter:
     repository: "{{ monitoring_node_exporter_image.split('/', 1)[1].rsplit(':', 1)[0] }}"
     tag: "{{ monitoring_node_exporter_image.rsplit(':', 1)[1].split('@')[0] }}"
     sha: ""
+    # Subchart 4.56.1 appends "-distroless" to the tag unless this is
+    # false; the quay.io/prometheus/node-exporter repo has no
+    # "v1.9.1-distroless" tag (only plain "v1.9.1").
+    distroless: false
 
 kubeStateMetrics:
   enabled: true
