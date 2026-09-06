@@ -64,3 +64,35 @@
 - name: Aguardar Deployment do Traefik disponível
   ansible.builtin.command: kubectl --kubeconfig={{ kubeconfig_path }} -n kube-system wait --for=condition=available deployment/traefik --timeout=180s
   changed_when: false
+
+# LabMonitor discovery contract gate (Task 7): Grafana, Prometheus, and
+# Portainer Services must expose the stable id + open.url metadata before the
+# Task 8 Ingress stage routes to them. Cockpit stays on the file provider.
+- name: Assert LabMonitor discovery metadata on Services
+  ansible.builtin.shell: |
+    set -euo pipefail
+    MON="kubectl --kubeconfig={{ kubeconfig_path }} \
+      -n {{ monitoring_namespace }} get service"
+    PT="kubectl --kubeconfig={{ kubeconfig_path }} \
+      -n {{ portainer_namespace }} get service"
+    GRA="{{ monitoring_grafana_service_name }}"
+    PRO="{{ monitoring_prometheus_service_name }}"
+    POR="{{ portainer_service_name }}"
+    test "$(${MON} ${GRA} \
+      -o jsonpath='{.metadata.labels.labmonitor\.id}')" = "grafana"
+    test "$(${MON} ${GRA} \
+      -o jsonpath='{.metadata.annotations.labmonitor\.open\.url}')" = \
+      "https://grafana.{{ base_domain }}"
+    test "$(${MON} ${PRO} \
+      -o jsonpath='{.metadata.labels.labmonitor\.id}')" = "prometheus"
+    test "$(${MON} ${PRO} \
+      -o jsonpath='{.metadata.annotations.labmonitor\.open\.url}')" = \
+      "https://prometheus.{{ base_domain }}"
+    test "$(${PT} ${POR} \
+      -o jsonpath='{.metadata.labels.labmonitor\.id}')" = "portainer"
+    test "$(${PT} ${POR} \
+      -o jsonpath='{.metadata.annotations.labmonitor\.open\.url}')" = \
+      "https://portainer.{{ base_domain }}"
+    kubectl --kubeconfig={{ kubeconfig_path }} -n labmonitor \
+      get serviceaccount labmonitor-api -o name
+  changed_when: false

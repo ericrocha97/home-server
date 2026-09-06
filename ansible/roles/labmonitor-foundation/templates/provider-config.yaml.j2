@@ -1,0 +1,14 @@
+---
+# LabMonitor provider endpoints (Task 7) — non-sensitive values only.
+# Rendered into the labmonitor-provider-config ConfigMap data by the
+# labmonitor-foundation role. Only server_lan_ip varies per environment.
+schema: labmonitor.providers/v1
+providers:
+  prometheus:
+    base_url: http://prometheus.monitoring.svc.cluster.local:9090
+  docker:
+    base_url: http://{{ server_lan_ip }}:12375
+  jenkins:
+    base_url: http://{{ server_lan_ip }}:18080
+  kubernetes:
+    mode: in_cluster

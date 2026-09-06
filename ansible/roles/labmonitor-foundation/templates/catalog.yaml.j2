@@ -1,0 +1,13 @@
+---
+# LabMonitor service catalog (Task 7) — host-native navigable services only.
+# Rendered into the labmonitor-catalog ConfigMap data by the
+# labmonitor-foundation role. Exactly the initial Cockpit entry; nothing else.
+schema: labmonitor.services/v1
+services:
+  - id: cockpit
+    enabled: true
+    name: Cockpit
+    category: administration
+    icon: cockpit
+    open_url: https://cockpit.{{ base_domain }}
+    runtime: host

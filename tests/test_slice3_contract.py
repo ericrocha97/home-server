@@ -1074,6 +1074,12 @@ PORTAINER_AGENT_ENV_EXAMPLE = REPO / "compose/portainer-agent/.env.example"
 FIREWALL_DEFAULTS = REPO / "ansible/roles/firewall/defaults/main.yml"
 FIREWALL_TASKS = REPO / "ansible/roles/firewall/tasks/main.yml"
 FIREWALL_DOCKER_USER_TEMPLATE = REPO / "ansible/roles/firewall/templates/home-server-docker-user.sh.j2"
+LABMONITOR_RBAC = REPO / "k8s/labmonitor/rbac.yaml"
+LABMONITOR_PROVIDER_TEMPLATE = REPO / "ansible/roles/labmonitor-foundation/templates/provider-config.yaml.j2"
+LABMONITOR_CATALOG_TEMPLATE = REPO / "ansible/roles/labmonitor-foundation/templates/catalog.yaml.j2"
+LABMONITOR_JENKINS_SECRET_TEMPLATE = REPO / "ansible/roles/labmonitor-foundation/templates/jenkins-secret.yaml.j2"
+K8S_PLATFORM_TASKS = REPO / "ansible/roles/k8s-platform/tasks/main.yml"
+MONITORING_EXPORTER_DEPLOYMENT_TEMPLATE = REPO / "ansible/roles/monitoring/templates/docker-exporter-deployment.yaml.j2"
 
 
 def top_level_block(content: str, key: str) -> str:
@@ -1253,6 +1259,327 @@ class TestSlice3Task6Portainer(unittest.TestCase):
         self.assertIn("firewall_portainer_agent_backhaul_ports", docker_user,
                       f"{FIREWALL_DOCKER_USER_TEMPLATE} must filter the published "
                       "agent port (Docker bypasses UFW)")
+
+
+def split_yaml_docs(text: str) -> list:
+    """Split a multi-document YAML file on `---` separator lines (stdlib only)."""
+    docs: list = []
+    current: list = []
+    for line in text.splitlines():
+        if line.strip() == "---":
+            if any(part.strip() for part in current):
+                docs.append("\n".join(current))
+            current = []
+        else:
+            current.append(line)
+    if any(part.strip() for part in current):
+        docs.append("\n".join(current))
+    return [doc for doc in docs if re.search(r"^kind:\s*\S+", doc, re.M)]
+
+
+def parse_flow_list(value: str) -> list:
+    """Parse a YAML flow list like `["a", "b"]` into Python strings."""
+    value = value.strip()
+    assert value.startswith("[") and value.endswith("]"), f"not a flow list: {value}"
+    inner = value[1:-1].strip()
+    if not inner:
+        return []
+    return [part.strip().strip("'\"") for part in inner.split(",")]
+
+
+def parse_k8s_rules(doc: str) -> list:
+    """Parse a top-level `rules:` block into a list of dicts.
+
+    Supports flow lists (`key: ["a"]`) and block lists (`key:` + `- item`).
+    RBAC manifests in this repo keep `rules:` at column 0 with 2-space indents.
+    """
+    lines = doc.splitlines()
+    start = next(i for i, line in enumerate(lines) if re.match(r"^rules:\s*$", line))
+    rules: list = []
+    current: dict | None = None
+    pending_key: str | None = None
+
+    def set_key(target: dict, key: str, val: str) -> str | None:
+        if val == "":
+            target[key] = []
+            return key
+        if val.startswith("["):
+            target[key] = parse_flow_list(val)
+            return None
+        target[key] = val.strip("'\"")
+        return None
+
+    for line in lines[start + 1:]:
+        if not line.strip() or line.strip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent == 0:
+            break
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            item = stripped[2:]
+            if indent == 2 and ":" in item:
+                current = {}
+                rules.append(current)
+                pending_key = None
+                key, val = item.split(":", 1)
+                pending_key = set_key(current, key.strip(), val.strip())
+            elif pending_key is not None and current is not None:
+                current[pending_key].append(item.strip().strip("'\""))
+            else:
+                break
+        elif ":" in stripped and current is not None:
+            key, val = stripped.split(":", 1)
+            pending_key = set_key(current, key.strip(), val.strip())
+        else:
+            break
+    return rules
+
+
+def normalized_rules(rules: list) -> list:
+    """Sort every list value so rule comparison is order-insensitive."""
+    normalized = []
+    for rule in rules:
+        normalized.append({key: sorted(val) if isinstance(val, list) else val
+                           for key, val in rule.items()})
+    return sorted(normalized, key=repr)
+
+
+class TestSlice3Task7Labmonitor(unittest.TestCase):
+    def test_labmonitor_rbac_has_only_required_read_verbs(self):
+        """labmonitor RBAC grants get/list/watch only on nodes/pods/services/namespaces/deployments."""
+        self.assertTrue(LABMONITOR_RBAC.is_file(), f"missing {LABMONITOR_RBAC}")
+        docs = split_yaml_docs(read(LABMONITOR_RBAC))
+
+        def doc_kind(doc: str) -> str:
+            match = re.search(r"^kind:\s*(\S+)", doc, re.M)
+            self.assertIsNotNone(match, f"{LABMONITOR_RBAC} doc must declare a kind")
+            assert match is not None
+            return match.group(1)
+
+        kinds = sorted(doc_kind(doc) for doc in docs)
+        self.assertEqual(kinds, ["ClusterRole", "ClusterRoleBinding", "Namespace",
+                                "Role", "RoleBinding", "ServiceAccount"],
+                         f"{LABMONITOR_RBAC} must hold exactly the six foundation resources — got {kinds}")
+
+        def single(kind: str) -> str:
+            matches = [doc for doc in docs
+                       if re.search(rf"^kind:\s*{kind}\s*$", doc, re.M)]
+            self.assertEqual(len(matches), 1,
+                             f"{LABMONITOR_RBAC} must hold exactly one {kind} — got {len(matches)}")
+            return matches[0]
+
+        namespace = single("Namespace")
+        self.assertIn("name: labmonitor", namespace,
+                      f"{LABMONITOR_RBAC} Namespace must be labmonitor")
+        account = single("ServiceAccount")
+        self.assertIn("name: labmonitor-api", account,
+                      f"{LABMONITOR_RBAC} ServiceAccount must be labmonitor-api")
+        self.assertIn("namespace: labmonitor", account,
+                      f"{LABMONITOR_RBAC} ServiceAccount must live in labmonitor")
+        cluster_role = single("ClusterRole")
+        self.assertIn("name: labmonitor-reader", cluster_role,
+                      f"{LABMONITOR_RBAC} ClusterRole must be labmonitor-reader")
+        self.assertEqual(
+            normalized_rules(parse_k8s_rules(cluster_role)),
+            normalized_rules([
+                {"apiGroups": [""], "resources": ["nodes", "pods", "services", "namespaces"],
+                 "verbs": ["get", "list", "watch"]},
+                {"apiGroups": ["apps"], "resources": ["deployments"],
+                 "verbs": ["get", "list", "watch"]},
+            ]),
+            f"{LABMONITOR_RBAC} ClusterRole must grant get/list/watch only on "
+            "nodes/pods/services/namespaces + apps/deployments",
+        )
+        role = single("Role")
+        self.assertIn("namespace: labmonitor", role,
+                      f"{LABMONITOR_RBAC} Role must live in labmonitor")
+        self.assertEqual(
+            normalized_rules(parse_k8s_rules(role)),
+            normalized_rules([
+                {"apiGroups": [""], "resources": ["configmaps"],
+                 "resourceNames": ["labmonitor-catalog", "labmonitor-provider-config"],
+                 "verbs": ["get"]},
+            ]),
+            f"{LABMONITOR_RBAC} Role must allow get only on the two named ConfigMaps",
+        )
+        for kind, ref_kind, ref_name in (("ClusterRoleBinding", "ClusterRole", "labmonitor-reader"),
+                                        ("RoleBinding", "Role", "labmonitor-config-reader")):
+            binding = single(kind)
+            subjects = re.findall(r"-\s*kind:\s*(\S+)\s*\n\s*name:\s*(\S+)\s*\n\s*namespace:\s*(\S+)",
+                                  binding)
+            self.assertEqual(subjects, [("ServiceAccount", "labmonitor-api", "labmonitor")],
+                             f"{LABMONITOR_RBAC} {kind} must bind only "
+                             "system:serviceaccount:labmonitor:labmonitor-api — got {subjects}")
+            self.assertIn(f"kind: {ref_kind}", binding,
+                          f"{LABMONITOR_RBAC} {kind} must reference {ref_kind}")
+            self.assertIn(f"name: {ref_name}", binding,
+                          f"{LABMONITOR_RBAC} {kind} must reference {ref_name}")
+        # No token Secret: the future Deployment uses a projected token.
+        self.assertNotIn("kind: Secret", read(LABMONITOR_RBAC),
+                         f"{LABMONITOR_RBAC} must not create a token Secret")
+
+    def test_labmonitor_rbac_has_no_secret_permissions(self):
+        """No Secret/event/workload-write/cluster-admin grant anywhere in the LabMonitor foundation."""
+        self.assertTrue(LABMONITOR_RBAC.is_file(), f"missing {LABMONITOR_RBAC}")
+        rbac = read(LABMONITOR_RBAC)
+        lowered = rbac.lower()
+        for forbidden in ("secret", "cluster-admin", "events", "daemonsets",
+                          "statefulsets", "persistentvolumes"):
+            self.assertNotIn(forbidden, lowered,
+                             f"{LABMONITOR_RBAC} must not mention {forbidden}")
+        for verb in ('"create"', '"delete"', '"update"', '"patch"',
+                     '"deletecollection"', '"*"'):
+            self.assertNotIn(verb, rbac,
+                             f"{LABMONITOR_RBAC} must not grant write verb {verb}")
+        self.assertNotIn("token", lowered,
+                         f"{LABMONITOR_RBAC} must not create or reference a token")
+        # The Jenkins Secret carries only the Vault username + api-token, never a password.
+        self.assertTrue(LABMONITOR_JENKINS_SECRET_TEMPLATE.is_file(),
+                        f"missing {LABMONITOR_JENKINS_SECRET_TEMPLATE}")
+        secret_template = read(LABMONITOR_JENKINS_SECRET_TEMPLATE)
+        self.assertIn("kind: Secret", secret_template,
+                      f"{LABMONITOR_JENKINS_SECRET_TEMPLATE} must render a Secret")
+        self.assertIn("labmonitor_jenkins_secret_name", secret_template,
+                      f"{LABMONITOR_JENKINS_SECRET_TEMPLATE} must use the role secret-name var")
+        self.assertIn('"{{ jenkins_labmonitor_user }}"', secret_template,
+                      f"{LABMONITOR_JENKINS_SECRET_TEMPLATE} must take username from Vault")
+        self.assertIn('"{{ jenkins_labmonitor_api_token }}"', secret_template,
+                      f"{LABMONITOR_JENKINS_SECRET_TEMPLATE} must take api-token from Vault")
+        string_data = secret_template.split("stringData:", 1)[1]
+        keys = re.findall(r"^\s{2}(\S+):", string_data, re.M)
+        self.assertEqual(sorted(keys), ["api-token", "username"],
+                         f"{LABMONITOR_JENKINS_SECRET_TEMPLATE} must carry exactly "
+                         f"username + api-token — got {keys}")
+        for path in (LABMONITOR_JENKINS_SECRET_TEMPLATE, LABMONITOR_PROVIDER_TEMPLATE,
+                     LABMONITOR_CATALOG_TEMPLATE, LABMONITOR_TASKS):
+            self.assertNotIn("password", read(path).lower(),
+                             f"{path} must never mention a password")
+        tasks = read(LABMONITOR_TASKS)
+        self.assertIn("jenkins_labmonitor_api_token", tasks,
+                      f"{LABMONITOR_TASKS} must validate the Vault api token")
+        self.assertIn("no_log: true", tasks,
+                      f"{LABMONITOR_TASKS} must never print Vault values")
+
+    def test_provider_config_contains_internal_endpoints_only(self):
+        """Provider ConfigMap exposes only internal endpoints with the single environment IP."""
+        self.assertTrue(LABMONITOR_PROVIDER_TEMPLATE.is_file(),
+                        f"missing {LABMONITOR_PROVIDER_TEMPLATE}")
+        template = read(LABMONITOR_PROVIDER_TEMPLATE)
+        for marker in ("schema: labmonitor.providers/v1",
+                       "base_url: http://prometheus.monitoring.svc.cluster.local:9090",
+                       "base_url: http://{{ server_lan_ip }}:12375",
+                       "base_url: http://{{ server_lan_ip }}:18080",
+                       "mode: in_cluster"):
+            self.assertIn(marker, template,
+                          f"{LABMONITOR_PROVIDER_TEMPLATE} must contain {marker}")
+        providers = re.findall(r"^  ([a-z]+):\s*$", template, re.M)
+        self.assertEqual(sorted(providers), ["docker", "jenkins", "kubernetes", "prometheus"],
+                         f"{LABMONITOR_PROVIDER_TEMPLATE} must define exactly the four "
+                         f"providers — got {providers}")
+        jinja_vars = set(re.findall(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\b", template))
+        self.assertEqual(jinja_vars, {"server_lan_ip"},
+                         f"{LABMONITOR_PROVIDER_TEMPLATE} must vary only on server_lan_ip "
+                         f"— got {jinja_vars}")
+        for forbidden in ("password", "token", "secret", "credential", "nodeport",
+                          "ingress", "https://", "192.168.", "192.0.2.",
+                          "lab.arpa", "home.arpa"):
+            self.assertNotIn(forbidden, template.lower(),
+                             f"{LABMONITOR_PROVIDER_TEMPLATE} must not contain {forbidden}")
+        tasks = read(LABMONITOR_TASKS)
+        self.assertIn("labmonitor_provider_config_name", tasks,
+                      f"{LABMONITOR_TASKS} must apply the provider ConfigMap by role var")
+        self.assertIn("provider-config.yaml.j2", tasks,
+                      f"{LABMONITOR_TASKS} must render {LABMONITOR_PROVIDER_TEMPLATE.name}")
+        self.assertNotIn("NodePort", tasks,
+                         f"{LABMONITOR_TASKS} must not expose a provider NodePort")
+        self.assertNotIn("kind: Ingress", tasks,
+                         f"{LABMONITOR_TASKS} must not expose a provider Ingress")
+
+    def test_catalog_contains_cockpit_only_for_host_native_services(self):
+        """Catalog holds exactly the initial Cockpit entry; providers stay out of navigation."""
+        self.assertTrue(LABMONITOR_CATALOG_TEMPLATE.is_file(),
+                        f"missing {LABMONITOR_CATALOG_TEMPLATE}")
+        template = read(LABMONITOR_CATALOG_TEMPLATE)
+        for marker in ("schema: labmonitor.services/v1",
+                       "- id: cockpit",
+                       "enabled: true",
+                       "name: Cockpit",
+                       "category: administration",
+                       "icon: cockpit",
+                       "open_url: https://cockpit.{{ base_domain }}",
+                       "runtime: host"):
+            self.assertIn(marker, template,
+                          f"{LABMONITOR_CATALOG_TEMPLATE} must contain {marker}")
+        ids = re.findall(r"^  - id:\s*(\S+)\s*$", template, re.M)
+        self.assertEqual(ids, ["cockpit"],
+                         f"{LABMONITOR_CATALOG_TEMPLATE} must list exactly cockpit — got {ids}")
+        for forbidden in ("postgres", "proxy", "exporter", "agent", "prometheus",
+                          "grafana", "portainer", "jenkins", "n8n", "metabase"):
+            self.assertNotIn(forbidden, template.lower(),
+                             f"{LABMONITOR_CATALOG_TEMPLATE} must not list {forbidden}")
+        jinja_vars = set(re.findall(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\b", template))
+        self.assertEqual(jinja_vars, {"base_domain"},
+                         f"{LABMONITOR_CATALOG_TEMPLATE} must vary only on base_domain "
+                         f"— got {jinja_vars}")
+        tasks = read(LABMONITOR_TASKS)
+        self.assertIn("labmonitor_catalog_name", tasks,
+                      f"{LABMONITOR_TASKS} must apply the catalog ConfigMap by role var")
+        self.assertIn("catalog.yaml.j2", tasks,
+                      f"{LABMONITOR_TASKS} must render {LABMONITOR_CATALOG_TEMPLATE.name}")
+
+    def test_catalog_and_kubernetes_services_use_one_environment_domain(self):
+        """Catalog + Grafana/Prometheus/Portainer Services share the selected base_domain."""
+        for path in (LABMONITOR_CATALOG_TEMPLATE, MONITORING_TASKS,
+                     PORTAINER_SERVER_TEMPLATE):
+            self.assertTrue(path.is_file(), f"missing {path}")
+        monitoring = read(MONITORING_TASKS)
+        portainer = read(PORTAINER_SERVER_TEMPLATE)
+        catalog = read(LABMONITOR_CATALOG_TEMPLATE)
+        for text, marker in (
+            (catalog, "open_url: https://cockpit.{{ base_domain }}"),
+            (monitoring, 'labmonitor.id: "grafana"'),
+            (monitoring, "labmonitor.open.url: \"https://grafana.{{ base_domain }}\""),
+            (monitoring, 'labmonitor.id: "prometheus"'),
+            (monitoring, "labmonitor.open.url: \"https://prometheus.{{ base_domain }}\""),
+            (portainer, 'labmonitor.id: "portainer"'),
+            (portainer, 'labmonitor.open.url: "https://portainer.{{ base_domain }}"'),
+        ):
+            self.assertIn(marker, text, f"discovery contract must contain {marker}")
+        for text, expected_id, expected_category in (
+            (monitoring, "grafana", "observability"),
+            (monitoring, "prometheus", "observability"),
+            (portainer, "portainer", "administration"),
+        ):
+            self.assertIn(f'labmonitor.id: "{expected_id}"', text,
+                          f"Service metadata must pin id {expected_id}")
+            self.assertIn(f'labmonitor.category: "{expected_category}"', text,
+                          f"Service {expected_id} must use category {expected_category}")
+            self.assertIn(f'labmonitor.icon: "{expected_id}"', text,
+                          f"Service {expected_id} must use icon {expected_id}")
+            self.assertIn('labmonitor.enabled: "true"', text,
+                          f"Service {expected_id} must set labmonitor.enabled")
+        for path in (LABMONITOR_CATALOG_TEMPLATE, LABMONITOR_PROVIDER_TEMPLATE,
+                     LABMONITOR_RBAC, MONITORING_TASKS, PORTAINER_SERVER_TEMPLATE):
+            content = read(path)
+            for forbidden in ("lab.arpa", "home.arpa", "192.168.", "192.0.2."):
+                self.assertNotIn(forbidden, content,
+                                 f"{path} must use {{{{ base_domain }}}}, not literal {forbidden}")
+        # Discovery metadata rides on the Service only, never on a Deployment.
+        self.assertNotIn("kind: Deployment", monitoring,
+                         f"{MONITORING_TASKS} must not define a Deployment discovery source")
+        self.assertNotIn("labmonitor.", read(MONITORING_EXPORTER_DEPLOYMENT_TEMPLATE),
+                         f"{MONITORING_EXPORTER_DEPLOYMENT_TEMPLATE} must not carry discovery metadata")
+        service_docs = [doc for doc in split_yaml_docs(portainer) if "labmonitor." in doc]
+        self.assertEqual(len(service_docs), 1,
+                         f"{PORTAINER_SERVER_TEMPLATE} must carry discovery metadata "
+                         "on exactly one document")
+        self.assertIn("kind: Service", service_docs[0],
+                      f"{PORTAINER_SERVER_TEMPLATE} discovery metadata must sit on the Service")
+        platform_tasks = read(K8S_PLATFORM_TASKS)
+        for marker in ("monitoring_namespace", "portainer_namespace", "labmonitor"):
+            self.assertIn(marker, platform_tasks,
+                          f"{K8S_PLATFORM_TASKS} must gate the discovery contract ({marker})")
 
 
 if __name__ == "__main__":

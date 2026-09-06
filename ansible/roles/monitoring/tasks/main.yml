@@ -184,6 +184,14 @@
       metadata:
         name: "{{ monitoring_prometheus_service_name }}"
         namespace: "{{ monitoring_namespace }}"
+        labels:
+          labmonitor.enabled: "true"
+          labmonitor.id: "prometheus"
+          labmonitor.category: "observability"
+          labmonitor.icon: "prometheus"
+        annotations:
+          labmonitor.name: "Prometheus"
+          labmonitor.open.url: "https://prometheus.{{ base_domain }}"
       spec:
         type: ClusterIP
         # Proven against chart 88.6.1: same selector as the generated
@@ -208,6 +216,48 @@
     test -n "$(kubectl --kubeconfig={{ kubeconfig_path }} \
       -n {{ monitoring_namespace }} \
       get endpoints {{ monitoring_prometheus_service_name }} \
+      -o jsonpath='{.subsets[*].addresses[*].ip}')"
+  changed_when: false
+
+- name: Ensure stable Grafana ClusterIP Service
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: "{{ monitoring_grafana_service_name }}"
+        namespace: "{{ monitoring_namespace }}"
+        labels:
+          labmonitor.enabled: "true"
+          labmonitor.id: "grafana"
+          labmonitor.category: "observability"
+          labmonitor.icon: "grafana"
+        annotations:
+          labmonitor.name: "Grafana"
+          labmonitor.open.url: "https://grafana.{{ base_domain }}"
+      spec:
+        type: ClusterIP
+        # Proven against chart 88.6.1 (helm template): the chart Service
+        # monitoring-grafana selects app.kubernetes.io/name=grafana plus
+        # app.kubernetes.io/instance=<release>. Task 7 consumes this stable
+        # name; the Task 8 monitoring/grafana:3000 Ingress backend points here.
+        selector:
+          app.kubernetes.io/name: grafana
+          app.kubernetes.io/instance: "{{ monitoring_release_name }}"
+        ports:
+          - name: http
+            protocol: TCP
+            port: "{{ monitoring_grafana_service_port }}"
+            targetPort: 3000
+
+- name: Assert stable Grafana Service has ready endpoints
+  ansible.builtin.shell: |
+    set -euo pipefail
+    test -n "$(kubectl --kubeconfig={{ kubeconfig_path }} \
+      -n {{ monitoring_namespace }} \
+      get endpoints {{ monitoring_grafana_service_name }} \
       -o jsonpath='{.subsets[*].addresses[*].ip}')"
   changed_when: false
 

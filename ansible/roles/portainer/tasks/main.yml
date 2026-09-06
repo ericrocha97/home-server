@@ -147,3 +147,21 @@
     host: "{{ server_lan_ip }}"
     port: "{{ portainer_agent_port }}"
     timeout: 120
+
+# LabMonitor discovery contract gate (Task 7): the Server Service alone carries
+# the stable id/category/URL metadata; the Deployment is never a second source.
+- name: Assert Portainer Service carries LabMonitor discovery metadata
+  ansible.builtin.shell: |
+    set -euo pipefail
+    SVC="kubectl --kubeconfig={{ kubeconfig_path }} \
+      -n {{ portainer_namespace }} get service \
+      {{ portainer_service_name }} -o jsonpath"
+    test "$(${SVC}='{.metadata.labels.labmonitor\.enabled}')" = "true"
+    test "$(${SVC}='{.metadata.labels.labmonitor\.id}')" = "portainer"
+    test "$(${SVC}='{.metadata.labels.labmonitor\.category}')" = \
+      "administration"
+    test "$(${SVC}='{.metadata.labels.labmonitor\.icon}')" = "portainer"
+    test "$(${SVC}='{.metadata.annotations.labmonitor\.name}')" = "Portainer"
+    test "$(${SVC}='{.metadata.annotations.labmonitor\.open\.url}')" = \
+      "https://portainer.{{ base_domain }}"
+  changed_when: false
