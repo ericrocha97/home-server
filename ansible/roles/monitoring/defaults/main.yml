@@ -15,6 +15,23 @@ grafana_nodeport: 30300
 monitoring_prometheus_retention: 15d
 monitoring_prometheus_storage_size: 20Gi
 monitoring_grafana_storage_size: 5Gi
+# Grafana admin Secret (Task 5). The password itself lives only in the
+# environment Vault as `monitoring_grafana_admin_password`, never here.
+monitoring_grafana_admin_secret_name: grafana-admin
+monitoring_grafana_admin_user: admin
+# Prometheus additional scrape configs Secret (Task 5). The Jenkins
+# credential interpolates Vault `jenkins_prometheus_api_token` at render
+# time; this file only carries the Secret name/key contract.
+monitoring_additional_scrape_configs_name: prometheus-additional-scrape-configs
+monitoring_additional_scrape_configs_key: additional-scrape-configs.yaml
+# Pinned Jenkins Prometheus plugin endpoint (trailing slash required).
+monitoring_jenkins_metrics_path: /prometheus/
+# Grafana dashboard sidecar: only ConfigMaps labelled `<label>: "1"` in the
+# monitoring namespace are loaded (the four technical dashboards, Task 5).
+monitoring_dashboard_sidecar_label: grafana_dashboard
+# Render destination for the controlled chart values; Step 7 static checks
+# consume this exact path with `helm template --values`.
+monitoring_values_path: /tmp/home-server-monitoring-values.yaml
 # Docker metrics exporter selection (Task 4 compatibility gate, 2026-09-06).
 # Candidate calum4/docker-prometheus-exporter:1.1.3 was run against the
 # read-only proxy: it talks to the proxy over TCP without a socket mount,

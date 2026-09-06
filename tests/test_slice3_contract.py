@@ -737,6 +737,279 @@ class TestSlice3Task4DockerExporter(unittest.TestCase):
                           f"{MONITORING_TASKS} must contain {marker}")
 
 
+MONITORING_VALUES = REPO / "ansible/roles/monitoring/templates/values.yaml.j2"
+MONITORING_SCRAPE = REPO / "ansible/roles/monitoring/templates/additional-scrape-configs.yaml.j2"
+DASHBOARD_DIR = REPO / "k8s/monitoring/dashboards"
+
+EXPECTED_DASHBOARDS = ("host.json", "docker.json", "kubernetes.json", "jenkins.json")
+
+HOST_SERIES = [
+    "node_cpu_seconds_total",
+    "node_memory_MemAvailable_bytes",
+    "node_memory_SwapFree_bytes",
+    "node_filesystem_avail_bytes",
+    "node_disk_read_bytes_total",
+    "node_network_receive_bytes_total",
+]
+
+KUBERNETES_SERIES = [
+    "kube_node_info",
+    "kube_pod_info",
+    "kube_deployment_status_replicas_available",
+    "container_cpu_usage_seconds_total",
+    "container_memory_working_set_bytes",
+]
+
+JENKINS_SERIES = [
+    "default_jenkins_up",
+    "default_jenkins_uptime",
+    "default_jenkins_executors_busy",
+    "default_jenkins_executors_queue_length",
+    "default_jenkins_nodes_online",
+    "default_jenkins_builds_success_build_count",
+]
+
+
+def values_block(content: str, header: str, width: int = 400) -> str:
+    """Return the text window following a top-level values header."""
+    idx = content.find(header)
+    assert idx != -1, f"values template must contain header {header}"
+    return content[idx:idx + width]
+
+
+def dashboard_exprs(path: pathlib.Path) -> list:
+    """Collect every PromQL expr from a Grafana dashboard JSON file."""
+    import json as _json
+    doc = _json.loads(read(path))
+    exprs: list = []
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            for key, val in node.items():
+                if key == "expr" and isinstance(val, str):
+                    exprs.append(val)
+                else:
+                    walk(val)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(doc.get("panels", []))
+    return exprs
+
+
+class TestSlice3Task5Monitoring(unittest.TestCase):
+    def test_monitoring_values_enable_required_exporters(self):
+        """Values enable nodeExporter, kubeStateMetrics, kubelet/cAdvisor; exporter stays scraped."""
+        self.assertTrue(MONITORING_VALUES.is_file(), f"missing {MONITORING_VALUES}")
+        content = read(MONITORING_VALUES)
+        for header in ("nodeExporter:", "kubeStateMetrics:", "kubelet:"):
+            self.assertIn(header, content,
+                          f"{MONITORING_VALUES} must contain {header}")
+            self.assertIn("enabled: true", values_block(content, header),
+                          f"{MONITORING_VALUES} {header} must set enabled: true")
+        self.assertIn("cAdvisor: true", values_block(content, "kubelet:", 800),
+                      f"{MONITORING_VALUES} kubelet must enable cAdvisor collection")
+        # Docker exporter target stays covered by the Task 4 ServiceMonitor.
+        self.assertTrue(EXPORTER_SERVICEMONITOR.is_file(),
+                        f"missing {EXPORTER_SERVICEMONITOR}")
+        servicemonitor = read(EXPORTER_SERVICEMONITOR)
+        for marker in ("app: docker-metrics-exporter", "port: metrics",
+                       "path: /metrics"):
+            self.assertIn(marker, servicemonitor,
+                          f"{EXPORTER_SERVICEMONITOR} must contain {marker}")
+
+    def test_monitoring_values_pin_retention_storage_and_nodeports(self):
+        """Defaults and values pin retention, local-path storage, NodePorts, and image refs."""
+        self.assertTrue(MONITORING_VALUES.is_file(), f"missing {MONITORING_VALUES}")
+        content = read(MONITORING_VALUES)
+        mon = parse_simple_vars(MONITORING_DEFAULTS)
+        self.assertEqual(mon.get("monitoring_chart_version"), "88.6.1",
+                         f"{MONITORING_DEFAULTS} chart must stay 88.6.1")
+        self.assertEqual(mon.get("monitoring_prometheus_retention"), "15d",
+                         f"{MONITORING_DEFAULTS} retention must stay 15d")
+        self.assertEqual(mon.get("monitoring_prometheus_storage_size"), "20Gi",
+                         f"{MONITORING_DEFAULTS} prometheus storage must stay 20Gi")
+        self.assertEqual(mon.get("monitoring_grafana_storage_size"), "5Gi",
+                         f"{MONITORING_DEFAULTS} grafana storage must stay 5Gi")
+        self.assertEqual(mon.get("prometheus_nodeport"), "30909",
+                         f"{MONITORING_DEFAULTS} prometheus_nodeport must stay 30909")
+        self.assertEqual(mon.get("grafana_nodeport"), "30300",
+                         f"{MONITORING_DEFAULTS} grafana_nodeport must stay 30300")
+        self.assertEqual(mon.get("monitoring_jenkins_metrics_path"), "/prometheus/",
+                         f"{MONITORING_DEFAULTS} Jenkins metrics path must stay /prometheus/")
+        for marker in ("monitoring_prometheus_retention",
+                       "monitoring_prometheus_storage_size",
+                       "monitoring_grafana_storage_size",
+                       "prometheus_nodeport", "grafana_nodeport",
+                       "storageClassName: local-path",
+                       "storageSpec:", "volumeClaimTemplate:",
+                       "persistence:", "retention:"):
+            self.assertIn(marker, content,
+                          f"{MONITORING_VALUES} must contain {marker}")
+        self.assertGreaterEqual(content.count("local-path"), 2,
+                                f"{MONITORING_VALUES} must use local-path for "
+                                "Prometheus and Grafana storage")
+        # Grafana admin and scrape-config references stay Secret-backed.
+        self.assertIn("monitoring_grafana_admin_secret_name", content,
+                      f"{MONITORING_VALUES} must reference the Grafana admin secret var")
+        self.assertEqual(mon.get("monitoring_grafana_admin_secret_name"), "grafana-admin",
+                         f"{MONITORING_DEFAULTS} Grafana admin secret must be grafana-admin")
+        for marker in ("monitoring_additional_scrape_configs_name",
+                       "monitoring_additional_scrape_configs_key"):
+            self.assertIn(marker, content,
+                          f"{MONITORING_VALUES} must contain {marker}")
+        self.assertEqual(mon.get("monitoring_additional_scrape_configs_name"),
+                         "prometheus-additional-scrape-configs",
+                         f"{MONITORING_DEFAULTS} scrape Secret name mismatch")
+        self.assertEqual(mon.get("monitoring_additional_scrape_configs_key"),
+                         "additional-scrape-configs.yaml",
+                         f"{MONITORING_DEFAULTS} scrape Secret key mismatch")
+        # Every component image pin variable must feed the chart values.
+        for var in ("monitoring_prometheus_image", "monitoring_grafana_image",
+                    "monitoring_node_exporter_image",
+                    "monitoring_kube_state_metrics_image",
+                    "monitoring_alertmanager_image", "monitoring_operator_image",
+                    "monitoring_config_reloader_image"):
+            self.assertIn(var, content,
+                          f"{MONITORING_VALUES} must set chart images from {var}")
+        # Helm release identity and the stable ClusterIP contract in tasks.
+        tasks = read(MONITORING_TASKS)
+        for marker in ("prometheus-community/kube-prometheus-stack",
+                       "monitoring_chart_version", "monitoring_release_name",
+                       "monitoring_prometheus_service_name",
+                       "monitoring_prometheus_service_port",
+                       "operator.prometheus.io/name",
+                       "monitoring_release_name }}-kube-prometheus-prometheus",
+                       "targetPort: 9090"):
+            self.assertIn(marker, tasks,
+                          f"{MONITORING_TASKS} must contain {marker}")
+
+    def test_monitoring_dashboard_files_have_expected_panels(self):
+        """Four technical dashboards query real stack metrics; no LabMonitor content."""
+        import json as _json
+        for name in EXPECTED_DASHBOARDS:
+            path = DASHBOARD_DIR / name
+            self.assertTrue(path.is_file(), f"missing {path}")
+            doc = _json.loads(read(path))
+            panels = doc.get("panels", [])
+            self.assertGreaterEqual(len(panels), 3,
+                                    f"{path} must define at least three panels")
+            for panel in panels:
+                targets = panel.get("targets", [])
+                self.assertTrue(targets,
+                                f"{path} panel {panel.get('title')} must have targets")
+                for target in targets:
+                    self.assertIn("expr", target,
+                                  f"{path} panel {panel.get('title')} target must query expr")
+        host_exprs = dashboard_exprs(DASHBOARD_DIR / "host.json")
+        for series in HOST_SERIES:
+            self.assertTrue(any(series in expr for expr in host_exprs),
+                            f"host.json must query {series}")
+        docker_exprs = dashboard_exprs(DASHBOARD_DIR / "docker.json")
+        for series in REQUIRED_EXPORTER_SERIES:
+            self.assertTrue(any(series in expr for expr in docker_exprs),
+                            f"docker.json must query {series}")
+        kubernetes_exprs = dashboard_exprs(DASHBOARD_DIR / "kubernetes.json")
+        for series in KUBERNETES_SERIES:
+            self.assertTrue(any(series in expr for expr in kubernetes_exprs),
+                            f"kubernetes.json must query {series}")
+        jenkins_exprs = dashboard_exprs(DASHBOARD_DIR / "jenkins.json")
+        for series in JENKINS_SERIES:
+            self.assertTrue(any(series in expr for expr in jenkins_exprs),
+                            f"jenkins.json must query {series}")
+        self.assertTrue(any('up{job="jenkins"}' in expr or "up{job='jenkins'}" in expr
+                            for expr in jenkins_exprs),
+                        "jenkins.json must include the up{job=\"jenkins\"} scrape-health panel")
+        # Technical dashboards only: no product navigation, cards, categories,
+        # or LabMonitor API panels. (The docker.json PromQL legitimately
+        # queries the labmonitor_docker_container_* exporter series.)
+        for name in EXPECTED_DASHBOARDS:
+            path = DASHBOARD_DIR / name
+            content = read(path)
+            for forbidden in ("labmonitor.open.url", "labmonitor.enabled",
+                              "labmonitor.id", "labmonitor-api", "LABMONITOR",
+                              "cards", "category"):
+                self.assertNotIn(forbidden, content,
+                                 f"{path} must not contain product marker {forbidden!r}")
+            lowered = content.lower()
+            self.assertIn("prometheus", lowered,
+                          f"{path} must use the Prometheus datasource")
+
+    def test_prometheus_scrape_config_has_no_inline_secret_values(self):
+        """Scrape template uses the pinned path, host target, and Vault credential only."""
+        self.assertTrue(MONITORING_SCRAPE.is_file(), f"missing {MONITORING_SCRAPE}")
+        content = read(MONITORING_SCRAPE)
+        for marker in ("job_name:", "metrics_path:",
+                       "monitoring_jenkins_metrics_path",
+                       "server_lan_ip", "compose_jenkins_port",
+                       "basic_auth:", "jenkins_prometheus_user",
+                       "jenkins_prometheus_api_token"):
+            self.assertIn(marker, content,
+                          f"{MONITORING_SCRAPE} must contain {marker}")
+        mon = parse_simple_vars(MONITORING_DEFAULTS)
+        self.assertEqual(mon.get("monitoring_jenkins_metrics_path"), "/prometheus/",
+                         f"{MONITORING_DEFAULTS} metrics path must stay /prometheus/")
+        for path in (LAB_EXAMPLE, PROD_EXAMPLE):
+            example = parse_simple_vars(path)
+            self.assertEqual(example.get("monitoring_jenkins_metrics_path"), "/prometheus/",
+                             f"{path} must pin monitoring_jenkins_metrics_path=/prometheus/")
+        # Every password line must interpolate Vault; never carry a literal.
+        for raw in content.splitlines():
+            line = raw.split("#", 1)[0]
+            if "password" in line.lower() and ":" in line:
+                self.assertIn("{{", line,
+                              f"{MONITORING_SCRAPE} password must interpolate Vault — got {raw!r}")
+        self.assertIsNone(re.search(r"(?m)^\s*token\s*:", content),
+                          f"{MONITORING_SCRAPE} must use basic_auth, not an inline token field")
+        self.assertNotIn("changeme", content.lower(),
+                         f"{MONITORING_SCRAPE} must not contain placeholder secrets")
+        self.assertIsNone(re.search(r"192\.168\.\d+", content),
+                          f"{MONITORING_SCRAPE} must use server_lan_ip, not a LAN literal")
+        # Secret creation must hide values from logs.
+        tasks = read(MONITORING_TASKS)
+        for marker in ("monitoring_grafana_admin_password",
+                       "jenkins_prometheus_api_token",
+                       "additional-scrape-configs.yaml"):
+            self.assertIn(marker, tasks,
+                          f"{MONITORING_TASKS} must contain {marker}")
+        self.assertGreaterEqual(tasks.count("no_log: true"), 3,
+                                f"{MONITORING_TASKS} must hide the Vault assert and both Secrets")
+
+    def test_monitoring_tasks_install_and_wait_for_stack(self):
+        """Role installs the pinned chart, stable Service, dashboards, then waits Ready."""
+        self.assertTrue(MONITORING_TASKS.is_file(), f"missing {MONITORING_TASKS}")
+        tasks = read(MONITORING_TASKS)
+        for marker in ("Ensure monitoring namespace exists",
+                       "prometheus-community",
+                       "values_files",
+                       "grafana-dashboard-",
+                       "{name: host, file: host.json}",
+                       "{name: docker, file: docker.json}",
+                       "{name: kubernetes, file: kubernetes.json}",
+                       "{name: jenkins, file: jenkins.json}",
+                       "monitoring_dashboard_sidecar_label",
+                       "app.kubernetes.io/name=grafana",
+                       "app.kubernetes.io/name=prometheus",
+                       "prometheus-node-exporter",
+                       "kube-state-metrics",
+                       "deployment/docker-metrics-exporter"):
+            self.assertIn(marker, tasks,
+                          f"{MONITORING_TASKS} must contain {marker}")
+        namespace_idx = tasks.find("Ensure monitoring namespace exists")
+        helm_idx = tasks.find("prometheus-community/kube-prometheus-stack")
+        exporter_idx = tasks.find("docker-exporter-service.yaml")
+        dashboards_idx = tasks.find("grafana-dashboard-")
+        self.assertNotEqual(helm_idx, -1, f"{MONITORING_TASKS} must install the chart")
+        self.assertLess(namespace_idx, helm_idx,
+                        f"{MONITORING_TASKS} namespace must precede the chart install")
+        self.assertLess(helm_idx, exporter_idx,
+                        f"{MONITORING_TASKS} chart install must precede exporter "
+                        "ServiceMonitor apply (CRD dependency)")
+        self.assertLess(helm_idx, dashboards_idx,
+                        f"{MONITORING_TASKS} chart install must precede dashboards")
+
+
 def parse_compose_services(path: pathlib.Path) -> dict:
     """Minimal indentation-based Compose parser (stdlib only).
 

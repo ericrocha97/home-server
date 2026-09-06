@@ -1,0 +1,132 @@
+{
+  "title": "Home Server - Docker",
+  "uid": "home-server-docker",
+  "tags": ["home-server", "technical", "docker"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Containers",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "labmonitor_docker_container_info"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Container CPU usage",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "sum by (container_name) (rate(labmonitor_docker_container_cpu_usage_seconds_total[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Container memory usage",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "labmonitor_docker_container_memory_usage_bytes"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Container memory limit",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "labmonitor_docker_container_memory_limit_bytes"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Container network throughput",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "sum by (container_name) (rate(labmonitor_docker_container_network_receive_bytes_total[5m]))"
+        },
+        {
+          "refId": "B",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "sum by (container_name) (rate(labmonitor_docker_container_network_transmit_bytes_total[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Container restarts",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "labmonitor_docker_container_restarts_total"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Container health",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "labmonitor_docker_container_health_status"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Container block I/O throughput",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "sum by (container_name) (rate(labmonitor_docker_container_block_read_bytes_total[5m]))"
+        },
+        {
+          "refId": "B",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "sum by (container_name) (rate(labmonitor_docker_container_block_write_bytes_total[5m]))"
+        }
+      ]
+    }
+  ]
+}

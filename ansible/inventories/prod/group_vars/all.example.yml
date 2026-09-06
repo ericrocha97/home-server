@@ -50,6 +50,7 @@ grafana_nodeport: 30300
 monitoring_prometheus_retention: 15d
 monitoring_prometheus_storage_size: 20Gi
 monitoring_grafana_storage_size: 5Gi
+monitoring_jenkins_metrics_path: /prometheus/
 portainer_service_name: portainer
 portainer_service_port: 9000
 portainer_nodeport: 30900
