@@ -26,6 +26,13 @@ services:
       AUTOMATION_DB_NAME: "${AUTOMATION_DB_NAME:-automation}"
       AUTOMATION_DB_USER: "${AUTOMATION_DB_USER:-automation_writer}"
       AUTOMATION_DB_PASSWORD: "${AUTOMATION_DB_PASSWORD:?required}"
+    labels:
+      labmonitor.enabled: "${LABMONITOR_ENABLED:-true}"
+      labmonitor.id: "${LABMONITOR_ID:?required}"
+      labmonitor.name: "${LABMONITOR_NAME:?required}"
+      labmonitor.category: "${LABMONITOR_CATEGORY:?required}"
+      labmonitor.icon: "${LABMONITOR_ICON:?required}"
+      labmonitor.open.url: "${LABMONITOR_OPEN_URL:?required}"
     ports:
       - "${N8N_PORT_HOST:-15678}:5678"
     volumes:

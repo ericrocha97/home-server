@@ -12,6 +12,26 @@
     fail_msg: "Vault do Slice 2 incompleto — defina postgres_superuser_password, postgres_n8n_password, postgres_metabase_password, postgres_automation_writer_password, postgres_automation_reader_password, n8n_encryption_key e jenkins_admin_password"
   no_log: true
 
+- name: Validar Vault de providers Jenkins do Slice 3
+  ansible.builtin.assert:
+    that:
+      - jenkins_labmonitor_password is defined and jenkins_labmonitor_password | length > 0
+      - jenkins_labmonitor_api_token is defined and jenkins_labmonitor_api_token | length > 0
+      - jenkins_prometheus_password is defined and jenkins_prometheus_password | length > 0
+      - jenkins_prometheus_api_token is defined and jenkins_prometheus_api_token | length > 0
+      - jenkins_admin_password != jenkins_labmonitor_password
+      - jenkins_admin_password != jenkins_prometheus_password
+      - jenkins_admin_password != jenkins_labmonitor_api_token
+      - jenkins_admin_password != jenkins_prometheus_api_token
+      - jenkins_labmonitor_password != jenkins_prometheus_password
+      - jenkins_labmonitor_password != jenkins_labmonitor_api_token
+      - jenkins_labmonitor_password != jenkins_prometheus_api_token
+      - jenkins_prometheus_password != jenkins_labmonitor_api_token
+      - jenkins_prometheus_password != jenkins_prometheus_api_token
+      - jenkins_labmonitor_api_token != jenkins_prometheus_api_token
+    fail_msg: "Vault do Slice 3 incompleto — defina jenkins_labmonitor_password, jenkins_labmonitor_api_token, jenkins_prometheus_password e jenkins_prometheus_api_token distintos do admin"
+  no_log: true
+
 - name: Validar referências de imagem completas e pinadas
   ansible.builtin.assert:
     that:
@@ -107,7 +127,7 @@
     mode: '0644'
   loop: [postgres, jenkins, n8n, metabase]
 
-- name: Copiar Dockerfile e entrypoint custom do Jenkins para o host
+- name: Copiar Dockerfile, plugins.txt e entrypoint custom do Jenkins para o host
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../compose/jenkins/{{ item }}"
     dest: "{{ compose_projects_root }}/jenkins/{{ item }}"
@@ -116,6 +136,7 @@
     mode: "{{ '0755' if item == 'docker-entrypoint-group-fix.sh' else '0644' }}"
   loop:
     - Dockerfile
+    - plugins.txt
     - docker-entrypoint-group-fix.sh
 
 - name: Validar opt-in explícito para reset limpo do Jenkins
@@ -248,7 +269,7 @@
     set -o pipefail
     {
       printf '%s\n' '{{ compose_jenkins_base_image }}'
-      sha256sum Dockerfile docker-entrypoint-group-fix.sh
+      sha256sum Dockerfile plugins.txt docker-entrypoint-group-fix.sh
     } | sha256sum | cut -d' ' -f1
   args:
     chdir: "{{ compose_projects_root }}/jenkins"
@@ -490,13 +511,13 @@
       args:
         JENKINS_BASE_IMAGE: "{{ compose_jenkins_base_image }}"
 
-- name: Subir Jenkins por último (requer init.groovy.d + imagem custom já buildada)
+- name: Subir Jenkins fase um por último (requer init.groovy.d + imagem custom já buildada)
   community.docker.docker_compose_v2:
     project_src: "{{ compose_projects_root }}/jenkins"
     state: present
     pull: missing
 
-- name: Aguardar Jenkins healthy (curl já presente na imagem custom — healthcheck não quebra no primeiro boot)
+- name: Aguardar Jenkins healthy fase um (curl já presente na imagem custom — healthcheck não quebra no primeiro boot)
   ansible.builtin.command: docker inspect --format='{% raw %}{{.State.Health.Status}}{% endraw %}' jenkins
   register: jenkins_health
   retries: "{{ compose_health_retries }}"
@@ -504,14 +525,120 @@
   until: jenkins_health.stdout == "healthy"
   changed_when: false
 
-- name: Verificar que Jenkins exige autenticação antes de considerar 18080 seguro para LAN (pré-requisito para firewall)
+- name: Checkpoint fase um admin login succeeds via authenticated REST
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ compose_jenkins_port }}/api/json"
+    user: "admin"
+    password: "{{ jenkins_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    status_code: [200]
+    timeout: 10
+  register: jenkins_admin_checkpoint
+  no_log: true
+
+- name: Checkpoint fase um anonymous api json returns non-2xx sem codigo unico
   ansible.builtin.command: curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:{{ compose_jenkins_port }}/api/json
   register: jenkins_anon_code
   retries: 6
   delay: 5
-  until: jenkins_anon_code.stdout == "403"
+  until: jenkins_anon_code.stdout is not match('^2..')
   changed_when: false
-  failed_when: jenkins_anon_code.stdout != "403"
+  failed_when: jenkins_anon_code.stdout is match('^2..')
+
+- name: Checkpoint fase um Jenkins health endpoint succeeds via login page
+  ansible.builtin.command: curl -fsS -o /dev/null http://127.0.0.1:{{ compose_jenkins_port }}/login
+  register: jenkins_health_endpoint
+  retries: 6
+  delay: 5
+  until: jenkins_health_endpoint.rc == 0
+  changed_when: false
+
+- name: Checkpoint fase um authorization strategy is fine-grained GlobalMatrixAuthorizationStrategy
+  ansible.builtin.command: grep -q "GlobalMatrixAuthorizationStrategy" "{{ compose_jenkins_data_dir }}/config.xml"
+  register: jenkins_strategy_checkpoint
+  changed_when: false
+  failed_when: jenkins_strategy_checkpoint.rc != 0
+
+- name: Renderizar Groovy fase dois de provider users Jenkins somente após checkpoint admin
+  ansible.builtin.template:
+    src: jenkins-provider-users.groovy.j2
+    dest: "{{ compose_jenkins_data_dir }}/init.groovy.d/02-providers.groovy"
+    owner: "{{ compose_jenkins_uid }}"
+    group: "{{ compose_jenkins_gid }}"
+    mode: '0640'
+  no_log: true
+
+- name: Recriar Jenkins fase dois para reconciliar labmonitor-api e prometheus-scraper
+  community.docker.docker_compose_v2:
+    project_src: "{{ compose_projects_root }}/jenkins"
+    state: present
+    pull: missing
+    recreate: always
+
+- name: Aguardar Jenkins healthy fase dois após providers
+  ansible.builtin.command: docker inspect --format='{% raw %}{{.State.Health.Status}}{% endraw %}' jenkins
+  register: jenkins_health_phase2
+  retries: "{{ compose_health_retries }}"
+  delay: "{{ compose_health_delay }}"
+  until: jenkins_health_phase2.stdout == "healthy"
+  changed_when: false
+
+- name: Validar admin preservado após fase dois via authenticated REST
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ compose_jenkins_port }}/api/json"
+    user: "admin"
+    password: "{{ jenkins_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    status_code: [200]
+    timeout: 10
+  no_log: true
+
+- name: Validar leitura labmonitor-api em api json com credencial separada
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ compose_jenkins_port }}/api/json"
+    user: "{{ jenkins_labmonitor_user }}"
+    password: "{{ jenkins_labmonitor_api_token }}"
+    force_basic_auth: true
+    return_content: true
+    status_code: [200]
+    timeout: 10
+  no_log: true
+
+- name: Validar scrape prometheus-scraper em prometheus endpoint com trailing slash
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ compose_jenkins_port }}/prometheus/"
+    user: "{{ jenkins_prometheus_user }}"
+    password: "{{ jenkins_prometheus_api_token }}"
+    force_basic_auth: true
+    return_content: true
+    status_code: [200]
+    timeout: 10
+  no_log: true
+
+- name: Validar que trigger de build com labmonitor-api retorna non-2xx e preserva estado
+  ansible.builtin.command: curl -s -o /dev/null -w "%{http_code}" -u "{{ jenkins_labmonitor_user }}:{{ jenkins_labmonitor_api_token }}" -X POST http://127.0.0.1:{{ compose_jenkins_port }}/job/inexistente/build
+  register: jenkins_forbidden_build
+  changed_when: false
+  failed_when: jenkins_forbidden_build.stdout is match('^2..')
+  no_log: true
+
+- name: Validar que administracao Jenkins com provider retorna non-2xx sem codigo unico
+  ansible.builtin.command: curl -s -o /dev/null -w "%{http_code}" -u "{{ jenkins_labmonitor_user }}:{{ jenkins_labmonitor_api_token }}" http://127.0.0.1:{{ compose_jenkins_port }}/manage
+  register: jenkins_forbidden_admin
+  changed_when: false
+  failed_when: jenkins_forbidden_admin.stdout is match('^2..')
+  no_log: true
+
+- name: Verificar que Jenkins exige autenticação antes de considerar 18080 seguro para LAN (pré-requisito para firewall)
+  ansible.builtin.command: curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:{{ compose_jenkins_port }}/api/json
+  register: jenkins_anon_final
+  retries: 6
+  delay: 5
+  until: jenkins_anon_final.stdout is not match('^2..')
+  changed_when: false
+  failed_when: jenkins_anon_final.stdout is match('^2..')
 
 - name: Verificar que socket Docker está montado RW e grupo dockersock aplicado no PID 1
   ansible.builtin.shell: |

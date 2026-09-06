@@ -13,6 +13,19 @@ services:
       # Consumidas pelo Groovy init abaixo — nunca logar
       JENKINS_ADMIN_ID: "${JENKINS_ADMIN_USER:-admin}"
       JENKINS_ADMIN_PASSWORD: "${JENKINS_ADMIN_PASSWORD:?required}"
+      JENKINS_LABMONITOR_USER: "${JENKINS_LABMONITOR_USER:-labmonitor-api}"
+      JENKINS_LABMONITOR_PASSWORD: "${JENKINS_LABMONITOR_PASSWORD:?required}"
+      JENKINS_LABMONITOR_API_TOKEN: "${JENKINS_LABMONITOR_API_TOKEN:?required}"
+      JENKINS_PROMETHEUS_USER: "${JENKINS_PROMETHEUS_USER:-prometheus-scraper}"
+      JENKINS_PROMETHEUS_PASSWORD: "${JENKINS_PROMETHEUS_PASSWORD:?required}"
+      JENKINS_PROMETHEUS_API_TOKEN: "${JENKINS_PROMETHEUS_API_TOKEN:?required}"
+    labels:
+      labmonitor.enabled: "${LABMONITOR_ENABLED:-true}"
+      labmonitor.id: "${LABMONITOR_ID:?required}"
+      labmonitor.name: "${LABMONITOR_NAME:?required}"
+      labmonitor.category: "${LABMONITOR_CATEGORY:?required}"
+      labmonitor.icon: "${LABMONITOR_ICON:?required}"
+      labmonitor.open.url: "${LABMONITOR_OPEN_URL:?required}"
     ports:
       - "${JENKINS_PORT:-18080}:8080"
     volumes:

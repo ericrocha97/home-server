@@ -321,6 +321,270 @@ class TestSlice3Contract(unittest.TestCase):
                       f"DOCKER_SOCKET_PROXY_BIND_IP — got {entry}")
 
 
+JENKINS_PLUGINS = REPO / "compose/jenkins/plugins.txt"
+JENKINS_DOCKERFILE = REPO / "compose/jenkins/Dockerfile"
+JENKINS_COMPOSE = REPO / "compose/jenkins/compose.yaml"
+JENKINS_ENV_EXAMPLE = REPO / "compose/jenkins/.env.example"
+JENKINS_ENV_TEMPLATE = REPO / "ansible/roles/compose-services/templates/jenkins.env.j2"
+PHASE1_GROOVY = REPO / "ansible/roles/compose-services/templates/jenkins-init-admin.groovy.j2"
+PHASE2_GROOVY = REPO / "ansible/roles/compose-services/templates/jenkins-provider-users.groovy.j2"
+COMPOSE_TASKS = REPO / "ansible/roles/compose-services/tasks/main.yml"
+N8N_COMPOSE = REPO / "compose/n8n/compose.yaml"
+METABASE_COMPOSE = REPO / "compose/metabase/compose.yaml"
+N8N_ENV_EXAMPLE = REPO / "compose/n8n/.env.example"
+METABASE_ENV_EXAMPLE = REPO / "compose/metabase/.env.example"
+N8N_ENV_TEMPLATE = REPO / "ansible/roles/compose-services/templates/n8n.env.j2"
+METABASE_ENV_TEMPLATE = REPO / "ansible/roles/compose-services/templates/metabase.env.j2"
+POSTGRES_COMPOSE = REPO / "compose/postgres/compose.yaml"
+
+
+class TestSlice3Task3JenkinsProviders(unittest.TestCase):
+    def test_jenkins_phase_one_does_not_create_provider_users(self):
+        """Phase-one Groovy bootstraps admin only; provider users belong to phase two."""
+        self.assertTrue(PHASE1_GROOVY.is_file(), f"missing {PHASE1_GROOVY}")
+        self.assertTrue(PHASE2_GROOVY.is_file(), f"missing {PHASE2_GROOVY}")
+        phase1 = read(PHASE1_GROOVY).lower()
+        for marker in ("labmonitor-api", "prometheus-scraper", "apitokenproperty",
+                       "jenkins_labmonitor", "jenkins_prometheus",
+                       "labmonitor_api_token", "prometheus_api_token"):
+            self.assertNotIn(marker, phase1,
+                             f"{PHASE1_GROOVY} must not reference provider marker '{marker}'")
+        # Phase one still bootstraps the existing admin without logging secrets.
+        original = read(PHASE1_GROOVY)
+        self.assertIn("JENKINS_ADMIN_ID", original,
+                      f"{PHASE1_GROOVY} must preserve the existing admin account")
+        self.assertIn("JENKINS_ADMIN_PASSWORD", original,
+                      f"{PHASE1_GROOVY} must validate the existing admin password")
+        self.assertIn("HudsonPrivateSecurityRealm", original,
+                      f"{PHASE1_GROOVY} must use HudsonPrivateSecurityRealm")
+        self.assertNotIn("println", original.replace("println(\"Created admin user", ""),
+                         f"{PHASE1_GROOVY} must not log passwords or tokens")
+        # Ansible render of the phase-one script must hide secrets.
+        tasks = read(COMPOSE_TASKS)
+        idx = tasks.find("jenkins-init-admin.groovy.j2")
+        self.assertNotEqual(idx, -1, f"{COMPOSE_TASKS} must render jenkins-init-admin.groovy.j2")
+        window = tasks[idx:idx + 2000]
+        self.assertIn("no_log: true", window,
+                      f"{COMPOSE_TASKS} phase-one render must use no_log: true")
+
+    def test_jenkins_uses_fine_grained_authorization(self):
+        """Phase one migrates FullControlOnceLoggedIn to GlobalMatrixAuthorizationStrategy."""
+        self.assertTrue(PHASE1_GROOVY.is_file(), f"missing {PHASE1_GROOVY}")
+        content = read(PHASE1_GROOVY)
+        self.assertIn("GlobalMatrixAuthorizationStrategy", content,
+                      f"{PHASE1_GROOVY} must install GlobalMatrixAuthorizationStrategy")
+        self.assertIn("Jenkins.ADMINISTER", content,
+                      f"{PHASE1_GROOVY} must grant admin via Jenkins.ADMINISTER constant")
+        self.assertNotIn("FullControlOnceLoggedInAuthorizationStrategy", content,
+                         f"{PHASE1_GROOVY} must not retain FullControlOnceLoggedInAuthorizationStrategy")
+        self.assertIn("JenkinsLocationConfiguration", content,
+                      f"{PHASE1_GROOVY} must set the Jenkins URL from the generated .arpa value")
+        self.assertIn("JENKINS_URL", content,
+                      f"{PHASE1_GROOVY} must read JENKINS_URL for the .arpa hostname")
+        # Permission constants, not free-form strings, and no anonymous grant.
+        self.assertNotIn("setAllowAnonymousRead(true)", content,
+                         f"{PHASE1_GROOVY} must disable anonymous read access")
+        self.assertNotIn('"Overall/Administer"', content,
+                         f"{PHASE1_GROOVY} must use permission constants, not free-form strings")
+        self.assertNotIn("'Overall/Administer'", content,
+                         f"{PHASE1_GROOVY} must use permission constants, not free-form strings")
+        # Phase two preserves the fine-grained strategy instead of replacing it.
+        phase2 = read(PHASE2_GROOVY)
+        self.assertIn("GlobalMatrixAuthorizationStrategy", phase2,
+                      f"{PHASE2_GROOVY} must reconcile against GlobalMatrixAuthorizationStrategy")
+
+    def test_jenkins_admin_checkpoint_precedes_provider_user_render(self):
+        """Admin checkpoint (login, anon non-2xx, health, strategy) precedes phase-two render."""
+        self.assertTrue(COMPOSE_TASKS.is_file(), f"missing {COMPOSE_TASKS}")
+        tasks = read(COMPOSE_TASKS)
+        phase1_idx = tasks.find("jenkins-init-admin.groovy.j2")
+        phase2_idx = tasks.find("jenkins-provider-users.groovy.j2")
+        self.assertNotEqual(phase1_idx, -1, f"{COMPOSE_TASKS} must render phase-one script")
+        self.assertNotEqual(phase2_idx, -1, f"{COMPOSE_TASKS} must render phase-two script")
+        self.assertLess(phase1_idx, phase2_idx,
+                        f"{COMPOSE_TASKS} phase-one render must precede phase-two render")
+        lower = tasks.lower()
+        # Checkpoint markers: admin login, anonymous denial, health endpoint, strategy.
+        admin_idx = lower.find("admin login")
+        if admin_idx == -1:
+            admin_idx = tasks.find("jenkins_admin_password")
+        anon_idx = lower.find("anonymous")
+        health_idx = lower.find("health endpoint")
+        if health_idx == -1:
+            health_idx = tasks.find("/login")
+        strategy_idx = tasks.find("GlobalMatrixAuthorizationStrategy")
+        for name, idx in (("admin login checkpoint", admin_idx),
+                          ("anonymous non-2xx checkpoint", anon_idx),
+                          ("health endpoint checkpoint", health_idx),
+                          ("fine-grained strategy checkpoint", strategy_idx)):
+            self.assertNotEqual(idx, -1, f"{COMPOSE_TASKS} must contain {name}")
+            self.assertLess(idx, phase2_idx,
+                            f"{COMPOSE_TASKS} {name} must precede phase-two render")
+        # Negative checks require non-2xx, never one single status code.
+        self.assertIn("^2", tasks,
+                      f"{COMPOSE_TASKS} anonymous/forbidden checks must assert non-2xx (e.g. ^2xx)")
+        self.assertNotIn('stdout == "403"', tasks,
+                         f"{COMPOSE_TASKS} must not assert a single 403 code for Jenkins denial")
+        self.assertNotIn("status_code: [403]", tasks,
+                         f"{COMPOSE_TASKS} must not require one single HTTP error code")
+        # Metrics scrape contract uses the trailing-slash endpoint with separate credential.
+        self.assertIn("/prometheus/", tasks,
+                      f"{COMPOSE_TASKS} must reference the /prometheus/ endpoint with trailing slash")
+
+    def test_jenkins_provider_users_use_separate_credentials(self):
+        """Phase two reconciles two least-privilege users with separate Vault credentials."""
+        self.assertTrue(PHASE2_GROOVY.is_file(), f"missing {PHASE2_GROOVY}")
+        groovy = read(PHASE2_GROOVY)
+        for marker in ("JENKINS_LABMONITOR_USER", "JENKINS_PROMETHEUS_USER",
+                       "JENKINS_LABMONITOR_PASSWORD", "JENKINS_PROMETHEUS_PASSWORD",
+                       "JENKINS_LABMONITOR_API_TOKEN", "JENKINS_PROMETHEUS_API_TOKEN"):
+            self.assertIn(marker, groovy,
+                          f"{PHASE2_GROOVY} must reference separate credential {marker}")
+        self.assertIn("hudson.model.User", groovy,
+                      f"{PHASE2_GROOVY} must use hudson.model.User")
+        self.assertIn("jenkins.security.ApiTokenProperty", groovy,
+                      f"{PHASE2_GROOVY} must apply tokens via ApiTokenProperty")
+        self.assertIn("IllegalStateException", groovy,
+                      f"{PHASE2_GROOVY} must fail when the pinned API cannot set a Vault token")
+        self.assertNotIn("JENKINS_ADMIN_PASSWORD", groovy,
+                         f"{PHASE2_GROOVY} must not alter the existing admin credential")
+        # Least privilege: read-only constants only.
+        for perm in ("Jenkins.READ", "Item.READ", "View.READ"):
+            self.assertIn(perm, groovy,
+                          f"{PHASE2_GROOVY} must grant least-privilege constant {perm}")
+        self.assertIn("Run.READ", groovy,
+                      f"{PHASE2_GROOVY} must grant run/build read via Run.READ")
+        for forbidden in ("Jenkins.ADMINISTER", "Item.BUILD", "Item.CONFIGURE", "Item.DELETE"):
+            self.assertNotIn(forbidden, groovy,
+                             f"{PHASE2_GROOVY} must not grant forbidden permission {forbidden}")
+        self.assertNotIn("println", groovy.replace("println(\"Reconciled provider user", ""),
+                         f"{PHASE2_GROOVY} must not print secrets")
+        # Vault-backed environment carries four distinct secrets with no_log.
+        env_template = read(JENKINS_ENV_TEMPLATE)
+        for var in ("jenkins_labmonitor_password", "jenkins_labmonitor_api_token",
+                    "jenkins_prometheus_password", "jenkins_prometheus_api_token"):
+            self.assertIn(var, env_template,
+                          f"{JENKINS_ENV_TEMPLATE} must map Vault secret {var}")
+        tasks = read(COMPOSE_TASKS)
+        for var in ("jenkins_labmonitor_password", "jenkins_prometheus_password",
+                    "jenkins_labmonitor_api_token", "jenkins_prometheus_api_token"):
+            self.assertIn(var, tasks,
+                          f"{COMPOSE_TASKS} must validate Vault secret {var}")
+        self.assertIn("no_log: true", tasks,
+                      f"{COMPOSE_TASKS} must never print provider secrets")
+        # Examples carry placeholders, never Vault interpolation or real secrets.
+        example = read(JENKINS_ENV_EXAMPLE)
+        self.assertIn("JENKINS_LABMONITOR_USER=labmonitor-api", example,
+                      f"{JENKINS_ENV_EXAMPLE} must document the labmonitor user")
+        self.assertIn("JENKINS_PROMETHEUS_USER=prometheus-scraper", example,
+                      f"{JENKINS_ENV_EXAMPLE} must document the prometheus user")
+        self.assertNotIn("{{", example,
+                         f"{JENKINS_ENV_EXAMPLE} must not interpolate Vault values")
+        self.assertNotIn("jenkins_labmonitor_password", example,
+                         f"{JENKINS_ENV_EXAMPLE} must not embed Vault variable names")
+
+    def test_compose_apps_have_environment_derived_labmonitor_labels(self):
+        """Jenkins/n8n/Metabase expose the six labmonitor.* labels via environment interpolation."""
+        required_labels = [
+            'labmonitor.enabled: "${LABMONITOR_ENABLED:-true}"',
+            'labmonitor.id: "${LABMONITOR_ID:?required}"',
+            'labmonitor.name: "${LABMONITOR_NAME:?required}"',
+            'labmonitor.category: "${LABMONITOR_CATEGORY:?required}"',
+            'labmonitor.icon: "${LABMONITOR_ICON:?required}"',
+            'labmonitor.open.url: "${LABMONITOR_OPEN_URL:?required}"',
+        ]
+        for path in (JENKINS_COMPOSE, N8N_COMPOSE, METABASE_COMPOSE):
+            self.assertTrue(path.is_file(), f"missing {path}")
+            content = read(path)
+            for label in required_labels:
+                self.assertIn(label, content,
+                              f"{path} must contain label {label}")
+        # Each Ansible .env template renders exactly one environment-specific URL from base_domain.
+        for template in (JENKINS_ENV_TEMPLATE, N8N_ENV_TEMPLATE, METABASE_ENV_TEMPLATE):
+            self.assertTrue(template.is_file(), f"missing {template}")
+            content = read(template)
+            self.assertIn("LABMONITOR_OPEN_URL", content,
+                          f"{template} must render LABMONITOR_OPEN_URL")
+            self.assertIn("base_domain", content,
+                          f"{template} must derive the URL from base_domain")
+            self.assertEqual(content.count("LABMONITOR_OPEN_URL"), 1,
+                             f"{template} must render exactly one LABMONITOR_OPEN_URL")
+            for var in ("LABMONITOR_ENABLED", "LABMONITOR_ID", "LABMONITOR_NAME",
+                        "LABMONITOR_CATEGORY", "LABMONITOR_ICON"):
+                self.assertIn(var, content,
+                              f"{template} must render {var}")
+
+    def test_compose_apps_have_stable_labmonitor_ids(self):
+        """labmonitor.id values are stable literals, never computed from runtime names."""
+        defaults = parse_simple_vars(COMPOSE_DEFAULTS)
+        self.assertEqual(defaults.get("compose_jenkins_labmonitor_id"), "jenkins",
+                         f"{COMPOSE_DEFAULTS} jenkins id must be stable 'jenkins'")
+        self.assertEqual(defaults.get("compose_n8n_labmonitor_id"), "n8n",
+                         f"{COMPOSE_DEFAULTS} n8n id must be stable 'n8n'")
+        self.assertEqual(defaults.get("compose_metabase_labmonitor_id"), "metabase",
+                         f"{COMPOSE_DEFAULTS} metabase id must be stable 'metabase'")
+        for path in (JENKINS_COMPOSE, N8N_COMPOSE, METABASE_COMPOSE):
+            content = read(path)
+            self.assertIn('labmonitor.id: "${LABMONITOR_ID:?required}"', content,
+                          f"{path} labmonitor.id must use LABMONITOR_ID interpolation")
+            self.assertNotIn("COMPOSE_PROJECT", content,
+                             f"{path} labmonitor.id must not derive from the Compose project name")
+            self.assertNotIn("container_name", content.split("labmonitor.id")[1].splitlines()[0],
+                             f"{path} labmonitor.id must not derive from container_name")
+        examples = {
+            JENKINS_ENV_EXAMPLE: "LABMONITOR_ID=jenkins",
+            N8N_ENV_EXAMPLE: "LABMONITOR_ID=n8n",
+            METABASE_ENV_EXAMPLE: "LABMONITOR_ID=metabase",
+        }
+        for path, expected in examples.items():
+            self.assertTrue(path.is_file(), f"missing {path}")
+            self.assertIn(expected, read(path),
+                          f"{path} must pin stable {expected}")
+
+    def test_postgres_and_provider_projects_have_no_navigable_labmonitor_url(self):
+        """PostgreSQL, the socket proxy, and the exporter are providers, not app cards."""
+        for path in (POSTGRES_COMPOSE, PROVIDER_COMPOSE):
+            self.assertTrue(path.is_file(), f"missing {path}")
+            content = read(path)
+            self.assertNotIn("labmonitor.open.url", content,
+                             f"{path} must not expose a navigable labmonitor URL")
+            self.assertNotIn("LABMONITOR_OPEN_URL", content,
+                             f"{path} must not interpolate a navigable labmonitor URL")
+        # Positive control: the three Compose applications do expose exactly one URL each.
+        for path in (JENKINS_COMPOSE, N8N_COMPOSE, METABASE_COMPOSE):
+            self.assertIn("labmonitor.open.url", read(path),
+                          f"{path} must expose one navigable labmonitor URL")
+
+    def test_jenkins_plugin_file_has_exact_versions(self):
+        """plugins.txt pins the two Slice 3 plugins; Dockerfile installs via the image CLI."""
+        self.assertTrue(JENKINS_PLUGINS.is_file(), f"missing {JENKINS_PLUGINS}")
+        lines = [ln.strip() for ln in read(JENKINS_PLUGINS).splitlines()
+                 if ln.strip() and not ln.strip().startswith("#")]
+        self.assertEqual(sorted(lines),
+                         sorted(["prometheus:860.v532442b_44e9_", "matrix-auth:3.3"]),
+                         f"{JENKINS_PLUGINS} must pin exactly prometheus:860.v532442b_44e9_ "
+                         f"and matrix-auth:3.3 — got {lines}")
+        self.assertEqual(len(lines), 2,
+                         f"{JENKINS_PLUGINS} must contain exactly two pinned plugins — got {lines}")
+        for line in lines:
+            self.assertNotIn("latest", line.lower(),
+                             f"{JENKINS_PLUGINS} must never use 'latest' — got {line}")
+        dockerfile = read(JENKINS_DOCKERFILE)
+        self.assertIn("ARG JENKINS_BASE_IMAGE", dockerfile,
+                      f"{JENKINS_DOCKERFILE} must keep the base image in a required build arg")
+        self.assertIn("FROM ${JENKINS_BASE_IMAGE}", dockerfile,
+                      f"{JENKINS_DOCKERFILE} must build FROM ${{JENKINS_BASE_IMAGE}}")
+        self.assertNotIn("FROM jenkins/jenkins:", dockerfile,
+                         f"{JENKINS_DOCKERFILE} must not hardcode the base image reference")
+        self.assertIn("plugins.txt", dockerfile,
+                      f"{JENKINS_DOCKERFILE} must copy plugins.txt")
+        self.assertIn("jenkins-plugin-cli", dockerfile,
+                      f"{JENKINS_DOCKERFILE} must run the image-provided plugin installer")
+        tasks = read(COMPOSE_TASKS)
+        self.assertIn("plugins.txt", tasks,
+                      f"{COMPOSE_TASKS} must ship plugins.txt to the host and fingerprint it")
+
+
 def parse_compose_services(path: pathlib.Path) -> dict:
     """Minimal indentation-based Compose parser (stdlib only).
 

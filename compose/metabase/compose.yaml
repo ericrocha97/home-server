@@ -18,6 +18,13 @@ services:
       AUTOMATION_DB_NAME: "${AUTOMATION_DB_NAME:-automation}"
       AUTOMATION_DB_USER: "${AUTOMATION_DB_USER:-automation_reader}"
       AUTOMATION_DB_PASSWORD: "${AUTOMATION_DB_PASSWORD:?required}"
+    labels:
+      labmonitor.enabled: "${LABMONITOR_ENABLED:-true}"
+      labmonitor.id: "${LABMONITOR_ID:?required}"
+      labmonitor.name: "${LABMONITOR_NAME:?required}"
+      labmonitor.category: "${LABMONITOR_CATEGORY:?required}"
+      labmonitor.icon: "${LABMONITOR_ICON:?required}"
+      labmonitor.open.url: "${LABMONITOR_OPEN_URL:?required}"
       MB_JETTY_HOST: 0.0.0.0
       MB_JETTY_PORT: 3000
       JAVA_TIMEZONE: "${TZ:-Etc/UTC}"

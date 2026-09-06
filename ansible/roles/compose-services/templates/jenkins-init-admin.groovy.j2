@@ -9,15 +9,27 @@ def adminPass = env['JENKINS_ADMIN_PASSWORD']
 if (adminPass == null || adminPass.trim().isEmpty()) {
   throw new IllegalStateException("JENKINS_ADMIN_PASSWORD ausente — abortando bootstrap de segurança")
 }
-def hudsonRealm = new HudsonPrivateSecurityRealm(false)
-if (instance.getUser(adminId) == null) {
-  hudsonRealm.createAccount(adminId, adminPass)
-  println("Created admin user ${adminId} via init.groovy.d")
+// Preserve the existing admin: reuse the current realm when already private,
+// otherwise install a new private realm. Never create provider users here.
+def currentRealm = instance.getSecurityRealm()
+def hudsonRealm
+if (currentRealm instanceof HudsonPrivateSecurityRealm) {
+  hudsonRealm = (HudsonPrivateSecurityRealm) currentRealm
+} else {
+  hudsonRealm = new HudsonPrivateSecurityRealm(false)
+  instance.setSecurityRealm(hudsonRealm)
 }
-instance.setSecurityRealm(hudsonRealm)
-def authorizationStrategy = new FullControlOnceLoggedInAuthorizationStrategy()
-authorizationStrategy.setAllowAnonymousRead(false)
-instance.setAuthorizationStrategy(authorizationStrategy)
+if (User.getById(adminId, false) == null) {
+  hudsonRealm.createAccount(adminId, adminPass)
+}
+// Phase-one migration: replace FullControlOnceLoggedIn with the pinned
+// fine-grained matrix strategy. Anonymous receives no grants.
+def strategy = instance.getAuthorizationStrategy()
+if (!(strategy instanceof GlobalMatrixAuthorizationStrategy)) {
+  strategy = new GlobalMatrixAuthorizationStrategy()
+  instance.setAuthorizationStrategy(strategy)
+}
+strategy.add(Jenkins.ADMINISTER, adminId)
 instance.setCrumbIssuer(new DefaultCrumbIssuer(true))
 instance.save()
 def loc = JenkinsLocationConfiguration.get()
