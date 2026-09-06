@@ -1427,6 +1427,17 @@ def normalized_rules(rules: list) -> list:
 
 
 class TestSlice3Task7Labmonitor(unittest.TestCase):
+    def test_labmonitor_rbac_manifest_is_staged_on_the_managed_host(self):
+        """Remote k8s modules must not read controller-only playbook paths."""
+        tasks = read(LABMONITOR_TASKS)
+        self.assertIn("Copy LabMonitor RBAC manifest to managed host", tasks,
+                      f"{LABMONITOR_TASKS} must stage the RBAC manifest before applying it")
+        self.assertIn("dest: /tmp/home-server-labmonitor-rbac.yaml", tasks,
+                      f"{LABMONITOR_TASKS} must use a host-local RBAC manifest path")
+        rbac_task = tasks[tasks.index("Apply LabMonitor least-privilege RBAC"):]
+        self.assertIn("src: /tmp/home-server-labmonitor-rbac.yaml", rbac_task,
+                      f"{LABMONITOR_TASKS} must apply the staged host-local RBAC manifest")
+
     def test_labmonitor_rbac_has_only_required_read_verbs(self):
         """labmonitor RBAC grants get/list/watch only on nodes/pods/services/namespaces/deployments."""
         self.assertTrue(LABMONITOR_RBAC.is_file(), f"missing {LABMONITOR_RBAC}")

@@ -43,11 +43,19 @@
         name: "{{ labmonitor_service_account }}"
         namespace: "{{ labmonitor_namespace }}"
 
+- name: Copy LabMonitor RBAC manifest to managed host
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../k8s/labmonitor/rbac.yaml"
+    dest: /tmp/home-server-labmonitor-rbac.yaml
+    owner: root
+    group: root
+    mode: '0644'
+
 - name: Apply LabMonitor least-privilege RBAC
   kubernetes.core.k8s:
     state: present
     kubeconfig: "{{ kubeconfig_path }}"
-    src: "{{ playbook_dir }}/../k8s/labmonitor/rbac.yaml"
+    src: /tmp/home-server-labmonitor-rbac.yaml
 
 - name: Apply LabMonitor provider ConfigMap
   kubernetes.core.k8s:
