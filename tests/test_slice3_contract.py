@@ -1832,5 +1832,81 @@ class TestSlice3Task8FinalRoutes(unittest.TestCase):
                              f"{origin} must not expose the Docker proxy port")
 
 
+VERIFY_SCRIPT = REPO / "scripts/verify/slice3.sh"
+
+SECRET_VALUE_RE = re.compile(
+    r"\$\{?(?:[A-Z_]*(?:PASSWORD|TOKEN|SECRET)|grafana_password|PROBE_JENKINS_TOKEN)"
+)
+
+
+class TestSlice3Task9Verification(unittest.TestCase):
+    def test_verification_script_does_not_print_env_files(self):
+        """slice3.sh never dumps generated env files and never logs credential values."""
+        self.assertTrue(VERIFY_SCRIPT.is_file(), f"missing {VERIFY_SCRIPT}")
+        self.assertTrue(VERIFY_SCRIPT.stat().st_mode & 0o111,
+                        f"{VERIFY_SCRIPT} must be executable")
+        content = read(VERIFY_SCRIPT)
+        # No dump command that could target a generated env file. (`awk print`
+        # of pod names elsewhere in the script is unrelated to env files, so
+        # the dump check is scoped to .env proximity; the blanket .env ban
+        # below makes the guarantee absolute.)
+        for rx in (r"\bcat\b[^\n]*\.env", r"\.env[^\n]*\bcat\b",
+                   r"\bprint\w*\b[^\n]*\.env", r"\.env[^\n]*\bprint\w*\b"):
+            self.assertIsNone(re.search(rx, content),
+                              f"{VERIFY_SCRIPT} must never dump a generated env file ({rx})")
+        self.assertIsNone(re.search(r"(?:^|[\s;&|])cat(?:\s|$)", content),
+                          f"{VERIFY_SCRIPT} must never invoke 'cat'")
+        self.assertIsNone(re.search(r"\.env(?:\s|$|[\"'])", content),
+                          f"{VERIFY_SCRIPT} must not reference generated .env files at all")
+        # Credentials come from the process environment or live Secret
+        # objects, never from files, and are never expanded into log output.
+        self.assertIn("process environment", content,
+                      f"{VERIFY_SCRIPT} must document the env-only credential contract")
+        self.assertIn("Secret", content,
+                      f"{VERIFY_SCRIPT} must consume credentials via Secret references")
+        for lineno, raw in enumerate(content.splitlines(), 1):
+            code = raw.split("#", 1)[0]
+            for segment in re.split(r"\|\||&&|;|\{|\}", code):
+                segment = segment.strip()
+                if re.match(r"(echo|printf|log|pass|fail)\b", segment):
+                    self.assertIsNone(
+                        SECRET_VALUE_RE.search(segment),
+                        f"{VERIFY_SCRIPT}:{lineno} logs a credential value: {raw.strip()}",
+                    )
+
+    def test_verification_script_checks_all_provider_boundaries(self):
+        """slice3.sh covers Prometheus, Docker, Jenkins, Kubernetes, discovery, Portainer."""
+        self.assertTrue(VERIFY_SCRIPT.is_file(), f"missing {VERIFY_SCRIPT}")
+        content = read(VERIFY_SCRIPT)
+        lowered = content.lower()
+        for keyword in ("prometheus", "docker", "jenkins",
+                        "kubernetes", "discovery", "portainer"):
+            self.assertIn(keyword, lowered,
+                          f"{VERIFY_SCRIPT} must check the {keyword} boundary")
+        for marker in ("12375", "18080", "labmonitor", "targets", "/metrics"):
+            self.assertIn(marker, content,
+                          f"{VERIFY_SCRIPT} must contain functional marker {marker}")
+
+    def test_verification_script_never_exposes_provider_ports_with_ufw_allow_all(self):
+        """slice3.sh inspects the firewall read-only; it never opens provider ports."""
+        self.assertTrue(VERIFY_SCRIPT.is_file(), f"missing {VERIFY_SCRIPT}")
+        content = read(VERIFY_SCRIPT)
+        self.assertIn("set -Eeuo pipefail", content,
+                      f"{VERIFY_SCRIPT} must start with 'set -Eeuo pipefail'")
+        self.assertIn("KUBECONFIG", content,
+                      f"{VERIFY_SCRIPT} must resolve KUBECONFIG")
+        self.assertIn("/etc/rancher/k3s/k3s.yaml", content,
+                      f"{VERIFY_SCRIPT} must default to /etc/rancher/k3s/k3s.yaml")
+        self.assertIsNone(
+            re.search(r"\bufw\s+(allow|deny|enable|disable|delete|insert|route)\b",
+                      content, re.IGNORECASE),
+            f"{VERIFY_SCRIPT} must never mutate UFW state (read-only 'ufw status' only)",
+        )
+        self.assertIsNone(
+            re.search(r"\biptables\s+(-A|-I|-D|-F|-X|-Z)\b", content),
+            f"{VERIFY_SCRIPT} must never mutate iptables (read-only '-S'/'-L' only)",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

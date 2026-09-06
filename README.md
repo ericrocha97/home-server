@@ -29,17 +29,20 @@ Nada de aplicações futuras neste slice: sem Jenkins, n8n, Metabase, PostgreSQL
 │   │   └── prod/
 │   │       ├── hosts.yml              # ignorado — copiar de hosts.example.yml
 │   │       └── group_vars/all/          # ignorado — vars.yml (de all.example.yml) + vault.yml
-│   ├── roles/{base,docker,cockpit,k3s,compose-services,firewall,k8s-platform}/
+│   ├── roles/{base,docker,cockpit,k3s,compose-services,docker-provider,firewall,monitoring,portainer,labmonitor-foundation,k8s-platform}/
 │   ├── roles/xanmanning.k3s/    # ignorada — reinstalável via ansible-galaxy (requirements.yml)
 │   └── secrets/               # ignorado — *.crt/*.key locais do mkcert
-├── compose/                   # host-native Docker Compose (postgres, jenkins, n8n, metabase) — Slice 2
+├── compose/                   # host-native Docker Compose (postgres, jenkins, n8n, metabase — Slice 2; docker-provider, portainer-agent — Slice 3)
 ├── k8s/
 │   ├── ingress/README.md      # limite: rotas Docker via file provider, não via K8s Service
+│   ├── labmonitor/rbac.yaml   # RBAC mínimo do futuro leitor (Slice 3, sem Deployment)
+│   ├── monitoring/dashboards/ # 4 dashboards técnicos (host, docker, kubernetes, jenkins)
 │   └── README.md              # plataforma Kubernetes
 ├── scripts/
 │   ├── hosts/generate-hosts.sh
 │   ├── hosts/lab.hosts.example
-│   └── hosts/prod.hosts.example
+│   ├── hosts/prod.hosts.example
+│   └── verify/slice3.sh       # verificação ponta a ponta do Slice 3 (somente leitura)
 ├── old/                       # arquivo local ignorado — stack antiga preservada localmente, nunca versionada
 ├── .venv/                      # ignorado — virtualenv do Ansible na máquina admin
 └── .env.example
@@ -155,10 +158,13 @@ ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER"
 ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags k3s
 ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags compose-services
 ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags firewall
+ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags monitoring
+ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags portainer
+ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags labmonitor-foundation
 ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags k8s-platform
 ```
 
-Ordem intencional em `ansible/site.yml`: `base` → `docker` → `cockpit` → `k3s` → `compose-services` → `firewall` → `k8s-platform`.
+Ordem intencional em `ansible/site.yml`: `base` → `docker` → `cockpit` → `k3s` → `compose-services` → `docker-provider` → `firewall` → `monitoring` → `portainer` → `labmonitor-foundation` → `k8s-platform`.
 
 > **Janela transitória (primeiro bootstrap completo sem `--tags`)**: `compose-services` sobe containers com portas `18080/13001/15678/15432` publicadas **antes** de `firewall` aplicar UFW/DOCKER-USER. Essa janela existe também no Slice 1 (Cockpit `9090`/`6443` antes do firewall) e é aceita; a execução recomendada no laboratório é separar os passos e fechar a janela imediatamente:
 >
@@ -335,6 +341,73 @@ sudo docker exec jenkins curl -fsS http://n8n:5678/healthz >/dev/null
 # esperado: 0 (Jenkins alcança n8n via home-server-automation, sem rota PostgreSQL)
 ```
 
+## Slice 3 — Platform foundation (camada final de infraestrutura)
+
+Slice 3 prepara a última camada de infraestrutura para um futuro `labmonitor-api` e não deploya nenhum produto: sem API LabMonitor, sem frontend, sem dashboards de produto, sem jobs de exemplo, sem workflows e sem restore.
+
+O que o Slice 3 entrega:
+
+- Observabilidade técnica em k3s (`monitoring`): `kube-prometheus-stack` `88.6.1` com Prometheus (retenção `15d`, PVC `20Gi` em `local-path`) e Grafana (PVC `5Gi`) mais 4 dashboards técnicos (`host`, `docker`, `kubernetes`, `jenkins`). NodePorts humanos fixos: Grafana `30300`, Prometheus `30909`.
+- Provider Docker read-only no host (`docker-provider`): proxy `tecnativa/docker-socket-proxy:0.3.0` com mount `:ro` e contrato GET-only (`POST=0` e seções de escrita revogadas), publicado apenas em `server_lan_ip:12375` para o `k3s_pod_cidr` — sem Ingress, NodePort ou hostname, negado para LAN/VPN/Internet.
+- Exporter de métricas Docker em k3s (`docker-metrics-exporter:1.0.0`, ClusterIP `9797`): consome apenas `http://server_lan_ip:12375`, sem mount de socket, com ServiceMonitor para o Prometheus.
+- Providers Jenkins (Compose, porta `18080` autenticada): usuários read-only `labmonitor-api` e `prometheus-scraper` com credenciais separadas via Vault e Groovy init-script; `/prometheus/` para scrape, REST autenticado para leitura, mutação e administração negadas.
+- Portainer (`portainer`, NodePort `30900`): Server em k3s com ServiceAccount dedicada mais Kubernetes Agent (mesmo namespace) e Docker Agent no host (`server_lan_ip:9001`, exceção administrativa com mount RW em projeto Compose separado). O proxy read-only continua sendo o único caminho Docker para monitoramento.
+- Fundação LabMonitor (`labmonitor`, somente identidade): ServiceAccount `labmonitor-api` com `get`/`list`/`watch` em nodes/pods/services/namespaces/deployments e `get` nos ConfigMaps `labmonitor-catalog`/`labmonitor-provider-config`; sem leitura de Secrets, sem `cluster-admin`, sem Deployment.
+- Discovery declarativo: labels `labmonitor.*` no Docker (jenkins/n8n/metabase), metadados nos Services (grafana/prometheus/portainer), catálogo (cockpit) e provider-config (4 endpoints internos) — 7 aplicações navegáveis no total, cada ambiente apenas com seu domínio (`.lab.arpa` vs `.home.arpa`).
+- Rotas Traefik finais: file provider para Compose/Cockpit, Ingress para Grafana/Prometheus/Portainer; providers seguem ClusterIP-only.
+
+### Validação estática (sem SSH, sem Vault)
+
+```bash
+export ANSIBLE_CONFIG="$PWD/ansible/ansible.cfg"
+ansible-playbook --syntax-check ansible/site.yml
+bash -n scripts/hosts/generate-hosts.sh
+bash -n scripts/verify/slice3.sh
+python3 -m unittest discover -s tests -p 'test_*.py' -v
+docker compose --env-file compose/postgres/.env.example -f compose/postgres/compose.yaml config >/dev/null
+docker compose --env-file compose/jenkins/.env.example -f compose/jenkins/compose.yaml config >/dev/null
+docker compose --env-file compose/n8n/.env.example -f compose/n8n/compose.yaml config >/dev/null
+docker compose --env-file compose/metabase/.env.example -f compose/metabase/compose.yaml config >/dev/null
+docker compose --env-file compose/docker-provider/.env.example -f compose/docker-provider/compose.yaml config >/dev/null
+docker compose --env-file compose/portainer-agent/.env.example -f compose/portainer-agent/compose.yaml config >/dev/null
+git diff --check
+git status --short
+```
+
+Os `.env.example` sanitizados carregam apenas placeholders (`local/*:lint`, `changeme-*`, `192.0.2.10`); o Ansible gera os `.env` reais no host (0600, ignorados) a partir do Vault. Nenhum arquivo versionado contém segredo, IP real, tag mutável ou mount de socket fora das exceções contratadas.
+
+### Verificação ponta a ponta no host lab (requer Vault + host vivo)
+
+Fluxo completo com o Vault do ambiente, depois o script de verificação:
+
+```bash
+ansible-playbook -i ansible/inventories/lab/hosts.yml \
+  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
+  ansible/site.yml
+
+SERVER_LAN_IP="<ip-do-servidor>" \
+JENKINS_LABMONITOR_API_TOKEN="<token-do-vault>" \
+GRAFANA_ADMIN_PASSWORD="<senha-do-vault>" \
+./scripts/verify/slice3.sh
+```
+
+O script (`set -Eeuo pipefail`, `KUBECONFIG` ou `/etc/rancher/k3s/k3s.yaml`) é somente leitura: credenciais vêm do ambiente ou de Secrets vivos e nunca são impressas; o firewall nunca é alterado. Ele verifica:
+
+- Pods `monitoring`/`portainer` Ready; namespace/ServiceAccount/ConfigMaps/Secrets do `labmonitor`; PVCs Prometheus/Grafana `Bound`; retenção `15d` (ou override do inventário); targets UP (node-exporter, kubelet/cAdvisor, kube-state-metrics, Docker exporter, Jenkins).
+- Proxy Docker: GETs a partir de pod k3s autorizado OK (`/version`, `/info`, `/containers/json`), POST de mutação rejeitado; exporter `/metrics` com as séries `labmonitor_docker_container_*` e sem socket.
+- Jenkins: REST autenticado retorna JSON válido, mutação de build e `/manage` negados, anônimo negado; k3s → `18080` autenticado OK via probe com Secret reference.
+- Grafana: datasource Prometheus ativo + 4 ConfigMaps de dashboards; Portainer Server alcança o Docker Agent e o Kubernetes Agent.
+- Discovery: labels Docker (jenkins/n8n/metabase), Services (grafana/prometheus/portainer), catálogo + provider-config normalizam para as 7 entradas, sem URL navegável em postgres/providers e sem vazamento de domínio entre ambientes.
+- Negativas: identidade `labmonitor-api` não lê Secrets nem cria pods; `12375`/`9797`/`9001` sem NodePort/Ingress; UFW + DOCKER-USER negam LAN/VPN em `12375`; nenhuma API LabMonitor deployada.
+
+A prova negativa a partir da LAN/VPN precisa de um cliente separado (o host não prova negação remota sozinho):
+
+```bash
+curl --connect-timeout 5 "http://<server-lan-ip>:12375/version"   # deve falhar (timeout/recusa)
+```
+
+Se o probe k3s chegar com endereço de origem diferente do IP do pod (SNAT), o script registra o comportamento: mantém-se o allow estreito do `k3s_pod_cidr` e a negação da LAN — nunca se abre exceção para fazer o teste passar.
+
 ## O que os Slices 1–2 não fazem
 
 - Não instala CasaOS.
@@ -345,7 +418,7 @@ sudo docker exec jenkins curl -fsS http://n8n:5678/healthz >/dev/null
 ## Próximos slices
 
 - **Slice 2 — Compose** (concluído): redes `home-server-automation`/`home-server-data`, PostgreSQL `15432`, Jenkins `18080` (imagem custom), n8n `15678`, Metabase `13001`, file provider para 3 backends — ver seção acima.
-- **Slice 3 — Platform foundation** (concluído, final infrastructure): observabilidade técnica (Prometheus, Grafana + dashboards), providers read-only (Docker socket proxy, Docker metrics exporter, Jenkins providers), administração Portainer, fundação de discovery (RBAC + provider endpoints + catálogo) e rotas Traefik finais — file provider para Compose/Cockpit, Ingress para Grafana/Prometheus/Portainer. Nenhum produto é deployado neste slice.
+- **Slice 3 — Platform foundation** (concluído, final infrastructure): observabilidade técnica (Prometheus, Grafana + dashboards), providers read-only (Docker socket proxy, Docker metrics exporter, Jenkins providers), administração Portainer, fundação de discovery (RBAC + provider endpoints + catálogo) e rotas Traefik finais — file provider para Compose/Cockpit, Ingress para Grafana/Prometheus/Portainer. Nenhum produto é deployado neste slice. Verificação ponta a ponta em `scripts/verify/slice3.sh` — ver seção Slice 3 acima.
 - Restore e automações adicionais vivem fora deste projeto.
 
 ## Segurança e notas
