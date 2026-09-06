@@ -60,6 +60,28 @@ spec:
       port: {{ portainer_agent_port | int }}
       targetPort: 9001
 ---
+# The Portainer agent joins its cluster by DNS-looking up
+# "s-portainer-agent-headless" (hard-coded default in cmd/agent/main.go).
+# That name must resolve inside the agent namespace, so a headless Service
+# with the exact name is required; it selects the same agent pods.
+apiVersion: v1
+kind: Service
+metadata:
+  name: s-portainer-agent-headless
+  namespace: "{{ portainer_namespace }}"
+  labels:
+    app: "{{ portainer_k8s_agent_service_name }}"
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: "{{ portainer_k8s_agent_service_name }}"
+  ports:
+    - name: agent
+      protocol: TCP
+      port: {{ portainer_agent_port | int }}
+      targetPort: 9001
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
