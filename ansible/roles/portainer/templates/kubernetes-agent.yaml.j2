@@ -92,6 +92,12 @@ spec:
                 secretKeyRef:
                   name: "{{ portainer_agent_secret_name }}"
                   key: agent-secret
+            # The agent refuses to start on Kubernetes without its own pod
+            # IP (used to build internal edge/tunnel endpoints).
+            - name: KUBERNETES_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
           livenessProbe:
             tcpSocket:
               port: 9001
