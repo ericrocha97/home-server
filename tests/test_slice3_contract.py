@@ -829,6 +829,22 @@ def dashboard_exprs(path: pathlib.Path) -> list:
 
 
 class TestSlice3Task5Monitoring(unittest.TestCase):
+    def test_no_uninterpolated_jinja_dict_keys(self):
+        """Task args must not use Jinja as dict keys: Ansible leaves them literal.
+
+        Regression guard for the 422 Secret failure: data["{{ ... }}"] is not a
+        valid config key. Dynamic maps must be built as Jinja expressions.
+        """
+        import re
+        for path in (MONITORING_TASKS, PORTAINER_TASKS, LABMONITOR_TASKS,
+                     COMPOSE_TASKS, FIREWALL_TASKS, K8S_PLATFORM_TASKS):
+            if not path.is_file():
+                continue
+            for lineno, line in enumerate(read(path).splitlines(), 1):
+                self.assertIsNone(
+                    re.search(r'''^\s*['"]?\{\{\s*[a-z_][a-z0-9_]*.*\}\}['"]?\s*:''', line),
+                    f"{path}:{lineno} must not use Jinja as a dict key — got {line.strip()}")
+
     def test_monitoring_values_enable_required_exporters(self):
         """Values enable nodeExporter, kubeStateMetrics, kubelet/cAdvisor; exporter stays scraped."""
         self.assertTrue(MONITORING_VALUES.is_file(), f"missing {MONITORING_VALUES}")
