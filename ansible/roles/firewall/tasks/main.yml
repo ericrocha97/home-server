@@ -36,7 +36,7 @@
     port: "{{ item.1.port }}"
     proto: tcp
     comment: "{{ item.1.comment }}"
-  loop: "{{ resolved_firewall_trusted_cidrs | product(firewall_slice1_tcp_ports) | list }}"
+  loop: "{{ resolved_firewall_trusted_cidrs | product(firewall_base_tcp_ports) | list }}"
 
 - name: Impedir abertura de Jenkins sem securityRealm aplicado
   ansible.builtin.command: curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:{{ compose_jenkins_port | default(18080) }}/api/json
@@ -48,7 +48,7 @@
   failed_when: firewall_jenkins_anon_code.stdout is match('^2..')
   # Esta é uma segunda barreira além da validação da role compose-services; sem non-2xx, não abrir 18080 para LAN/VPN.
 
-- name: Permitir portas diretas Compose somente da LAN/VPN (Slice 2)
+- name: Permitir portas diretas Compose somente da LAN/VPN
   community.general.ufw:
     rule: allow
     direction: in
@@ -56,7 +56,7 @@
     port: "{{ item.1.port }}"
     proto: tcp
     comment: "{{ item.1.comment }}"
-  loop: "{{ resolved_firewall_trusted_cidrs | product(firewall_slice2_tcp_ports) | list }}"
+  loop: "{{ resolved_firewall_trusted_cidrs | product(firewall_compose_direct_tcp_ports) | list }}"
 
 - name: Permitir Traefik (k3s pod CIDR) acessar backends Compose no host
   community.general.ufw:

@@ -1,6 +1,6 @@
 """LabMonitor Docker metrics exporter.
 
-Slice 3 purpose-built fallback (``docker_metrics_exporter_mode: built``).
+Purpose-built platform fallback (``docker_metrics_exporter_mode: built``).
 
 Reads container state from the read-only Docker socket proxy over plain
 HTTP ``GET`` and exposes stable ``labmonitor_docker_container_*`` series

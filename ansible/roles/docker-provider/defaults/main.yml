@@ -1,5 +1,5 @@
 ---
-# Slice 3 Docker provider (read-only socket proxy) — non-secret defaults.
+# Docker provider (read-only socket proxy) — non-secret defaults.
 # Image pinned to exact upstream version (never latest); env names verified
 # against tecnativa/docker-socket-proxy 0.3.0 (CONTAINERS/IMAGES/NETWORKS/INFO/
 # VERSION granted, POST and all mutating sections revoked for a GET-only API).

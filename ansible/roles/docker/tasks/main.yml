@@ -3,7 +3,7 @@
   ansible.builtin.assert:
     that:
       - ansible_architecture == 'x86_64'
-    fail_msg: "O Slice 1 usa o repositório Docker amd64; defina uma variante de arquitetura antes de usar outro host."
+    fail_msg: "A plataforma usa o repositório Docker amd64; defina uma variante de arquitetura antes de usar outro host."
 
 - name: Criar diretório de keyrings APT
   ansible.builtin.file:

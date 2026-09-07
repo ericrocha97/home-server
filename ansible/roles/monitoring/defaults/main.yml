@@ -1,5 +1,5 @@
 ---
-# Slice 3 monitoring (kube-prometheus-stack) — non-secret defaults.
+# Platform monitoring (kube-prometheus-stack) — non-secret defaults.
 # Task 4 selects the Docker exporter image/mode; Task 5 renders full Helm values
 # and reconciles component images against `helm template` for chart 88.6.1.
 monitoring_chart_version: "88.6.1"

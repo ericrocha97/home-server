@@ -2,7 +2,7 @@
 
 Projetos host-native. Dados persistentes ficam em `/srv/home-server/data/<service>` fora do Git.
 
-## Topologia — shared `automation` database (Slice 2 Tasks 1–4)
+## Topologia — shared `automation` database
 
 PostgreSQL roda apenas em `home-server-data`; n8n usa ambas as redes externas, Jenkins permanece em `home-server-automation`, Metabase permanece em `home-server-data`. O Ansible cria `automation`, `automation_writer` e `automation_reader`; n8n recebe o contrato writer e Metabase o contrato reader. Nenhuma tabela de aplicação, workflow n8n, dashboard Metabase, Service ou EndpointSlice é criada nesta mudança.
 

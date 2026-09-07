@@ -30,3 +30,5 @@ k8s/secrets/*.yaml
 **/node_modules/
 .venv/
 ansible/roles/xanmanning.k3s/*
+
+tests/__pycache__/

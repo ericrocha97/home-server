@@ -1,5 +1,5 @@
 ---
-# Slice 3 LabMonitor foundation RBAC (Task 7) — least privilege for the future
+# LabMonitor foundation RBAC — least privilege for the future
 # labmonitor-api. One ClusterRole grants get/list/watch only on nodes, pods,
 # services, namespaces and apps/deployments; one namespaced Role grants get
 # only on the two named ConfigMaps. Both bind exclusively to

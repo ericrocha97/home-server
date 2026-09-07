@@ -4,13 +4,13 @@ firewall_trusted_cidrs:
   - "{{ lan_cidr }}"
 firewall_optional_cidrs:
   - "{{ vpn_cidr }}"
-firewall_slice1_tcp_ports:
+firewall_base_tcp_ports:
   - { port: '22', comment: 'SSH' }
   - { port: '80', comment: 'Traefik HTTP' }
   - { port: '443', comment: 'Traefik HTTPS' }
   - { port: '9090', comment: 'Cockpit' }
   - { port: '6443', comment: 'Kubernetes API' }
-firewall_slice2_tcp_ports:
+firewall_compose_direct_tcp_ports:
   - { port: "{{ compose_jenkins_port | default(18080) }}", comment: 'Jenkins' }
   - { port: "{{ compose_metabase_port | default(13001) }}", comment: 'Metabase' }
   - { port: "{{ compose_n8n_port | default(15678) }}", comment: 'n8n' }
@@ -22,7 +22,7 @@ firewall_compose_backend_ports:
 # Read-only Docker provider backhaul (k3s pod CIDR -> host only, never LAN/VPN)
 firewall_provider_backhaul_ports:
   - { port: '12375', comment: 'Docker socket proxy (read-only)' }
-# Human-facing NodePorts reachable from LAN/VPN (Slice 3: Portainer UI +
+# Human-facing NodePorts reachable from LAN/VPN (Portainer UI +
 # Grafana + Prometheus — 12375 must never join this allowlist; the socket
 # proxy stays pod-only).
 firewall_nodeport_allowlist:

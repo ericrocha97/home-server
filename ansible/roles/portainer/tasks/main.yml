@@ -17,7 +17,7 @@
       - portainer_agent_secret is defined
       - portainer_agent_secret | length > 0
     fail_msg: >-
-      Slice 3 Portainer Vault is incomplete — define portainer_agent_secret
+      Portainer Vault is incomplete — define portainer_agent_secret
       (AGENT_SECRET shared by the Kubernetes Agent and the host Docker Agent)
       before deploying Portainer.
   no_log: true

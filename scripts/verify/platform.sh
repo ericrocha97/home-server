@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Slice 3 end-to-end verification — final platform foundation.
+# End-to-end platform verification — final platform foundation.
 #
 # Read-only live checks against the provisioned host: Kubernetes workloads
 # (monitoring, Portainer, labmonitor foundation), the Docker socket proxy
@@ -21,7 +21,7 @@
 #   SERVER_LAN_IP=192.0.2.10 \
 #   JENKINS_LABMONITOR_API_TOKEN='<token from Vault>' \
 #   GRAFANA_ADMIN_PASSWORD='<password from Vault>' \
-#   ./scripts/verify/slice3.sh
+#   ./scripts/verify/platform.sh
 #
 # Optional overrides:
 #   KUBECONFIG=/etc/rancher/k3s/k3s.yaml  (default when KUBECONFIG is unset)
@@ -65,22 +65,22 @@ PASS=0
 FAIL=0
 FAILED_CHECKS=()
 
-log() { printf '[slice3] %s\n' "$*"; }
-pass() { PASS=$((PASS + 1)); printf '[slice3] PASS: %s\n' "$*"; }
+log() { printf '[platform] %s\n' "$*"; }
+pass() { PASS=$((PASS + 1)); printf '[platform] PASS: %s\n' "$*"; }
 fail() {
   FAIL=$((FAIL + 1)); FAILED_CHECKS+=("$1")
-  printf '[slice3] FAIL: %s\n' "$*" >&2
+  printf '[platform] FAIL: %s\n' "$*" >&2
 }
 
 # Wrap a named check so one failure never aborts the remaining suite.
 run_check() {
   local name="$1"; shift
   log "--- $name ---"
-  if "$@" >/tmp/slice3-check.log 2>&1; then
+  if "$@" >/tmp/platform-check.log 2>&1; then
     pass "$name"
   else
     fail "$name (see output above)"
-    sed 's/^/[slice3]   /' /tmp/slice3-check.log >&2 || true
+    sed 's/^/[platform]   /' /tmp/platform-check.log >&2 || true
   fi
 }
 
@@ -150,11 +150,11 @@ check_labmonitor_foundation() {
   [[ "$keys" == "api-token username" ]] || { printf 'jenkins readonly Secret keys must be exactly [api-token username], got [%s]\n' "$keys" >&2; return 1; }
 }
 
-# No product Deployment may exist: Slice 3 provisions only the foundation.
+# No product Deployment may exist: The platform provisions only the foundation.
 check_no_labmonitor_api_deployment() {
   require_cmd kubectl python3 || return 1
   if K -n "$LABMONITOR_NS" get deployment labmonitor-api >/dev/null 2>&1; then
-    printf 'labmonitor-api Deployment must not exist in Slice 3\n' >&2; return 1
+    printf 'labmonitor-api Deployment must not exist on the platform\n' >&2; return 1
   fi
   local found
   found="$(K get deployments,statefulsets,daemonsets -A -o json 2>/dev/null | python3 -c 'import json,sys; print(" ".join(sorted({i["metadata"]["name"] for i in json.load(sys.stdin)["items"]})))')" || return 1
@@ -206,7 +206,7 @@ PF_PIDS=""
 pf_start() {
   # pf_start <namespace> <svc> <local-port> <remote-port>
   require_cmd kubectl curl || return 1
-  K -n "$1" port-forward "svc/$2" "$3:$4" >/tmp/slice3-pf-"$2".log 2>&1 &
+  K -n "$1" port-forward "svc/$2" "$3:$4" >/tmp/platform-pf-"$2".log 2>&1 &
   local pid=$!
   PF_PIDS="$PF_PIDS $pid"
   local attempt=0
@@ -259,11 +259,41 @@ print(" ".join(sorted(set(required) - seen)))
 # ---------------------------------------------------------------------------
 probe_from_k3s() {
   # probe_from_k3s <name-suffix> <curl-args...> — runs curl inside a one-shot pod.
-  require_cmd kubectl || return 1
+  # Create -> wait -> exec -> delete (no kubectl attach/--rm streaming): the
+  # attach path can hang forever after the pod completes, so every step gets
+  # its own timeout and the pod is force-deleted on every exit path.
+  # activeDeadlineSeconds makes Kubernetes self-clean the pod even if the
+  # script is killed mid-run.
+  require_cmd kubectl timeout || return 1
   local suffix="$1"; shift
-  local pod="slice3-probe-${suffix}-$$-$(date +%s)"
-  timeout 120 kubectl --kubeconfig="$KUBECONFIG" run "$pod" \
-    --image="$PROBE_IMAGE" --restart=Never --rm -i --command -- curl "$@"
+  local pod="platform-probe-${suffix}-$$-$(date +%s)"
+  K create -f - >/dev/null <<EOF || return 1
+apiVersion: v1
+kind: Pod
+metadata:
+  name: $pod
+  namespace: default
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: 600
+  containers:
+    - name: probe
+      image: $PROBE_IMAGE
+      command: ["sh", "-c", "sleep 580"]
+EOF
+  # timeout(1) cannot execute shell functions, so call the kubectl binary
+  # directly under it; K is only used outside timeout wrappers.
+  if ! timeout 120 kubectl --kubeconfig="$KUBECONFIG" -n default wait --for=condition=Ready "pod/$pod" --timeout=120s >/dev/null; then
+    K -n default delete pod "$pod" --wait=false --force --grace-period=0 >/dev/null 2>&1 || true
+    return 1
+  fi
+  local out
+  if ! out="$(timeout 90 kubectl --kubeconfig="$KUBECONFIG" -n default exec "$pod" -- curl "$@")"; then
+    K -n default delete pod "$pod" --wait=false --force --grace-period=0 >/dev/null 2>&1 || true
+    return 1
+  fi
+  K -n default delete pod "$pod" --wait=false --force --grace-period=0 >/dev/null 2>&1 || true
+  printf '%s' "$out"
 }
 
 check_proxy_get_from_k3s() {
@@ -281,10 +311,8 @@ check_proxy_mutating_denied() {
   require_cmd kubectl || return 1
   local base="http://${SERVER_LAN_IP}:${DOCKER_PROXY_PORT}"
   local code
-  code="$(timeout 120 kubectl --kubeconfig="$KUBECONFIG" run "slice3-mut-$$-$(date +%s)" \
-    --image="$PROBE_IMAGE" --restart=Never --rm -i --command -- \
-    curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 20 \
-    -X POST "$base/containers/create?name=slice3-must-fail")" || return 1
+  code="$(probe_from_k3s mut -s -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 20 \
+    -X POST "$base/containers/create?name=platform-must-fail")" || return 1
   [[ -n "$code" ]] || { printf 'proxy mutating probe produced no HTTP code\n' >&2; return 1; }
   case "$code" in
     2*) printf 'proxy accepted mutating POST (HTTP %s), must reject\n' "$code" >&2; return 1 ;;
@@ -300,7 +328,7 @@ check_proxy_mutating_denied() {
 check_jenkins_from_k3s_authenticated() {
   require_cmd kubectl || return 1
   K -n "$LABMONITOR_NS" get secret labmonitor-jenkins-readonly -o name >/dev/null || return 1
-  local pod="slice3-jk-$$-$(date +%s)"
+  local pod="platform-jk-$$-$(date +%s)"
   K apply -f - >/dev/null <<EOF || return 1
 apiVersion: v1
 kind: Pod
@@ -365,7 +393,7 @@ check_jenkins_rest_authenticated() {
   require_cmd curl python3 || return 1
   [[ -n "${JENKINS_LABMONITOR_API_TOKEN:-}" ]] || { printf 'set JENKINS_LABMONITOR_API_TOKEN\n' >&2; return 1; }
   local body
-  body="$(curl -fsS --connect-timeout 5 --max-time 20 -u "${JENKINS_LABMONITOR_USER}:${JENKINS_LABMONITOR_API_TOKEN}" "$(jenkins_base)/api/json?tree=jobs[name,builds[number]]")" || return 1
+  body="$(curl -gfsS --connect-timeout 5 --max-time 20 -u "${JENKINS_LABMONITOR_USER}:${JENKINS_LABMONITOR_API_TOKEN}" "$(jenkins_base)/api/json?tree=jobs[name,builds[number]]")" || return 1
   printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert isinstance(d.get("jobs", None), list); print("jenkins jobs=%d" % len(d["jobs"]))' || return 1
 }
 
@@ -432,9 +460,7 @@ check_portainer_agents() {
   # The Docker Agent answers the k3s pod network with an auth gate (any HTTP
   # code proves the path; 000/timeout would prove the firewall drops it).
   local agent_code
-  agent_code="$(timeout 120 kubectl --kubeconfig="$KUBECONFIG" run "slice3-pa-$$-$(date +%s)" \
-    --image="$PROBE_IMAGE" --restart=Never --rm -i --command -- \
-    curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 20 "http://${SERVER_LAN_IP}:9001")" || return 1
+  agent_code="$(probe_from_k3s pa -s -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 20 "http://${SERVER_LAN_IP}:9001")" || return 1
   [[ -n "$agent_code" && "$agent_code" != "000" ]] || { printf 'k3s pods cannot reach Docker Agent 9001\n' >&2; return 1; }
   log "Docker Agent reachable from k3s (HTTP $agent_code auth gate)"
 }
@@ -463,9 +489,9 @@ check_discovery_docker_labels() {
 import json, os, sys
 expected = {"jenkins", "n8n", "metabase"}
 found, urls = set(), []
-docs = json.load(sys.stdin)
-if isinstance(docs, dict):
-    docs = [docs]
+# docker inspect with a --format emits one JSON document per line (NDJSON),
+# not a single JSON value, so parse line-by-line.
+docs = [json.loads(line) for line in sys.stdin.read().splitlines() if line.strip()]
 for doc in docs:
     lab = doc.get("Config", {}).get("Labels", {}) if "Config" in doc else doc
     if "labmonitor.id" in lab:
@@ -602,9 +628,9 @@ main() {
   run_check "firewall boundary read-only (LAN and Internet denied 12375)" check_firewall_boundary_readonly
 
   pf_stop_all
-  printf '\n[slice3] result: %d passed, %d failed (%s, base domain %s)\n' "$PASS" "$FAIL" "$ENVIRONMENT_NAME" "$BASE_DOMAIN"
+  printf '\n[platform] result: %d passed, %d failed (%s, base domain %s)\n' "$PASS" "$FAIL" "$ENVIRONMENT_NAME" "$BASE_DOMAIN"
   if [[ "$FAIL" -gt 0 ]]; then
-    printf '[slice3] failed checks: %s\n' "${FAILED_CHECKS[*]}" >&2
+    printf '[platform] failed checks: %s\n' "${FAILED_CHECKS[*]}" >&2
     return 1
   fi
 }

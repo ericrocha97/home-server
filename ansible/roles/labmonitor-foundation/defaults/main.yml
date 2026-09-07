@@ -1,6 +1,6 @@
 ---
-# Slice 3 LabMonitor foundation — non-secret defaults (identity only).
-# No labmonitor-api deployment, dashboards, or secrets are created in Slice 3.
+# LabMonitor foundation — non-secret defaults (identity only).
+# No labmonitor-api deployment, dashboards, or secrets are created here.
 labmonitor_namespace: labmonitor
 labmonitor_service_account: labmonitor-api
 labmonitor_provider_config_name: labmonitor-provider-config

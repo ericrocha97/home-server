@@ -1,7 +1,7 @@
-"""Slice 3 platform foundation contract — Task 1 wiring.
+"""Platform foundation contract tests.
 
 Three named cases asserting the exact site role order, the non-secret
-example-inventory contract (with no secret values), and stable Slice 3
+example-inventory contract (with no secret values), and stable platform
 ports/defaults. Stdlib only (no PyYAML) so the suite runs on any Python 3.
 
 Task 8 adds the legacy-reference assertion after the active tree is ready
@@ -42,7 +42,7 @@ EXPECTED_ORDER = [
     "k8s-platform",
 ]
 
-# Exact non-secret Slice 3 contract shared by role defaults and example inventories.
+# Exact non-secret platform contract shared by role defaults and example inventories.
 EXPECTED_VARS = {
     "docker_socket_proxy_port": "12375",
     "docker_metrics_exporter_port": "9797",
@@ -127,9 +127,9 @@ def parse_simple_vars(path: pathlib.Path) -> dict:
     return out
 
 
-class TestSlice3Contract(unittest.TestCase):
+class TestPlatformContract(unittest.TestCase):
     def test_site_order_contains_final_infrastructure_roles(self):
-        """ansible/site.yml must list roles in the exact approved Slice 3 order with matching tags."""
+        """ansible/site.yml must list roles in the exact approved role order with matching tags."""
         self.assertTrue(SITE.is_file(), f"missing {SITE}")
         content = read(SITE)
         roles = re.findall(r"-\s*role:\s*([A-Za-z0-9_.-]+)", content)
@@ -152,13 +152,13 @@ class TestSlice3Contract(unittest.TestCase):
         # k8s-platform stays last and owns the final Traefik configuration.
         self.assertEqual(roles[-1], "k8s-platform",
                          f"{SITE} last role must be k8s-platform — got {roles[-1]}")
-        # Pre-Slice-3 roles stay before compose-services.
+        # Host roles stay before compose-services.
         for early in ("base", "docker", "cockpit", "k3s"):
             self.assertLess(roles.index(early), roles.index("compose-services"),
                             f"{SITE}: {early} must precede compose-services — got {roles}")
 
     def test_example_inventories_have_no_secret_values(self):
-        """Both example inventories carry the exact non-secret Slice 3 values and no secrets."""
+        """Both example inventories carry the exact non-secret platform values and no secrets."""
         for path in (LAB_EXAMPLE, PROD_EXAMPLE):
             self.assertTrue(path.is_file(), f"missing {path}")
             content = read(path)
@@ -186,7 +186,7 @@ class TestSlice3Contract(unittest.TestCase):
                     f"{path} must not contain secret key {m.group(1)}: {raw.strip()}",
                 )
 
-    def test_slice3_defaults_have_stable_ports(self):
+    def test_platform_defaults_have_stable_ports(self):
         """Role defaults pin stable ports/NodePorts/retention/storage and immutable image refs."""
         for path in (COMPOSE_DEFAULTS, DOCKER_DEFAULTS, MONITORING_DEFAULTS,
                      PORTAINER_DEFAULTS, LABMONITOR_DEFAULTS):
@@ -263,7 +263,7 @@ class TestSlice3Contract(unittest.TestCase):
         self.assertTrue(mount.endswith(":ro"),
                         f"{PROVIDER_COMPOSE} socket mount must be read-only (:ro) — got {mount}")
         # Repo-wide: no other Compose project may mount the socket, except the
-        # pre-existing Slice 2 Jenkins RW build exception (never read-only) and
+        # pre-existing Jenkins RW build exception (never read-only) and
         # the Task 6 Portainer Docker Agent RW admin exception (never read-only).
         for project in sorted((REPO / "compose").glob("*/compose.yaml")):
             if project == PROVIDER_COMPOSE:
@@ -271,7 +271,7 @@ class TestSlice3Contract(unittest.TestCase):
             if "/var/run/docker.sock" in read(project):
                 self.assertIn(project.parent.name, ("jenkins", "portainer-agent"),
                               f"{project} unexpectedly mounts the Docker socket — "
-                              "only jenkins (Slice 2 RW build exception), "
+                              "only jenkins (RW build exception), "
                               "portainer-agent (Task 6 RW admin exception), and "
                               "docker-provider (read-only proxy) may do so")
 
@@ -341,7 +341,7 @@ METABASE_ENV_TEMPLATE = REPO / "ansible/roles/compose-services/templates/metabas
 POSTGRES_COMPOSE = REPO / "compose/postgres/compose.yaml"
 
 
-class TestSlice3Task3JenkinsProviders(unittest.TestCase):
+class TestJenkinsProviders(unittest.TestCase):
     def test_jenkins_phase_one_does_not_create_provider_users(self):
         """Phase-one Groovy bootstraps admin only; provider users belong to phase two."""
         self.assertTrue(PHASE1_GROOVY.is_file(), f"missing {PHASE1_GROOVY}")
@@ -582,7 +582,7 @@ class TestSlice3Task3JenkinsProviders(unittest.TestCase):
                           f"{path} must expose one navigable labmonitor URL")
 
     def test_jenkins_plugin_file_has_exact_versions(self):
-        """plugins.txt pins the two Slice 3 plugins; Dockerfile installs via the image CLI."""
+        """plugins.txt pins the two pinned plugins; Dockerfile installs via the image CLI."""
         self.assertTrue(JENKINS_PLUGINS.is_file(), f"missing {JENKINS_PLUGINS}")
         lines = [ln.strip() for ln in read(JENKINS_PLUGINS).splitlines()
                  if ln.strip() and not ln.strip().startswith("#")]
@@ -638,7 +638,7 @@ REQUIRED_EXPORTER_SERIES = [
 ]
 
 
-class TestSlice3Task4DockerExporter(unittest.TestCase):
+class TestDockerExporter(unittest.TestCase):
     def test_exporter_mode_is_built_with_immutable_image(self):
         """Gate result is recorded as built with a pinned local image."""
         mon = parse_simple_vars(MONITORING_DEFAULTS)
@@ -828,7 +828,7 @@ def dashboard_exprs(path: pathlib.Path) -> list:
     return exprs
 
 
-class TestSlice3Task5Monitoring(unittest.TestCase):
+class TestMonitoringStack(unittest.TestCase):
     def test_no_uninterpolated_jinja_dict_keys(self):
         """Task args must not use Jinja as dict keys: Ansible leaves them literal.
 
@@ -1156,7 +1156,7 @@ def top_level_block(content: str, key: str) -> str:
     return "\n".join(block)
 
 
-class TestSlice3Task6Portainer(unittest.TestCase):
+class TestPortainer(unittest.TestCase):
     def test_portainer_resources_use_portainer_namespace(self):
         """Server and Kubernetes Agent manifests live in the portainer namespace."""
         for path in (PORTAINER_SERVER_TEMPLATE, PORTAINER_AGENT_TEMPLATE):
@@ -1287,7 +1287,7 @@ class TestSlice3Task6Portainer(unittest.TestCase):
                           if "/var/run/docker.sock" in read(p))
         self.assertEqual(mounters, ["docker-provider", "jenkins", "portainer-agent"],
                          "socket mounts are limited to docker-provider (:ro), "
-                         f"jenkins (Slice 2 RW), portainer-agent (admin RW) — got {mounters}")
+                         f"jenkins (RW), portainer-agent (admin RW) — got {mounters}")
 
     def test_portainer_uses_fixed_nodeport_30900(self):
         """Server stays on NodePort 30900 for LAN/VPN; agent port 9001 stays pod-only."""
@@ -1426,7 +1426,7 @@ def normalized_rules(rules: list) -> list:
     return sorted(normalized, key=repr)
 
 
-class TestSlice3Task7Labmonitor(unittest.TestCase):
+class TestLabmonitorFoundation(unittest.TestCase):
     def test_labmonitor_rbac_manifest_is_staged_on_the_managed_host(self):
         """Remote k8s modules must not read controller-only playbook paths."""
         tasks = read(LABMONITOR_TASKS)
@@ -1745,7 +1745,7 @@ def iter_active_files() -> Iterator[pathlib.Path]:
             yield path
 
 
-class TestSlice3Task8FinalRoutes(unittest.TestCase):
+class TestFinalRoutes(unittest.TestCase):
     def test_hosts_generator_lists_only_active_services(self):
         """Helper and examples emit exactly the seven active services, no legacy."""
         self.assertTrue(HOSTS_GENERATOR.is_file(), f"missing {HOSTS_GENERATOR}")
@@ -1779,7 +1779,6 @@ class TestSlice3Task8FinalRoutes(unittest.TestCase):
         legacy_res = (
             re.compile(r"glance", re.IGNORECASE),
             re.compile(r"builds[-_]?api", re.IGNORECASE),
-            re.compile(r"slice\s*[-_]?4", re.IGNORECASE),
         )
         offenders: list = []
         scanned = 0
@@ -1923,16 +1922,16 @@ class TestSlice3Task8FinalRoutes(unittest.TestCase):
                              f"{origin} must not expose the Docker proxy port")
 
 
-VERIFY_SCRIPT = REPO / "scripts/verify/slice3.sh"
+VERIFY_SCRIPT = REPO / "scripts/verify/platform.sh"
 
 SECRET_VALUE_RE = re.compile(
     r"\$\{?(?:[A-Z_]*(?:PASSWORD|TOKEN|SECRET)|grafana_password|PROBE_JENKINS_TOKEN)"
 )
 
 
-class TestSlice3Task9Verification(unittest.TestCase):
+class TestVerificationScript(unittest.TestCase):
     def test_verification_script_does_not_print_env_files(self):
-        """slice3.sh never dumps generated env files and never logs credential values."""
+        """platform.sh never dumps generated env files and never logs credential values."""
         self.assertTrue(VERIFY_SCRIPT.is_file(), f"missing {VERIFY_SCRIPT}")
         self.assertTrue(VERIFY_SCRIPT.stat().st_mode & 0o111,
                         f"{VERIFY_SCRIPT} must be executable")
@@ -1966,7 +1965,7 @@ class TestSlice3Task9Verification(unittest.TestCase):
                     )
 
     def test_verification_script_checks_all_provider_boundaries(self):
-        """slice3.sh covers Prometheus, Docker, Jenkins, Kubernetes, discovery, Portainer."""
+        """platform.sh covers Prometheus, Docker, Jenkins, Kubernetes, discovery, Portainer."""
         self.assertTrue(VERIFY_SCRIPT.is_file(), f"missing {VERIFY_SCRIPT}")
         content = read(VERIFY_SCRIPT)
         lowered = content.lower()
@@ -1979,7 +1978,7 @@ class TestSlice3Task9Verification(unittest.TestCase):
                           f"{VERIFY_SCRIPT} must contain functional marker {marker}")
 
     def test_verification_script_never_exposes_provider_ports_with_ufw_allow_all(self):
-        """slice3.sh inspects the firewall read-only; it never opens provider ports."""
+        """platform.sh inspects the firewall read-only; it never opens provider ports."""
         self.assertTrue(VERIFY_SCRIPT.is_file(), f"missing {VERIFY_SCRIPT}")
         content = read(VERIFY_SCRIPT)
         self.assertIn("set -Eeuo pipefail", content,
@@ -1999,7 +1998,7 @@ class TestSlice3Task9Verification(unittest.TestCase):
         )
 
 
-class TestSlice3FinalFixWave(unittest.TestCase):
+class TestFinalFixWave(unittest.TestCase):
     """Final review fix-wave: conditional reset, non-2xx gate, int ports,
     full NodePort allowlist, exporter prod story."""
 

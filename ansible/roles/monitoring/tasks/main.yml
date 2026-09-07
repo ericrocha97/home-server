@@ -33,7 +33,7 @@
       - monitoring_chart_version == '88.6.1'
       - monitoring_release_name == 'monitoring'
     fail_msg: >-
-      Slice 3 monitoring Vault is incomplete — define
+      Monitoring Vault is incomplete — define
       monitoring_grafana_admin_password and the Task 3
       jenkins_prometheus_api_token before installing the stack.
   no_log: true

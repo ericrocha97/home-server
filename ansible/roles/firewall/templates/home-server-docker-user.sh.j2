@@ -27,7 +27,7 @@ done
 # DOCKER-USER runs after Docker DNAT. --ctorigdst/--ctorigdstport retain the
 # original host address and published port instead of the container address.
 {% for source in resolved_firewall_trusted_cidrs + [k3s_pod_cidr] %}
-{% for item in firewall_slice2_tcp_ports %}
+{% for item in firewall_compose_direct_tcp_ports %}
 "$iptables_bin" -A "$docker_user_chain" -s "{{ source }}" -p tcp \
   -m conntrack --ctstate NEW --ctorigdst "{{ server_lan_ip }}" \
   --ctorigdstport "{{ item.port }}" -m comment \
@@ -44,7 +44,7 @@ done
 {% endfor %}
 {% endif %}
 
-{% for item in firewall_slice2_tcp_ports %}
+{% for item in firewall_compose_direct_tcp_ports %}
 "$iptables_bin" -A "$docker_user_chain" -p tcp \
   -m conntrack --ctstate NEW --ctorigdst "{{ server_lan_ip }}" \
   --ctorigdstport "{{ item.port }}" -m comment \

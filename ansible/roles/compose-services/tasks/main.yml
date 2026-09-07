@@ -1,5 +1,5 @@
 ---
-- name: Validar Vault obrigatório do Slice 2
+- name: Validar Vault obrigatório do Compose
   ansible.builtin.assert:
     that:
       - postgres_superuser_password is defined and postgres_superuser_password | length > 0
@@ -9,10 +9,10 @@
       - postgres_automation_reader_password is defined and postgres_automation_reader_password | length > 0
       - n8n_encryption_key is defined and n8n_encryption_key | length > 0
       - jenkins_admin_password is defined and jenkins_admin_password | length > 0
-    fail_msg: "Vault do Slice 2 incompleto — defina postgres_superuser_password, postgres_n8n_password, postgres_metabase_password, postgres_automation_writer_password, postgres_automation_reader_password, n8n_encryption_key e jenkins_admin_password"
+    fail_msg: "Vault do Compose incompleto — defina postgres_superuser_password, postgres_n8n_password, postgres_metabase_password, postgres_automation_writer_password, postgres_automation_reader_password, n8n_encryption_key e jenkins_admin_password"
   no_log: true
 
-- name: Validar Vault de providers Jenkins do Slice 3
+- name: Validar Vault de providers Jenkins
   ansible.builtin.assert:
     that:
       - jenkins_labmonitor_password is defined and jenkins_labmonitor_password | length > 0
@@ -31,7 +31,7 @@
       - jenkins_labmonitor_api_token != jenkins_prometheus_api_token
       - jenkins_labmonitor_api_token is match('^11[a-f0-9]{32}$')
       - jenkins_prometheus_api_token is match('^11[a-f0-9]{32}$')
-    fail_msg: "Vault do Slice 3 incompleto — defina jenkins_labmonitor_password, jenkins_labmonitor_api_token, jenkins_prometheus_password e jenkins_prometheus_api_token distintos do admin; os dois api_token devem usar o formato fixo do Jenkins 11 + 32 hex minusculos (34 chars, ex.: python3 -c \"import secrets; print('11' + secrets.token_hex(16))\")"
+    fail_msg: "Vault dos providers Jenkins incompleto — defina jenkins_labmonitor_password, jenkins_labmonitor_api_token, jenkins_prometheus_password e jenkins_prometheus_api_token distintos do admin; os dois api_token devem usar o formato fixo do Jenkins 11 + 32 hex minusculos (34 chars, ex.: python3 -c \"import secrets; print('11' + secrets.token_hex(16))\")"
   no_log: true
 
 - name: Validar referências de imagem completas e pinadas
@@ -49,7 +49,7 @@
       - "'latest' not in compose_jenkins_base_image"
       - "'latest' not in compose_n8n_image"
       - "'latest' not in compose_metabase_image"
-    fail_msg: "As quatro imagens do Slice 2 precisam de refs nome:tag@sha256:<64-hex> reais; refs vazias, somente tag e latest são proibidas."
+    fail_msg: "As quatro imagens do Compose precisam de refs nome:tag@sha256:<64-hex> reais; refs vazias, somente tag e latest são proibidas."
   no_log: true
 
 - name: Validar que senhas de DBs são distintas
@@ -65,7 +65,7 @@
       - postgres_metabase_password != postgres_automation_writer_password
       - postgres_metabase_password != postgres_automation_reader_password
       - postgres_automation_writer_password != postgres_automation_reader_password
-    fail_msg: "Todas as senhas do Slice 2 devem ser distintas — use senhas distintas para postgres_superuser_password, postgres_n8n_password, postgres_metabase_password, postgres_automation_writer_password e postgres_automation_reader_password"
+    fail_msg: "Todas as senhas do Compose devem ser distintas — use senhas distintas para postgres_superuser_password, postgres_n8n_password, postgres_metabase_password, postgres_automation_writer_password e postgres_automation_reader_password"
   no_log: true
 
 - name: Validar nomes de databases e roles antes de interpolar SQL

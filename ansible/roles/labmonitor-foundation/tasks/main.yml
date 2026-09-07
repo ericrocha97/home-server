@@ -16,7 +16,7 @@
       - jenkins_labmonitor_api_token is defined
       - jenkins_labmonitor_api_token | length > 0
     fail_msg: >-
-      Slice 3 LabMonitor Vault is incomplete — define
+      LabMonitor Vault is incomplete — define
       jenkins_labmonitor_user and jenkins_labmonitor_api_token (the Task 3
       read-only provider credential) before provisioning the LabMonitor
       foundation.

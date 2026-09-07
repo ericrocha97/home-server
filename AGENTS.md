@@ -1,373 +1,72 @@
-# AGENTS.md - Home Server Infrastructure Repository
+# Home Server Infrastructure
 
-This repository provisions a home server from a clean Ubuntu 26.04 lab-first workflow. Slice 1 installs the host base, Docker, Cockpit, single-node k3s and the bundled Traefik in `kube-system` with a file provider for `lab.arpa` / `home.arpa` hostnames. Slice 2 adds host-native Compose services (PostgreSQL, Jenkins, n8n, Metabase) with `home-server-automation`/`home-server-data` networks and 3 Traefik file-provider backends.
+## Scope And Entry Point
 
-## Repository Structure
+- This is an Ansible-only, lab-first Ubuntu 26.04 home-server platform. `ansible/site.yml` is the only playbook entry point; run it from the repository root with `ANSIBLE_CONFIG="$PWD/ansible/ansible.cfg"`.
+- Roles run in this fixed dependency order: `base` -> `docker` -> `cockpit` -> `k3s` -> `compose-services` -> `docker-provider` -> `firewall` -> `monitoring` -> `portainer` -> `labmonitor-foundation` -> `k8s-platform`.
+- `compose/` is host-native Docker Compose. `k8s/` contains only Kubernetes-side resources. Do not create Kubernetes Services or EndpointSlices for Compose services; Traefik's file provider routes Cockpit, Jenkins, n8n, and Metabase directly to `server_lan_ip`.
+- The platform foundation is final infrastructure only: Prometheus/Grafana, read-only Docker and Jenkins providers, Portainer, and LabMonitor identity/configuration. It deliberately does not deploy a `labmonitor-api` workload, product dashboards, workflows, or restores.
 
-```
-├── ansible/                    # Ansible controller
-│   ├── ansible.cfg            # controller defaults (roles_path, collections_paths)
-│   ├── site.yml               # single entry point — ansible/site.yml
-│   ├── requirements.yml       # pinned collections + xanmanning.k3s v3.6.2
-│   ├── requirements.txt       # ansible-core 2.20.1, netaddr
-│   ├── inventories/
-│   │   ├── lab/
-│   │   │   ├── hosts.yml              # ignored — real lab inventory (ansible_host / server_lan_ip)
-│   │   │   ├── hosts.example.yml      # 192.0.2.10 placeholder
-│   │   │   └── group_vars/
-│   │   │       ├── all.yml            # ignored — lab vars (base_domain: lab.arpa)
-│   │   │       ├── all.example.yml
-│   │   │       └── vault.yml          # ignored — k3s_token
-│   │   └── prod/
-│   │       ├── hosts.yml              # ignored — real prod inventory
-│   │       ├── hosts.example.yml      # 192.0.2.11 placeholder
-│   │       └── group_vars/
-│   │           ├── all.example.yml    # base_domain: home.arpa
-│   │           ├── all.yml            # ignored — prod vars
-│   │           └── vault.yml          # ignored
-│   ├── roles/
-│   │   ├── base/              # packages, timezone, SSH hardening, /srv/home-server
-│   │   ├── docker/            # Docker Engine + Compose plugin, no TCP
-│   │   ├── cockpit/           # Cockpit on 9090 with Traefik proxy awareness
-│   │   ├── k3s/               # pinned k3s single-node + LAN interface detection
-│   │   ├── compose-services/  # networks, .env via Vault, Jenkins custom image + dockersock RW + init.groovy.d, healthcheck order
-│   │   ├── firewall/          # UFW allowlist + DOCKER-USER + CNI forward policy (Slice 1+2)
-│   │   └── k8s-platform/      # Secret kube-system/traefik-tls + HelmChartConfig + file provider (cockpit + jenkins/n8n/metabase)
-│   └── secrets/               # ignored — lab-tls.crt/key, prod-tls.crt/key
-├── compose/                   # host-native Docker Compose services (Slice 2)
-├── k8s/                       # Kubernetes manifests
-│   ├── ingress/README.md      # file-provider boundary (no Services/EndpointSlices for Docker)
-│   └── README.md              # Kubernetes platform overview
-├── scripts/
-│   └── hosts/
-│       ├── generate-hosts.sh      # read-only host mapping generator (lab|prod)
-│       ├── lab.hosts.example      # 8 lines 192.0.2.10 *.lab.arpa
-│       └── prod.hosts.example     # 8 lines 192.0.2.11 *.home.arpa
-├── old/                       # local ignored archive — old ansible/k8s preserved locally, never loaded
-├── .env.example
-└── .vscode/settings.json
-```
+## Layout
 
-`old/` is gitignored and never executed by `ansible/site.yml`. Legacy CasaOS and EndpointSlices workflows have been removed.
+- `ansible/roles/`: host and platform implementation. `monitoring`, `portainer`, and `labmonitor-foundation` are platform-foundation roles.
+- `compose/`: `postgres`, `jenkins`, `n8n`, `metabase`, `docker-provider`, and `portainer-agent` Compose projects. Host data lives in `/srv/home-server/data/<service>`, never in this repository.
+- `k8s/monitoring/`: Docker metrics exporter source and Grafana dashboard JSON. `k8s/labmonitor/rbac.yaml` is the future LabMonitor reader RBAC.
+- `scripts/verify/platform.sh`: read-only live acceptance suite. It validates positive and negative security contracts and must not be changed to weaken a failed check.
+- `tests/test_platform_contract.py` and `tests/test_jenkins_clean_baseline.py`: static contract tests.
 
-## Build/Test/Lint Commands
+## Environment And Secrets
 
-### Ansible Playbooks
+- Real inventories and Vault files are ignored: `ansible/inventories/<env>/hosts.yml` and `group_vars/all/{vars.yml,vault.yml}`. Tracked `*.example.yml` files must use only `192.0.2.10` / `192.0.2.11` placeholders.
+- Keep TLS material only in ignored `ansible/secrets/<env>-tls.{crt,key}` and Vault-backed generated host `.env` files only on the server. Never print rendered `.env` content or secret values; use `no_log: true` for tasks that handle them.
+- Every externally pulled image is pinned in inventory defaults. Do not add `latest`, an unpinned image, a real LAN IP, a password, token, certificate, or Vault content to tracked files.
+- `jenkins_clean_reset_confirmed: true` authorizes a one-time destructive Jenkins clean baseline only while `/srv/home-server/data/jenkins/.clean-baseline-complete` is absent. Leave example inventories `false`; reset the real inventory to `false` after the approved baseline run.
 
-All playbooks run from the repository root with `ANSIBLE_CONFIG` pointing to `ansible/ansible.cfg`:
+## Security Boundaries
+
+- Docker's daemon remains Unix-socket-only. `docker-provider` is the sole monitoring path: GET-only socket proxy on `server_lan_ip:12375`, reachable only from the k3s pod CIDR. Never expose it through an Ingress, NodePort, or LAN/VPN firewall exception.
+- `docker-metrics-exporter` must use the proxy, not mount `/var/run/docker.sock`. The Portainer Docker Agent is the explicit administrative RW socket exception and remains isolated in its own Compose project on port `9001`.
+- Jenkins must not join `home-server-data`; only n8n bridges automation and data networks. `automation_writer` owns shared `automation`; `automation_reader` is read-only and never gains ownership, DML, or `CREATE`.
+- `labmonitor-api` is least-privilege: read cluster topology and exactly two named ConfigMaps, never Secrets or write verbs. Do not add a LabMonitor Deployment in this repository.
+- Human UIs use Traefik/NodePorts as configured. PostgreSQL and providers are not HTTP ingress targets.
+
+## Ansible Implementation Notes
+
+- `kubernetes.core.k8s` executes on the managed host. If its `src` refers to a repository file, first stage it on the host with `copy` or `template` (for example under `/tmp/home-server-*`) and then apply the host-local path. Do not give the module a controller-only `playbook_dir` path.
+- Use `kubeconfig: "{{ kubeconfig_path }}"` for every cluster-touching `kubernetes.core` module and `kubectl` command. Helm uses `/usr/local/bin/helm` pinned to v3 because the collection needs the removed-in-v4 `helm repo` workflow.
+- Render Secret manifests with `0600` and `no_log: true`; non-secret static manifests may be staged as `root:root` `0644`.
+- Compose services must be healthy before `firewall` and `k8s-platform`; their first full-run port exposure is a known transient window. For a first lab bootstrap, close it with the documented split runs below.
+
+## Commands
 
 ```bash
+# Controller setup and static checks
 export ANSIBLE_CONFIG="$PWD/ansible/ansible.cfg"
-
-# Full bootstrap (lab)
-ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml
-
-# Full bootstrap (prod)
-ansible-playbook -i ansible/inventories/prod/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml
-
-# Tagged runs
-ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass ansible/site.yml --tags base
-ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass ansible/site.yml --tags docker
-ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass ansible/site.yml --tags cockpit
-ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags k3s
-ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags compose-services
-ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags firewall
-ansible-playbook -i ansible/inventories/lab/hosts.yml -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml --tags k8s-platform
-
-# Syntax / inventory checks (no SSH)
 ansible-playbook --syntax-check ansible/site.yml
-ansible-inventory -i ansible/inventories/lab/hosts.example.yml --graph
-ansible-inventory -i ansible/inventories/prod/hosts.example.yml --graph
-
-# Host mapping helper (read-only, never writes /etc/hosts)
-./scripts/hosts/generate-hosts.sh lab
-./scripts/hosts/generate-hosts.sh prod
+python3 -m unittest tests.test_platform_contract tests.test_jenkins_clean_baseline
 bash -n scripts/hosts/generate-hosts.sh
+bash -n scripts/verify/platform.sh
+git diff --check
 
-# List tasks without executing (dry run)
-ansible-playbook -i ansible/inventories/lab/hosts.example.yml ansible/site.yml --list-tasks
-```
+# Render every Compose project with sanitized inputs
+for service in postgres jenkins n8n metabase docker-provider portainer-agent; do
+  docker compose --env-file "compose/$service/.env.example" \
+    -f "compose/$service/compose.yaml" config >/dev/null
+done
 
-### Required Ansible Collections and Roles
+# Full lab run (real ignored inventory and Vault required)
+ansible-playbook -i ansible/inventories/lab/hosts.yml \
+  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml
 
-Pinned in `ansible/requirements.yml`, install with:
-
-```bash
-pip install -r ansible/requirements.txt
-ansible-galaxy collection install -r ansible/requirements.yml
-ansible-galaxy role install -r ansible/requirements.yml
-```
-
-- `ansible.posix` `2.1.0`
-- `community.docker` `5.0.4`
-- `community.general` `12.1.0`
-- `kubernetes.core` `6.2.0`
-- `xanmanning.k3s` `v3.6.2` (from https://github.com/PyratLabs/ansible-role-k3s)
-
-### YAML Validation
-
-For Kubernetes manifests and Ansible YAML files:
-
-```bash
-# Validate YAML syntax (requires yamllint)
-yamllint ansible/ k8s/
-
-# Or using Python YAML parser
-python3 -c "import yaml, glob; [list(yaml.safe_load_all(open(f))) for f in glob.glob('ansible/**/*.yml', recursive=True)]"
-```
-
-### Kubernetes Manifests
-
-Slice 1 keeps `k8s/` minimal. Host-native Docker Compose services are **not** represented by Kubernetes Services or EndpointSlices; they are routed by the bundled Traefik file provider generated by `k8s-platform`.
-
-```bash
-# Validate manifests without applying (requires kubectl)
-kubectl apply -f k8s/ --dry-run=client
-
-# Validate ingress boundary doc
-cat k8s/ingress/README.md
-
-# Lint a manifest
-kubectl create --dry-run=client -o yaml -f k8s/ingress/README.md  # placeholder — use real manifests from later slices
-
-# Check platform README
-cat k8s/README.md
-```
-
-## Code Style Guidelines
-
-### YAML Conventions
-
-1. **Document Separators**: Use `---` to separate multiple YAML documents in a single file
-2. **Indentation**: 2 spaces (no tabs)
-3. **Quotes**: Use quotes for strings containing special characters or variables:
-   - Ansible: Always quote variables: `name: "{{ ansible_user }}"`
-   - Kubernetes: Quote port numbers and special values if needed
-4. **Booleans**: Use lowercase `true`/`false` (not `True`/`False`)
-5. **Line Length**: Keep lines under 120 characters when practical
-
-### Ansible Best Practices
-
-1. **Task Names**: Use descriptive names in English, imperative mood:
-   - Good: `Ensure Docker is installed`
-   - Bad: `Installing docker`
-
-2. **Idempotency**: All tasks must be idempotent:
-   - Use `state: present` for packages
-   - Use `creates:` parameter for shell commands
-   - Use `changed_when:` to suppress spurious changes
-
-3. **Become**: Use `become: yes` only when necessary (per-task or per-play):
-   ```yaml
-   - name: Install package requiring root
-     apt:
-       name: curl
-       state: present
-     become: yes
-   ```
-
-4. **Variable Usage**:
-   - Always quote variable interpolation: `"{{ var_name }}"`
-   - Use descriptive variable names: `k8s_manifests_root` not `path`
-   - Define variables in `vars:` block or `ansible/group_vars/`
-
-5. **Error Handling**:
-   - Use `failed_when:` for conditional failures
-   - Use `changed_when: false` for informational commands
-   - Add `run_once: true` for tasks that should execute once per playbook run
-
-6. **Handler Conventions**:
-   - Notify handlers by name, not by task name
-   - Keep handlers simple and focused
-
-### Kubernetes Manifest Conventions
-
-1. **Resource Ordering**: Within a manifest file, resources should be ordered:
-   - Namespace (if creating)
-   - RBAC (ServiceAccount, ClusterRole, Role, RoleBinding, ClusterRoleBinding)
-   - ConfigMap / Secret
-   - Deployment / StatefulSet / DaemonSet
-   - Service
-   - Ingress
-
-2. **Naming Conventions**:
-   - Use lowercase with hyphens: `portainer-deployment.yaml`
-   - Resource names should be descriptive: `tools-ingress` not `ingress`
-   - Labels should follow: `app: portainer` or `app.kubernetes.io/name: grafana`
-
-3. **Ingress Annotations**:
-    - Always specify ingress class: `kubernetes.io/ingress.class: traefik`
-    - Use `pathType: Prefix` for most paths
-    - Prefer `spec.ingressClassName: traefik` in new manifests
-
-4. **Storage**:
-   - Use `storageClassName: local-path` for local-path provisioner
-   - Specify appropriate access modes: `ReadWriteOnce` for most cases
-
-### Secrets Management
-
-1. **Never commit actual secrets**: Use `.example.yaml` suffix for templates
-2. **Secret files pattern**: `*-admin-secret.yaml`
-3. **Check existence in playbooks**: Validate secrets exist before applying
-4. **Permissions**: Secret files should have `0600` permissions
-5. **Local TLS files**: keep mkcert outputs local-only in `ansible/secrets/`:
-   - `lab-tls.crt` / `lab-tls.key` for `*.lab.arpa`
-   - `prod-tls.crt` / `prod-tls.key` for `*.home.arpa`
-   - never commit them
-6. **Vault**: `ansible/inventories/<env>/group_vars/vault.yml` holds `k3s_token` (0600, encrypted) — never commit plaintext
-7. **Ignored inventory**: `ansible/inventories/*/hosts.yml` and `ansible/inventories/*/group_vars/all.yml` are ignored; only `*.example.yml` with `192.0.2.0/24` placeholders are tracked
-8. **k8s secrets**: `k8s/secrets/*.yaml` is ignored, `!k8s/secrets/*.example.yaml` is tracked
-9. **Local archive**: `old/` is ignored and never executed
-
-### Documentation
-
-1. **Playbook Headers**: Include `name:` for all plays and meaningful task names
-2. **Comments**: Add comments for non-obvious decisions or workarounds
-3. **README**: Keep `/k8s/README.md` and `/README.md` updated with Slice 1 access instructions (hostnames via `scripts/hosts/generate-hosts.sh`, direct `IP:9090` fallback)
-
-### General Conventions
-
-1. **Line Endings**: Use LF (Unix-style) - `.gitattributes` enforces this
-2. **File Encoding**: UTF-8
-3. **Executable Bit**: Only set on shell scripts, not on YAML/manifest files
-4. **Trailing Whitespace**: Remove trailing whitespace
-
-## Development Workflow
-
-1. **Before committing**:
-   - Run `ansible-playbook --syntax-check ansible/site.yml`
-   - Verify YAML syntax with `yamllint ansible/ k8s/`
-   - Check shell helper: `bash -n scripts/hosts/generate-hosts.sh`
-   - Ensure no secrets or real inventories are staged (`git status`, `git diff --cached`)
-
-2. **Testing Changes**:
-   - Use `--check` mode: `ansible-playbook -i ansible/inventories/lab/hosts.yml --check ansible/site.yml`
-   - Use `--diff` to see changes: `ansible-playbook -i ansible/inventories/lab/hosts.yml --diff ansible/site.yml`
-   - Test on a single host with `--limit` or by targeting `lab` only
-
-3. **Order of Execution** (`ansible/site.yml`):
-   ```
-   base → docker → cockpit → k3s → compose-services → firewall → k8s-platform
-   ```
-   The host and Docker prerequisites exist before k3s; firewall is enabled only after k3s; `compose-services` before `firewall` ensures ports have targets and before `k8s-platform` ensures Traefik points to `healthy` backends; Traefik is configured only after the Kubernetes API is healthy.
-
-4. **Hostnames**: Generate mappings with `./scripts/hosts/generate-hosts.sh lab|prod` and copy manually to the client `/etc/hosts` if name resolution is needed. The helper never edits `/etc/hosts` automatically.
-
-## Slice 2 — Shared Automation Database (`automation`) — Tasks 1–4
-
-Extends Slice 2 without changing app-internal DBs (`n8n` for n8n, `metabase` for Metabase). PostgreSQL runs only on `home-server-data`; n8n attaches to both `home-server-automation` and `home-server-data`, Jenkins only to `home-server-automation`, Metabase only to `home-server-data`. Ansible creates shared database `automation` (OWNER `automation_writer`) and roles `automation_writer`/`automation_reader`; n8n gets writer contract, Metabase gets reader contract. No application tables, workflows, dashboards, Services or EndpointSlices are created.
-
-### Topology and application boundaries
-
-Exact mapping:
-
-```text
-Jenkins --home-server-automation--> n8n
-n8n --home-server-data / automation_writer--> PostgreSQL / automation
-Metabase --home-server-data / automation_reader--> PostgreSQL / automation
-n8n --home-server-data / n8n--> PostgreSQL / n8n
-Metabase --home-server-data / metabase--> PostgreSQL / metabase
-```
-
-Jenkins has no direct PostgreSQL route, and `automation` is for shared CI/CD and automation data only. Jenkins is never attached to `home-server-data`; `automation` holds only shared CI/CD/automation data — do not store CI/CD data in `n8n` or `metabase` (they remain separate internal DBs). Least-privilege: `automation_writer` owns `automation` and has `USAGE, CREATE` on `public` + `ALL PRIVILEGES` on existing tables/sequences + default privileges for future objects; `automation_reader` has `CONNECT`, `USAGE` on `public`, `SELECT` on existing tables, `USAGE, SELECT` on sequences and matching default privileges via `ALTER DEFAULT PRIVILEGES FOR ROLE automation_writer ... GRANT ... TO automation_reader`. `REVOKE ALL` from `PUBLIC` on database and schema. `automation_reader` never gets `CREATE`/`INSERT`/`UPDATE`/`DELETE` or ownership.
-
-### Required Vault additions
-
-Both variables must be added to the environment-specific encrypted Vault before rerunning Ansible. They are stored only in the ignored, encrypted environment Vault (`ansible/inventories/<env>/group_vars/all/vault.yml`, 0600, `ansible-vault`); example inventories (`all.example.yml`) contain only non-secret names:
-
-```yaml
-compose_postgres_db_automation: automation
-compose_postgres_user_automation_writer: automation_writer
-compose_postgres_user_automation_reader: automation_reader
-```
-
-Sanitized Vault block (no real values):
-
-```yaml
-postgres_automation_writer_password: "<distinct strong password>"
-postgres_automation_reader_password: "<distinct strong password>"
-```
-
-Both must be non-empty, distinct from each other and from `postgres_superuser_password`, `postgres_n8n_password`, `postgres_metabase_password`; the role validates this with `no_log: true` and never prints values. Non-secret metadata also appears in generated host env `compose/postgres/.env` as `POSTGRES_AUTOMATION_DB=automation`, `POSTGRES_AUTOMATION_WRITER=automation_writer`, `POSTGRES_AUTOMATION_READER=automation_reader`.
-
-### Migration command and connection setup
-
-Additive migration — preserves existing n8n/Metabase data, adds only shared DB/roles and env contract:
-
-```bash
+# First lab bootstrap: close the Compose-before-firewall window immediately
 ansible-playbook -i ansible/inventories/lab/hosts.yml \
   -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
   ansible/site.yml --tags compose-services
-```
-
-Then restore firewall + Traefik stage (second stage already existed):
-
-```bash
 ansible-playbook -i ansible/inventories/lab/hosts.yml \
   -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
   ansible/site.yml --tags firewall,k8s-platform
 ```
 
-The first command must preserve the existing n8n and Metabase data and add only the shared database/roles and environment contract. The second command restores the firewall and Traefik stage.
-
-Connection contracts — No application tables are created by this task; `AUTOMATION_DB_*` is connection metadata only:
-
-- **n8n second PostgreSQL credential** (in addition to internal `DB_POSTGRESDB_*` → `n8n`): host `postgres`, port `5432`, database `automation`, user `automation_writer` (`postgres_automation_writer_password` → `AUTOMATION_DB_PASSWORD`). Compose `compose/n8n/compose.yaml:9-23` (`AUTOMATION_DB_HOST: "${AUTOMATION_DB_HOST:-postgres}"`, `AUTOMATION_DB_PORT: "${AUTOMATION_DB_PORT:-5432}"`, `AUTOMATION_DB_NAME: "${AUTOMATION_DB_NAME:-automation}"`, `AUTOMATION_DB_USER: "${AUTOMATION_DB_USER:-automation_writer}"`, `AUTOMATION_DB_PASSWORD: "${AUTOMATION_DB_PASSWORD:?required}"`); template `ansible/roles/compose-services/templates/n8n.env.j2` renders same with writer role/password. Internal `DB_POSTGRESDB_DATABASE=n8n` unchanged. Sanitized example `compose/n8n/.env.example`: `AUTOMATION_DB_USER=automation_writer`, `AUTOMATION_DB_PASSWORD=changeme-automation-writer`.
-
-- **Metabase data source `automation`** (same host/port/database with user `automation_reader`; `MB_DB_*` still `metabase` and must be configured via Metabase admin UI/API, not created automatically): host `postgres`, port `5432`, database `automation`, user `automation_reader` (`postgres_automation_reader_password` → `AUTOMATION_DB_PASSWORD`). Compose `compose/metabase/compose.yaml:9-18` and template `metabase.env.j2` with reader role. Sanitized example `compose/metabase/.env.example`: `AUTOMATION_DB_USER=automation_reader`, `AUTOMATION_DB_PASSWORD=changeme-automation-reader`. In both cases `AUTOMATION_DB_HOST=postgres`, `AUTOMATION_DB_PORT=5432`, `AUTOMATION_DB_NAME=automation`; generated `.env` files on host contain real Vault values and are ignored.
-
-Static validation (no Vault/host):
-
-```bash
-export ANSIBLE_CONFIG="$PWD/ansible/ansible.cfg"
-ansible-playbook --syntax-check ansible/site.yml
-yamllint ansible/ k8s/ compose/
-bash -n scripts/hosts/generate-hosts.sh
-docker compose --env-file compose/n8n/.env.example -f compose/n8n/compose.yaml config >/dev/null
-docker compose --env-file compose/metabase/.env.example -f compose/metabase/compose.yaml config >/dev/null
-git diff --check
-git status --short
-```
-
-Confirm no tracked file contains a real password, `192.168.100.179`, `latest`, or unpinned image.
-
-### Lab verification (requires Vault + live host) — documented, run on lab host
-
-These steps require `vault.yml` with the two new secrets and a running `postgres` container. Documented here with expected outputs; run on lab host when available. Never print generated `.env` contents.
-
-```bash
-# 5 — additive migration already shown above; first run preserves n8n/metabase data, second restores firewall/Traefik
-
-# 6 — DB permissions
-sudo docker exec postgres psql -X -U postgres -d postgres -c \
-  "SELECT datname FROM pg_database WHERE datname IN ('n8n', 'metabase', 'automation') ORDER BY datname"
-# expected: automation, metabase, n8n
-
-sudo docker exec postgres psql -X -U postgres -d postgres -c \
-  "SELECT rolname, rolcanlogin FROM pg_roles WHERE rolname IN ('n8n', 'metabase', 'automation_writer', 'automation_reader') ORDER BY rolname"
-# expected: 4 roles, rolcanlogin = t for each
-
-sudo docker exec postgres psql -X -U postgres -d automation -c \
-  "SELECT has_schema_privilege('automation_reader', 'public', 'USAGE') AS reader_usage, has_schema_privilege('automation_reader', 'public', 'CREATE') AS reader_create"
-# expected: reader_usage = t, reader_create = f
-
-# 7 — networks & service behavior
-sudo docker inspect n8n --format '{{json .NetworkSettings.Networks}}'
-# expected: contains both home-server-automation and home-server-data
-sudo docker inspect metabase --format '{{json .NetworkSettings.Networks}}'
-# expected: contains only home-server-data
-sudo docker inspect jenkins --format '{{json .NetworkSettings.Networks}}'
-# expected: contains only home-server-automation — Jenkins has no direct PostgreSQL route
-sudo docker exec jenkins curl -fsS http://n8n:5678/healthz >/dev/null
-# expected: exit 0 (Jenkins reaches n8n via home-server-automation)
-```
-
-## Security Notes
-
-- Docker daemon exposed only via Unix socket; no `2375`/`2376` TCP listeners.
-- Cockpit listens on `9090` and is fronted by Traefik file provider for `cockpit.lab.arpa` / `cockpit.home.arpa` with `insecureSkipVerify` only on the host backhaul; client-facing TLS uses mkcert `traefik-tls` Secret in `kube-system`.
-- UFW default ingress `deny`, egress `allow`, `DEFAULT_FORWARD_POLICY="ACCEPT"` for k3s CNI; allowlist in Slice 1 is only `22`, `80`, `443`, `9090`, `6443` from `lan_cidr`/`vpn_cidr` plus `k3s_pod_cidr` → `k3s_service_cidr` routed and `k3s_pod_cidr` → `server_lan_ip:9090`.
-- Do not expose raw PostgreSQL (`5432`/`15432`) via HTTP Ingress; only web UIs belong behind Ingress.
-- Hostnames use `lab.arpa` (lab) and `home.arpa` (prod) resolved via manually copied hosts files from `scripts/hosts/generate-hosts.sh`; no automatic `/etc/hosts` mutation and no legacy EndpointSlices for Docker services.
-- Local archive `old/` is ignored and never loaded by the new `site.yml`; do not restore Compose data or run applications during Slice 1.
-- Do not commit real LAN IPs in public docs/manifests; use placeholders (`192.0.2.10`/`192.0.2.11`) and runtime variables (`server_lan_ip` / `ansible_host`).
+- Use a focused role tag for resumable live failures, then rerun the full play: `--tags monitoring`, `portainer`, or `labmonitor-foundation` all require prior roles to be healthy.
+- Repository-wide `yamllint ansible/ k8s/ compose/` currently reports baseline violations in existing files. Lint the changed YAML/template paths and do not treat unrelated baseline output as a regression.
+- Run `scripts/verify/platform.sh` on a provisioned lab host with `SERVER_LAN_IP`, `JENKINS_LABMONITOR_API_TOKEN`, and optionally `GRAFANA_ADMIN_PASSWORD`; it is read-only and is the final live acceptance check.

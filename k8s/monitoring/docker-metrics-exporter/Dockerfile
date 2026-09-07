@@ -1,4 +1,4 @@
-# LabMonitor Docker metrics exporter (Slice 3 fallback, mode built).
+# LabMonitor Docker metrics exporter (platform fallback, mode built).
 # HTTP-only collector: scrapes the read-only proxy over TCP. No local
 # mounts, no privileged flags, no host ports; runs as a non-root user.
 FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
