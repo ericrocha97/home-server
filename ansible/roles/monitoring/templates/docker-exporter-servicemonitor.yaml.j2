@@ -1,0 +1,23 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: docker-metrics-exporter
+  namespace: "{{ monitoring_namespace }}"
+  labels:
+    release: "{{ monitoring_release_name }}"
+    app: docker-metrics-exporter
+spec:
+  selector:
+    matchLabels:
+      app: docker-metrics-exporter
+  namespaceSelector:
+    matchNames:
+      - "{{ monitoring_namespace }}"
+  endpoints:
+    - port: metrics
+      path: /metrics
+      # The exporter gathers Docker stats serially (one non-stream stats call
+      # per container, ~1-2s each), so a full scrape can exceed 10s. Allow
+      # up to the full interval to avoid context deadline exceeded.
+      interval: 30s
+      scrapeTimeout: 30s

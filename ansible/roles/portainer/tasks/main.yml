@@ -1,0 +1,167 @@
+---
+- name: Validate Portainer defaults
+  ansible.builtin.assert:
+    that:
+      - portainer_namespace == 'portainer'
+      - portainer_service_port == 9000
+      - portainer_nodeport == 30900
+      - portainer_agent_port == 9001
+      - portainer_image is string
+      - portainer_agent_image is string
+      - "'latest' not in portainer_image"
+      - "'latest' not in portainer_agent_image"
+
+- name: Validate Portainer Vault contract
+  ansible.builtin.assert:
+    that:
+      - portainer_agent_secret is defined
+      - portainer_agent_secret | length > 0
+    fail_msg: >-
+      Portainer Vault is incomplete — define portainer_agent_secret
+      (AGENT_SECRET shared by the Kubernetes Agent and the host Docker Agent)
+      before deploying Portainer.
+  no_log: true
+
+- name: Ensure Portainer namespace exists
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ portainer_namespace }}"
+        labels:
+          app.kubernetes.io/name: portainer
+
+- name: Create Portainer Agent Secret from Vault
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ portainer_agent_secret_name }}"
+        namespace: "{{ portainer_namespace }}"
+      type: Opaque
+      stringData:
+        agent-secret: "{{ portainer_agent_secret }}"
+  no_log: true
+
+- name: Ensure Portainer manifest fragment directory exists
+  ansible.builtin.file:
+    path: /tmp/home-server-portainer-fragments
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Render Portainer Kubernetes manifest fragments
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/tmp/home-server-portainer-fragments/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - {src: 'server.yaml.j2', dest: '00-server.yaml'}
+    - {src: 'kubernetes-agent.yaml.j2', dest: '10-kubernetes-agent.yaml'}
+
+- name: Assemble rendered Portainer manifests for dry-run
+  ansible.builtin.assemble:
+    src: /tmp/home-server-portainer-fragments
+    dest: "{{ portainer_rendered_manifest_path }}"
+    delimiter: "---\n"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Apply rendered Portainer manifests
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    src: "{{ portainer_rendered_manifest_path }}"
+
+- name: Wait for Portainer Server Deployment
+  ansible.builtin.command: >-
+    kubectl --kubeconfig={{ kubeconfig_path }} -n {{ portainer_namespace }}
+    wait --for=condition=available deployment/{{ portainer_service_name }}
+    --timeout=300s
+  changed_when: false
+
+- name: Wait for Portainer Kubernetes Agent Deployment
+  ansible.builtin.command: >-
+    kubectl --kubeconfig={{ kubeconfig_path }} -n {{ portainer_namespace }}
+    wait --for=condition=available
+    deployment/{{ portainer_k8s_agent_service_name }} --timeout=300s
+  changed_when: false
+
+- name: Assert Portainer Services have ready endpoints
+  ansible.builtin.shell: |
+    set -euo pipefail
+    test -n "$(kubectl --kubeconfig={{ kubeconfig_path }} \
+      -n {{ portainer_namespace }} \
+      get endpoints {{ portainer_service_name }} \
+      -o jsonpath='{.subsets[*].addresses[*].ip}')"
+    test -n "$(kubectl --kubeconfig={{ kubeconfig_path }} \
+      -n {{ portainer_namespace }} \
+      get endpoints {{ portainer_k8s_agent_service_name }} \
+      -o jsonpath='{.subsets[*].addresses[*].ip}')"
+  changed_when: false
+
+- name: Ensure portainer-agent Compose project directory exists
+  ansible.builtin.file:
+    path: "{{ compose_projects_root }}/{{ portainer_compose_project }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Copy versioned portainer-agent compose.yaml to host
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../compose/portainer-agent/compose.yaml"
+    dest: >-
+      {{ compose_projects_root }}/{{ portainer_compose_project }}/compose.yaml
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Render portainer-agent .env on host
+  ansible.builtin.template:
+    src: portainer-agent.env.j2
+    dest: "{{ compose_projects_root }}/{{ portainer_compose_project }}/.env"
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Start Portainer Docker Agent
+  community.docker.docker_compose_v2:
+    project_src: "{{ compose_projects_root }}/portainer-agent"
+    state: present
+    pull: missing
+
+- name: Wait for Portainer Docker Agent API on server_lan_ip
+  ansible.builtin.wait_for:
+    host: "{{ server_lan_ip }}"
+    port: "{{ portainer_agent_port }}"
+    timeout: 120
+
+# LabMonitor discovery contract gate (Task 7): the Server Service alone carries
+# the stable id/category/URL metadata; the Deployment is never a second source.
+- name: Assert Portainer Service carries LabMonitor discovery metadata
+  ansible.builtin.shell: |
+    set -euo pipefail
+    SVC="kubectl --kubeconfig={{ kubeconfig_path }} \
+      -n {{ portainer_namespace }} get service \
+      {{ portainer_service_name }} -o jsonpath"
+    test "$(${SVC}='{.metadata.labels.labmonitor\.enabled}')" = "true"
+    test "$(${SVC}='{.metadata.labels.labmonitor\.id}')" = "portainer"
+    test "$(${SVC}='{.metadata.labels.labmonitor\.category}')" = \
+      "administration"
+    test "$(${SVC}='{.metadata.labels.labmonitor\.icon}')" = "portainer"
+    test "$(${SVC}='{.metadata.annotations.labmonitor\.name}')" = "Portainer"
+    test "$(${SVC}='{.metadata.annotations.labmonitor\.open\.url}')" = \
+      "https://portainer.{{ base_domain }}"
+  changed_when: false

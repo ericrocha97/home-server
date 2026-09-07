@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docker-metrics-exporter
+  namespace: "{{ monitoring_namespace }}"
+  labels:
+    app: docker-metrics-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: docker-metrics-exporter
+  template:
+    metadata:
+      labels:
+        app: docker-metrics-exporter
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: exporter
+          image: "{{ docker_metrics_exporter_image }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: metrics
+              containerPort: 9797
+              protocol: TCP
+          env:
+            - name: DOCKER_API_URL
+              value: "http://{{ server_lan_ip }}:{{ docker_socket_proxy_port }}"
+            - name: METRICS_PORT
+              value: "9797"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9797
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              # /healthz never touches the Docker API; /metrics does a full
+              # per-container stats sweep (~1s each) and can exceed any
+              # probe timeout, so it must not gate readiness.
+              path: /healthz
+              port: 9797
+            initialDelaySeconds: 5
+            periodSeconds: 30
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true

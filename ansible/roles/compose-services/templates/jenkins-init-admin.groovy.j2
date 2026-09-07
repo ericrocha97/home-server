@@ -1,0 +1,38 @@
+import jenkins.model.*
+import hudson.model.User
+import hudson.security.*
+import hudson.security.csrf.DefaultCrumbIssuer
+
+def instance = Jenkins.get()
+def env = System.getenv()
+def adminId = env['JENKINS_ADMIN_ID'] ?: 'admin'
+def adminPass = env['JENKINS_ADMIN_PASSWORD']
+if (adminPass == null || adminPass.trim().isEmpty()) {
+  throw new IllegalStateException("JENKINS_ADMIN_PASSWORD ausente — abortando bootstrap de segurança")
+}
+// Preserve the existing admin: reuse the current realm when already private,
+// otherwise install a new private realm. Never create provider users here.
+def currentRealm = instance.getSecurityRealm()
+def hudsonRealm
+if (currentRealm instanceof HudsonPrivateSecurityRealm) {
+  hudsonRealm = (HudsonPrivateSecurityRealm) currentRealm
+} else {
+  hudsonRealm = new HudsonPrivateSecurityRealm(false)
+  instance.setSecurityRealm(hudsonRealm)
+}
+if (User.getById(adminId, false) == null) {
+  hudsonRealm.createAccount(adminId, adminPass)
+}
+// Phase-one migration: replace FullControlOnceLoggedIn with the pinned
+// fine-grained matrix strategy. Anonymous receives no grants.
+def strategy = instance.getAuthorizationStrategy()
+if (!(strategy instanceof GlobalMatrixAuthorizationStrategy)) {
+  strategy = new GlobalMatrixAuthorizationStrategy()
+  instance.setAuthorizationStrategy(strategy)
+}
+strategy.add(Jenkins.ADMINISTER, adminId)
+instance.setCrumbIssuer(new DefaultCrumbIssuer(true))
+instance.save()
+def loc = JenkinsLocationConfiguration.get()
+loc.setUrl(env['JENKINS_URL'] ?: "https://jenkins.${env['BASE_DOMAIN'] ?: 'lab.arpa'}")
+loc.save()

@@ -1,0 +1,7 @@
+---
+docker_architecture: amd64
+docker_repository: https://download.docker.com/linux/ubuntu
+docker_gpg_url: https://download.docker.com/linux/ubuntu/gpg
+docker_keyring_path: /etc/apt/keyrings/docker.asc
+docker_daemon_config_path: /etc/docker/daemon.json
+docker_manage_user: ''

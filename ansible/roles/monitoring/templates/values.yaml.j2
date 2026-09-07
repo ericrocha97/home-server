@@ -1,0 +1,111 @@
+---
+# yamllint disable rule:braces rule:line-length
+# Controlled kube-prometheus-stack values.
+# Rendered by monitoring/tasks/main.yml to monitoring_values_path.
+# Technical observability only: no LabMonitor product workload.
+# Bare double-brace scalars remain only for the integer ports (NodePorts
+# and service port must render as native integers); image pins split
+# into the registry/repository/tag string form chart 88.6.1 expects
+# (sha stays "" — current pins are tag-based).
+grafana:
+  enabled: true
+  persistence:
+    enabled: true
+    type: pvc
+    storageClassName: local-path
+    size: "{{ monitoring_grafana_storage_size }}"
+  service:
+    type: NodePort
+    nodePort: {{ grafana_nodeport | int }}
+  admin:
+    existingSecret: "{{ monitoring_grafana_admin_secret_name }}"
+  image:
+    registry: "{{ monitoring_grafana_image.split('/')[0] }}"
+    repository: "{{ monitoring_grafana_image.split('/', 1)[1].rsplit(':', 1)[0] }}"
+    tag: "{{ monitoring_grafana_image.rsplit(':', 1)[1].split('@')[0] }}"
+    sha: ""
+  sidecar:
+    dashboards:
+      enabled: true
+      label: "{{ monitoring_dashboard_sidecar_label }}"
+      labelValue: "1"
+      searchNamespace: "{{ monitoring_namespace }}"
+
+prometheus:
+  enabled: true
+  service:
+    type: NodePort
+    port: {{ monitoring_prometheus_service_port }}
+    nodePort: {{ prometheus_nodeport | int }}
+  prometheusSpec:
+    retention: "{{ monitoring_prometheus_retention }}"
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: "{{ monitoring_prometheus_storage_size }}"
+    image:
+      registry: "{{ monitoring_prometheus_image.split('/')[0] }}"
+      repository: "{{ monitoring_prometheus_image.split('/', 1)[1].rsplit(':', 1)[0] }}"
+      tag: "{{ monitoring_prometheus_image.rsplit(':', 1)[1].split('@')[0] }}"
+      sha: ""
+    # Brief {name, key} shape maps to the chart 88.6.1
+    # additionalScrapeConfigsSecret key (additionalScrapeConfigs
+    # itself is an inline list/string in this chart version).
+    additionalScrapeConfigsSecret:
+      enabled: true
+      name: {{ monitoring_additional_scrape_configs_name }}
+      key: {{ monitoring_additional_scrape_configs_key }}
+
+alertmanager:
+  alertmanagerSpec:
+    image:
+      registry: "{{ monitoring_alertmanager_image.split('/')[0] }}"
+      repository: "{{ monitoring_alertmanager_image.split('/', 1)[1].rsplit(':', 1)[0] }}"
+      tag: "{{ monitoring_alertmanager_image.rsplit(':', 1)[1].split('@')[0] }}"
+      sha: ""
+
+prometheusOperator:
+  image:
+    registry: "{{ monitoring_operator_image.split('/')[0] }}"
+    repository: "{{ monitoring_operator_image.split('/', 1)[1].rsplit(':', 1)[0] }}"
+    tag: "{{ monitoring_operator_image.rsplit(':', 1)[1].split('@')[0] }}"
+    sha: ""
+  prometheusConfigReloader:
+    image:
+      registry: "{{ monitoring_config_reloader_image.split('/')[0] }}"
+      repository: "{{ monitoring_config_reloader_image.split('/', 1)[1].rsplit(':', 1)[0] }}"
+      tag: "{{ monitoring_config_reloader_image.rsplit(':', 1)[1].split('@')[0] }}"
+      sha: ""
+
+nodeExporter:
+  enabled: true
+
+prometheus-node-exporter:
+  image:
+    registry: "{{ monitoring_node_exporter_image.split('/')[0] }}"
+    repository: "{{ monitoring_node_exporter_image.split('/', 1)[1].rsplit(':', 1)[0] }}"
+    tag: "{{ monitoring_node_exporter_image.rsplit(':', 1)[1].split('@')[0] }}"
+    sha: ""
+    # Subchart 4.56.1 appends "-distroless" to the tag unless this is
+    # false; the quay.io/prometheus/node-exporter repo has no
+    # "v1.9.1-distroless" tag (only plain "v1.9.1").
+    distroless: false
+
+kubeStateMetrics:
+  enabled: true
+
+kube-state-metrics:
+  image:
+    registry: "{{ monitoring_kube_state_metrics_image.split('/')[0] }}"
+    repository: "{{ monitoring_kube_state_metrics_image.split('/', 1)[1].rsplit(':', 1)[0] }}"
+    tag: "{{ monitoring_kube_state_metrics_image.rsplit(':', 1)[1].split('@')[0] }}"
+    sha: ""
+
+kubelet:
+  enabled: true
+  serviceMonitor:
+    cAdvisor: true

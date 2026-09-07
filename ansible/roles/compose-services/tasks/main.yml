@@ -1,0 +1,724 @@
+---
+- name: Validar Vault obrigatório do Compose
+  ansible.builtin.assert:
+    that:
+      - postgres_superuser_password is defined and postgres_superuser_password | length > 0
+      - postgres_n8n_password is defined and postgres_n8n_password | length > 0
+      - postgres_metabase_password is defined and postgres_metabase_password | length > 0
+      - postgres_automation_writer_password is defined and postgres_automation_writer_password | length > 0
+      - postgres_automation_reader_password is defined and postgres_automation_reader_password | length > 0
+      - n8n_encryption_key is defined and n8n_encryption_key | length > 0
+      - jenkins_admin_password is defined and jenkins_admin_password | length > 0
+    fail_msg: "Vault do Compose incompleto — defina postgres_superuser_password, postgres_n8n_password, postgres_metabase_password, postgres_automation_writer_password, postgres_automation_reader_password, n8n_encryption_key e jenkins_admin_password"
+  no_log: true
+
+- name: Validar Vault de providers Jenkins
+  ansible.builtin.assert:
+    that:
+      - jenkins_labmonitor_password is defined and jenkins_labmonitor_password | length > 0
+      - jenkins_labmonitor_api_token is defined and jenkins_labmonitor_api_token | length > 0
+      - jenkins_prometheus_password is defined and jenkins_prometheus_password | length > 0
+      - jenkins_prometheus_api_token is defined and jenkins_prometheus_api_token | length > 0
+      - jenkins_admin_password != jenkins_labmonitor_password
+      - jenkins_admin_password != jenkins_prometheus_password
+      - jenkins_admin_password != jenkins_labmonitor_api_token
+      - jenkins_admin_password != jenkins_prometheus_api_token
+      - jenkins_labmonitor_password != jenkins_prometheus_password
+      - jenkins_labmonitor_password != jenkins_labmonitor_api_token
+      - jenkins_labmonitor_password != jenkins_prometheus_api_token
+      - jenkins_prometheus_password != jenkins_labmonitor_api_token
+      - jenkins_prometheus_password != jenkins_prometheus_api_token
+      - jenkins_labmonitor_api_token != jenkins_prometheus_api_token
+      - jenkins_labmonitor_api_token is match('^11[a-f0-9]{32}$')
+      - jenkins_prometheus_api_token is match('^11[a-f0-9]{32}$')
+    fail_msg: "Vault dos providers Jenkins incompleto — defina jenkins_labmonitor_password, jenkins_labmonitor_api_token, jenkins_prometheus_password e jenkins_prometheus_api_token distintos do admin; os dois api_token devem usar o formato fixo do Jenkins 11 + 32 hex minusculos (34 chars, ex.: python3 -c \"import secrets; print('11' + secrets.token_hex(16))\")"
+  no_log: true
+
+- name: Validar referências de imagem completas e pinadas
+  ansible.builtin.assert:
+    that:
+      - compose_postgres_image is string
+      - compose_jenkins_base_image is string
+      - compose_n8n_image is string
+      - compose_metabase_image is string
+      - compose_postgres_image is match('^.+@sha256:[0-9a-f]{64}$')
+      - compose_jenkins_base_image is match('^.+@sha256:[0-9a-f]{64}$')
+      - compose_n8n_image is match('^.+@sha256:[0-9a-f]{64}$')
+      - compose_metabase_image is match('^.+@sha256:[0-9a-f]{64}$')
+      - "'latest' not in compose_postgres_image"
+      - "'latest' not in compose_jenkins_base_image"
+      - "'latest' not in compose_n8n_image"
+      - "'latest' not in compose_metabase_image"
+    fail_msg: "As quatro imagens do Compose precisam de refs nome:tag@sha256:<64-hex> reais; refs vazias, somente tag e latest são proibidas."
+  no_log: true
+
+- name: Validar que senhas de DBs são distintas
+  ansible.builtin.assert:
+    that:
+      - postgres_n8n_password != postgres_metabase_password
+      - postgres_superuser_password != postgres_n8n_password
+      - postgres_superuser_password != postgres_metabase_password
+      - postgres_superuser_password != postgres_automation_writer_password
+      - postgres_superuser_password != postgres_automation_reader_password
+      - postgres_n8n_password != postgres_automation_writer_password
+      - postgres_n8n_password != postgres_automation_reader_password
+      - postgres_metabase_password != postgres_automation_writer_password
+      - postgres_metabase_password != postgres_automation_reader_password
+      - postgres_automation_writer_password != postgres_automation_reader_password
+    fail_msg: "Todas as senhas do Compose devem ser distintas — use senhas distintas para postgres_superuser_password, postgres_n8n_password, postgres_metabase_password, postgres_automation_writer_password e postgres_automation_reader_password"
+  no_log: true
+
+- name: Validar nomes de databases e roles antes de interpolar SQL
+  ansible.builtin.assert:
+    that:
+      - compose_postgres_db_n8n is match('^[a-z_][a-z0-9_]{0,62}$')
+      - compose_postgres_db_metabase is match('^[a-z_][a-z0-9_]{0,62}$')
+      - compose_postgres_db_automation is match('^[a-z_][a-z0-9_]{0,62}$')
+      - compose_postgres_user_n8n is match('^[a-z_][a-z0-9_]{0,62}$')
+      - compose_postgres_user_metabase is match('^[a-z_][a-z0-9_]{0,62}$')
+      - compose_postgres_user_automation_writer is match('^[a-z_][a-z0-9_]{0,62}$')
+      - compose_postgres_user_automation_reader is match('^[a-z_][a-z0-9_]{0,62}$')
+      - compose_postgres_db_n8n != compose_postgres_db_metabase
+      - compose_postgres_db_n8n != compose_postgres_db_automation
+      - compose_postgres_db_metabase != compose_postgres_db_automation
+      - compose_postgres_user_n8n != compose_postgres_user_metabase
+      - compose_postgres_user_n8n != compose_postgres_user_automation_writer
+      - compose_postgres_user_n8n != compose_postgres_user_automation_reader
+      - compose_postgres_user_metabase != compose_postgres_user_automation_writer
+      - compose_postgres_user_metabase != compose_postgres_user_automation_reader
+      - compose_postgres_user_automation_writer != compose_postgres_user_automation_reader
+    fail_msg: "Nomes de databases e roles devem usar somente [a-z0-9_], começar por letra/_ e ser distintos."
+
+- name: Criar redes Docker externas
+  community.docker.docker_network:
+    name: "{{ item }}"
+    driver: bridge
+    state: present
+  loop:
+    - "{{ compose_network_automation }}"
+    - "{{ compose_network_data }}"
+
+- name: Criar diretórios de dados com ownership por serviço
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.uid }}"
+    group: "{{ item.gid }}"
+    mode: '0750'
+  loop:
+    - { path: "{{ compose_postgres_data_dir }}", uid: "{{ compose_postgres_uid }}", gid: "{{ compose_postgres_gid }}" }
+    - { path: "{{ compose_jenkins_data_dir }}", uid: "{{ compose_jenkins_uid }}", gid: "{{ compose_jenkins_gid }}" }
+    - { path: "{{ compose_n8n_data_dir }}", uid: "{{ compose_n8n_uid }}", gid: "{{ compose_n8n_gid }}" }
+    - { path: "{{ compose_metabase_data_dir }}", uid: "{{ compose_metabase_uid }}", gid: "{{ compose_metabase_gid }}" }
+
+- name: Garantir diretório compose no host
+  ansible.builtin.file:
+    path: "{{ compose_projects_root }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop: [postgres, jenkins, n8n, metabase]
+
+- name: Copiar compose.yaml versionado para o host
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../compose/{{ item }}/compose.yaml"
+    dest: "{{ compose_projects_root }}/{{ item }}/compose.yaml"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: [postgres, jenkins, n8n, metabase]
+
+- name: Copiar Dockerfile, plugins.txt e entrypoint custom do Jenkins para o host
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../compose/jenkins/{{ item }}"
+    dest: "{{ compose_projects_root }}/jenkins/{{ item }}"
+    owner: root
+    group: root
+    mode: "{{ '0755' if item == 'docker-entrypoint-group-fix.sh' else '0644' }}"
+  loop:
+    - Dockerfile
+    - plugins.txt
+    - docker-entrypoint-group-fix.sh
+
+# Jenkins clean baseline — one-shot destructive reset with steady-state no-op.
+# Reruns are no-ops when the marker exists (already clean); to re-run the
+# one-shot, remove the marker file below AND set jenkins_clean_reset_confirmed: true
+# in the real (ignored) inventory. Never remove any other path: the exact-path
+# assert stays fail-closed. No backup/restore/migration is performed anywhere.
+- name: Validar que diretório Jenkins alvo é exatamente /srv/home-server/data/jenkins
+  ansible.builtin.assert:
+    that:
+      - compose_jenkins_data_dir == "/srv/home-server/data/jenkins"
+    fail_msg: "Caminho Jenkins inesperado — abortando para não remover diretório errado"
+
+- name: Verificar marcador one-shot do baseline limpo Jenkins
+  ansible.builtin.stat:
+    path: "{{ compose_jenkins_data_dir }}/.clean-baseline-complete"
+    follow: false
+  register: jenkins_baseline_marker
+  changed_when: false
+
+- name: Verificar se container Jenkins existe
+  ansible.builtin.command: docker inspect jenkins
+  register: jenkins_container_check
+  changed_when: false
+  failed_when: false
+
+- name: Definir fato se container Jenkins existe
+  ansible.builtin.set_fact:
+    jenkins_container_exists: "{{ jenkins_container_check.rc == 0 }}"
+
+- name: Consultar Jenkins API para preflight zero-state (jobs sem builds) — quando container existe
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ compose_jenkins_port }}/api/json?tree=jobs[name,builds[number]]"
+    user: "admin"
+    password: "{{ jenkins_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    status_code: [200]
+    timeout: 10
+  register: jenkins_api_preflight
+  no_log: true
+  when: jenkins_container_exists
+
+- name: Assert Jenkins está em zero-state via API (zero jobs e zero builds)
+  ansible.builtin.assert:
+    that:
+      - jenkins_api_preflight.json is defined
+      - jenkins_api_preflight.json.jobs is defined
+      - jenkins_api_preflight.json.jobs | length == 0
+    fail_msg: "Jenkins preflight via API falhou — jobs ou builds existem, abortando reset limpo e deixando dados intactos"
+  no_log: true
+  when:
+    - jenkins_container_exists
+    - not jenkins_baseline_marker.stat.exists
+
+- name: Verificar existência do diretório de jobs no disco (quando container ausente)
+  ansible.builtin.stat:
+    path: "/srv/home-server/data/jenkins/jobs"
+  register: jenkins_jobs_dir_stat
+  when: not jenkins_container_exists
+
+- name: Listar jobs no disco quando container ausente
+  ansible.builtin.command: find "/srv/home-server/data/jenkins/jobs" -mindepth 1 -maxdepth 1 -type d -print
+  register: jenkins_jobs_on_disk
+  changed_when: false
+  failed_when: false
+  when: not jenkins_container_exists and jenkins_jobs_dir_stat.stat.exists
+
+- name: Assert diretório de jobs vazio no disco (container ausente)
+  ansible.builtin.assert:
+    that:
+      - jenkins_jobs_on_disk.stdout_lines | length == 0
+    fail_msg: "Jenkins preflight on-disk falhou — diretórios de jobs existem, abortando e deixando dados intactos"
+  when:
+    - not jenkins_container_exists
+    - jenkins_jobs_dir_stat.stat.exists
+    - not jenkins_baseline_marker.stat.exists
+
+- name: Verificar builds no disco (container ausente)
+  ansible.builtin.shell: find "/srv/home-server/data/jenkins/jobs" -type d -path "*/builds/[0-9]*" -print | head -n 20
+  args:
+    executable: /bin/bash
+  register: jenkins_builds_on_disk
+  changed_when: false
+  failed_when: false
+  when: not jenkins_container_exists and jenkins_jobs_dir_stat.stat.exists
+
+- name: Assert nenhum build no disco (container ausente)
+  ansible.builtin.assert:
+    that:
+      - jenkins_builds_on_disk.stdout_lines | length == 0
+    fail_msg: "Jenkins preflight on-disk falhou — builds existem, abortando"
+  when:
+    - not jenkins_container_exists
+    - jenkins_jobs_dir_stat.stat.exists
+    - not jenkins_baseline_marker.stat.exists
+
+- name: Definir fato se preflight Jenkins já está limpo (zero jobs/builds ou dir ausente)
+  ansible.builtin.set_fact:
+    jenkins_preflight_clean: >-
+      {{
+        (jenkins_container_exists and jenkins_api_preflight.json is defined
+          and jenkins_api_preflight.json.jobs is defined
+          and (jenkins_api_preflight.json.jobs | length == 0))
+        or (not jenkins_container_exists and (
+          (jenkins_jobs_dir_stat is not defined)
+          or (jenkins_jobs_dir_stat.stat is defined and not jenkins_jobs_dir_stat.stat.exists)
+          or ((jenkins_jobs_on_disk.stdout_lines | default([]) | length == 0)
+            and (jenkins_builds_on_disk.stdout_lines | default([]) | length == 0))
+        ))
+      }}
+  no_log: true
+
+- name: Validar opt-in explícito para reset limpo do Jenkins (one-shot, apenas quando marcador ausente)
+  ansible.builtin.assert:
+    that:
+      - jenkins_clean_reset_confirmed is defined
+      - jenkins_clean_reset_confirmed is sameas true or jenkins_preflight_clean
+    fail_msg: "Jenkins clean reset requer jenkins_clean_reset_confirmed: true no inventário real — ajuste apenas para o baseline limpo (exemplo mantém false). Quando preflight já está limpo e sem confirmação, o reset é pulado com aviso; quando sujo e sem confirmação, falha fechado."
+  no_log: true
+  when: not jenkins_baseline_marker.stat.exists
+
+- name: Avisar baseline Jenkins já concluído — rerun é no-op (steady state)
+  ansible.builtin.debug:
+    msg: "Jenkins clean baseline already complete (marker present) — skipping destructive reset (steady-state no-op). To re-run one-shot, remove {{ compose_jenkins_data_dir }}/.clean-baseline-complete and set jenkins_clean_reset_confirmed: true."
+  when: jenkins_baseline_marker.stat.exists
+
+- name: Avisar reset pulado — preflight limpo sem confirmação (sem wipe)
+  ansible.builtin.debug:
+    msg: "Jenkins preflight already clean and jenkins_clean_reset_confirmed != true — skipping destructive reset with warning (fail-closed only when dirty)."
+  when:
+    - not jenkins_baseline_marker.stat.exists
+    - jenkins_preflight_clean
+    - jenkins_clean_reset_confirmed is not sameas true
+
+- name: Parar e remover container Jenkins antes do reset limpo (após preflight OK)
+  community.docker.docker_container:
+    name: jenkins
+    state: absent
+  when:
+    - jenkins_container_exists
+    - not jenkins_baseline_marker.stat.exists
+    - jenkins_clean_reset_confirmed is sameas true
+
+- name: Remover diretório Jenkins apenas após preflight zero-state OK — container existe
+  ansible.builtin.file:
+    path: "/srv/home-server/data/jenkins"
+    state: absent
+  when:
+    - jenkins_container_exists
+    - not jenkins_baseline_marker.stat.exists
+    - jenkins_clean_reset_confirmed is sameas true
+
+- name: Remover diretório Jenkins quando container ausente e disco confirmado limpo
+  ansible.builtin.file:
+    path: "/srv/home-server/data/jenkins"
+    state: absent
+  when:
+    - not jenkins_container_exists
+    - not jenkins_baseline_marker.stat.exists
+    - jenkins_clean_reset_confirmed is sameas true
+
+- name: Recriar diretório Jenkins limpo com ownership correto
+  ansible.builtin.file:
+    path: "/srv/home-server/data/jenkins"
+    state: directory
+    owner: "{{ compose_jenkins_uid }}"
+    group: "{{ compose_jenkins_gid }}"
+    mode: '0750'
+
+- name: Registrar marcador one-shot do baseline limpo Jenkins (após wipe confirmado)
+  ansible.builtin.copy:
+    dest: "{{ compose_jenkins_data_dir }}/.clean-baseline-complete"
+    content: "clean-baseline-complete\n"
+    owner: "{{ compose_jenkins_uid }}"
+    group: "{{ compose_jenkins_gid }}"
+    mode: '0644'
+  when:
+    - not jenkins_baseline_marker.stat.exists
+    - jenkins_clean_reset_confirmed is sameas true
+
+- name: Criar diretório init.groovy.d para bootstrap de segurança Jenkins antes de qualquer up
+  ansible.builtin.file:
+    path: "{{ compose_jenkins_data_dir }}/init.groovy.d"
+    state: directory
+    owner: "{{ compose_jenkins_uid }}"
+    group: "{{ compose_jenkins_gid }}"
+    mode: '0750'
+
+- name: Renderizar Groovy de criação de admin Jenkins antes de qualquer up
+  ansible.builtin.template:
+    src: jenkins-init-admin.groovy.j2
+    dest: "{{ compose_jenkins_data_dir }}/init.groovy.d/01-admin.groovy"
+    owner: "{{ compose_jenkins_uid }}"
+    group: "{{ compose_jenkins_gid }}"
+    mode: '0640'
+  no_log: true
+
+- name: Calcular fingerprint do contexto e da imagem base custom Jenkins
+  ansible.builtin.shell: |
+    set -o pipefail
+    {
+      printf '%s\n' '{{ compose_jenkins_base_image }}'
+      sha256sum Dockerfile plugins.txt docker-entrypoint-group-fix.sh
+    } | sha256sum | cut -d' ' -f1
+  args:
+    chdir: "{{ compose_projects_root }}/jenkins"
+    executable: /bin/bash
+  register: jenkins_build_fingerprint
+  changed_when: false
+
+- name: Definir tag local determinística da imagem Jenkins
+  ansible.builtin.set_fact:
+    compose_jenkins_build_tag: "{{ compose_jenkins_build_tag_prefix }}-{{ jenkins_build_fingerprint.stdout[:12] }}"
+
+- name: Gerar .env postgres no host
+  ansible.builtin.template:
+    src: postgres.env.j2
+    dest: "{{ compose_projects_root }}/postgres/.env"
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Gerar .env jenkins no host
+  ansible.builtin.template:
+    src: jenkins.env.j2
+    dest: "{{ compose_projects_root }}/jenkins/.env"
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Gerar .env n8n no host
+  ansible.builtin.template:
+    src: n8n.env.j2
+    dest: "{{ compose_projects_root }}/n8n/.env"
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Gerar .env metabase no host
+  ansible.builtin.template:
+    src: metabase.env.j2
+    dest: "{{ compose_projects_root }}/metabase/.env"
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Subir PostgreSQL primeiro (pin por digest — evitar drift de tag mutável)
+  community.docker.docker_compose_v2:
+    project_src: "{{ compose_projects_root }}/postgres"
+    state: present
+    pull: missing
+
+- name: Aguardar PostgreSQL healthy (docker inspect)
+  ansible.builtin.command: docker inspect --format='{% raw %}{{.State.Health.Status}}{% endraw %}' postgres
+  register: postgres_health
+  retries: "{{ compose_health_retries }}"
+  delay: "{{ compose_health_delay }}"
+  until: postgres_health.stdout == "healthy"
+  changed_when: false
+  failed_when: postgres_health.stdout not in ["healthy", "starting"]
+
+- name: Aguardar que pg_isready aceite conexões (defense in depth)
+  ansible.builtin.command: docker exec postgres pg_isready -U postgres
+  register: postgres_ready
+  retries: 12
+  delay: 5
+  until: postgres_ready.rc == 0
+  changed_when: false
+
+- name: Criar/atualizar roles automation_writer e automation_reader com rotação de senha idempotente
+  ansible.builtin.shell: |
+    set -Eeuo pipefail
+    docker exec -i \
+      -e AUTOMATION_WRITER_USER={{ compose_postgres_user_automation_writer | quote }} \
+      -e AUTOMATION_WRITER_PASSWORD={{ postgres_automation_writer_password | quote }} \
+      -e AUTOMATION_READER_USER={{ compose_postgres_user_automation_reader | quote }} \
+      -e AUTOMATION_READER_PASSWORD={{ postgres_automation_reader_password | quote }} \
+      postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
+    \getenv writer_user AUTOMATION_WRITER_USER
+    \getenv writer_password AUTOMATION_WRITER_PASSWORD
+    \getenv reader_user AUTOMATION_READER_USER
+    \getenv reader_password AUTOMATION_READER_PASSWORD
+    SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'writer_user', :'writer_password')
+      WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'writer_user')
+      \gexec
+    SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', :'writer_user', :'writer_password') \gexec
+    SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'reader_user', :'reader_password')
+      WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'reader_user')
+      \gexec
+    SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', :'reader_user', :'reader_password') \gexec
+    SQL
+  args:
+    executable: /bin/bash
+  no_log: true
+  changed_when: false
+
+- name: Inicializar databases PostgreSQL fora de transação (CREATE DATABASE não pode estar em DO $$)
+  ansible.builtin.shell: |
+    set -Eeuo pipefail
+
+    create_database_if_missing() {
+      local database="$1"
+      local exists
+      exists="$(docker exec postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -tAc \
+        "SELECT 1 FROM pg_database WHERE datname = '${database}'" | tr -d '[:space:]')"
+      if [[ "$exists" != "1" ]]; then
+        # CREATE DATABASE é um comando top-level deliberadamente separado de qualquer DO/transaction block.
+        docker exec postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
+          -c "CREATE DATABASE \"${database}\""
+      fi
+    }
+
+    create_database_if_missing '{{ compose_postgres_db_n8n }}'
+    create_database_if_missing '{{ compose_postgres_db_metabase }}'
+
+    automation_exists="$(docker exec postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -tAc \
+      "SELECT 1 FROM pg_database WHERE datname = '{{ compose_postgres_db_automation }}'" | tr -d '[:space:]')"
+    if [[ "$automation_exists" != "1" ]]; then
+      docker exec postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
+        -c 'CREATE DATABASE "{{ compose_postgres_db_automation }}" OWNER "{{ compose_postgres_user_automation_writer }}"'
+    else
+      docker exec postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
+        -c 'ALTER DATABASE "{{ compose_postgres_db_automation }}" OWNER TO "{{ compose_postgres_user_automation_writer }}"'
+    fi
+  args:
+    executable: /bin/bash
+  no_log: true
+  changed_when: false
+
+- name: Aplicar permissões de conexão na database automation
+  ansible.builtin.shell: |
+    set -Eeuo pipefail
+    docker exec postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
+      -c 'REVOKE ALL ON DATABASE "{{ compose_postgres_db_automation }}" FROM PUBLIC' \
+      -c 'GRANT CONNECT ON DATABASE "{{ compose_postgres_db_automation }}" TO "{{ compose_postgres_user_automation_writer }}"' \
+      -c 'GRANT CONNECT ON DATABASE "{{ compose_postgres_db_automation }}" TO "{{ compose_postgres_user_automation_reader }}"'
+  args:
+    executable: /bin/bash
+  no_log: true
+  changed_when: false
+
+- name: Aplicar permissões de schema e objetos futuros na database automation
+  ansible.builtin.shell: |
+    set -Eeuo pipefail
+    docker exec -i postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d "{{ compose_postgres_db_automation }}" <<'EOSQL'
+    REVOKE ALL ON SCHEMA public FROM PUBLIC;
+    GRANT USAGE, CREATE ON SCHEMA public TO "{{ compose_postgres_user_automation_writer }}";
+    GRANT USAGE ON SCHEMA public TO "{{ compose_postgres_user_automation_reader }}";
+    GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO "{{ compose_postgres_user_automation_writer }}";
+    GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO "{{ compose_postgres_user_automation_writer }}";
+    GRANT SELECT ON ALL TABLES IN SCHEMA public TO "{{ compose_postgres_user_automation_reader }}";
+    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "{{ compose_postgres_user_automation_reader }}";
+    ALTER DEFAULT PRIVILEGES FOR ROLE "{{ compose_postgres_user_automation_writer }}" IN SCHEMA public GRANT SELECT ON TABLES TO "{{ compose_postgres_user_automation_reader }}";
+    ALTER DEFAULT PRIVILEGES FOR ROLE "{{ compose_postgres_user_automation_writer }}" IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO "{{ compose_postgres_user_automation_reader }}";
+    EOSQL
+  args:
+    executable: /bin/bash
+  no_log: true
+  changed_when: false
+
+- name: Criar/atualizar role n8n com rotação de senha idempotente
+  ansible.builtin.shell: |
+    set -Eeuo pipefail
+    docker exec -i \
+      -e APP_DB_USER={{ compose_postgres_user_n8n | quote }} \
+      -e APP_DB_PASSWORD={{ postgres_n8n_password | quote }} \
+      postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
+    \getenv app_user APP_DB_USER
+    \getenv app_password APP_DB_PASSWORD
+    SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password')
+      WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'app_user')
+      \gexec
+    SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password') \gexec
+    SQL
+    docker exec postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
+      -c 'ALTER DATABASE "{{ compose_postgres_db_n8n }}" OWNER TO "{{ compose_postgres_user_n8n }}"' \
+      -c 'GRANT ALL PRIVILEGES ON DATABASE "{{ compose_postgres_db_n8n }}" TO "{{ compose_postgres_user_n8n }}"'
+  args:
+    executable: /bin/bash
+  no_log: true
+  changed_when: false
+
+- name: Criar/atualizar role Metabase com rotação de senha idempotente
+  ansible.builtin.shell: |
+    set -Eeuo pipefail
+    docker exec -i \
+      -e APP_DB_USER={{ compose_postgres_user_metabase | quote }} \
+      -e APP_DB_PASSWORD={{ postgres_metabase_password | quote }} \
+      postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
+    \getenv app_user APP_DB_USER
+    \getenv app_password APP_DB_PASSWORD
+    SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password')
+      WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'app_user')
+      \gexec
+    SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password') \gexec
+    SQL
+    docker exec postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
+      -c 'ALTER DATABASE "{{ compose_postgres_db_metabase }}" OWNER TO "{{ compose_postgres_user_metabase }}"' \
+      -c 'GRANT ALL PRIVILEGES ON DATABASE "{{ compose_postgres_db_metabase }}" TO "{{ compose_postgres_user_metabase }}"'
+  args:
+    executable: /bin/bash
+  no_log: true
+  changed_when: false
+
+- name: Subir n8n e Metabase (paralelo, ambos dependem só de postgres)
+  community.docker.docker_compose_v2:
+    project_src: "{{ compose_projects_root }}/{{ item }}"
+    state: present
+    pull: missing
+  loop: [n8n, metabase]
+
+- name: Aguardar n8n healthy
+  ansible.builtin.command: docker inspect --format='{% raw %}{{.State.Health.Status}}{% endraw %}' n8n
+  register: n8n_health
+  retries: "{{ compose_health_retries }}"
+  delay: "{{ compose_health_delay }}"
+  until: n8n_health.stdout == "healthy"
+  changed_when: false
+
+- name: Aguardar metabase healthy
+  ansible.builtin.command: docker inspect --format='{% raw %}{{.State.Health.Status}}{% endraw %}' metabase
+  register: metabase_health
+  retries: "{{ compose_health_retries }}"
+  delay: "{{ compose_health_delay }}"
+  until: metabase_health.stdout == "healthy"
+  changed_when: false
+
+- name: Buildar imagem custom Jenkins apenas para fingerprint novo
+  community.docker.docker_image:
+    name: "{{ compose_jenkins_image_name }}"
+    tag: "{{ compose_jenkins_build_tag }}"
+    source: build
+    force_source: false
+    build:
+      path: "{{ compose_projects_root }}/jenkins"
+      dockerfile: Dockerfile
+      pull: true
+      args:
+        JENKINS_BASE_IMAGE: "{{ compose_jenkins_base_image }}"
+
+- name: Subir Jenkins fase um por último (requer init.groovy.d + imagem custom já buildada)
+  community.docker.docker_compose_v2:
+    project_src: "{{ compose_projects_root }}/jenkins"
+    state: present
+    pull: missing
+
+- name: Aguardar Jenkins healthy fase um (curl já presente na imagem custom — healthcheck não quebra no primeiro boot)
+  ansible.builtin.command: docker inspect --format='{% raw %}{{.State.Health.Status}}{% endraw %}' jenkins
+  register: jenkins_health
+  retries: "{{ compose_health_retries }}"
+  delay: "{{ compose_health_delay }}"
+  until: jenkins_health.stdout == "healthy"
+  changed_when: false
+
+- name: Checkpoint fase um admin login succeeds via authenticated REST
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ compose_jenkins_port }}/api/json"
+    user: "admin"
+    password: "{{ jenkins_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    status_code: [200]
+    timeout: 10
+  register: jenkins_admin_checkpoint
+  no_log: true
+
+- name: Checkpoint fase um anonymous api json returns non-2xx sem codigo unico
+  ansible.builtin.command: curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:{{ compose_jenkins_port }}/api/json
+  register: jenkins_anon_code
+  retries: 6
+  delay: 5
+  until: jenkins_anon_code.stdout is not match('^2..')
+  changed_when: false
+  failed_when: jenkins_anon_code.stdout is match('^2..')
+
+- name: Checkpoint fase um Jenkins health endpoint succeeds via login page
+  ansible.builtin.command: curl -fsS -o /dev/null http://127.0.0.1:{{ compose_jenkins_port }}/login
+  register: jenkins_health_endpoint
+  retries: 6
+  delay: 5
+  until: jenkins_health_endpoint.rc == 0
+  changed_when: false
+
+- name: Checkpoint fase um authorization strategy is fine-grained GlobalMatrixAuthorizationStrategy
+  ansible.builtin.command: grep -q "GlobalMatrixAuthorizationStrategy" "{{ compose_jenkins_data_dir }}/config.xml"
+  register: jenkins_strategy_checkpoint
+  changed_when: false
+  failed_when: jenkins_strategy_checkpoint.rc != 0
+
+- name: Renderizar Groovy fase dois de provider users Jenkins somente após checkpoint admin
+  ansible.builtin.template:
+    src: jenkins-provider-users.groovy.j2
+    dest: "{{ compose_jenkins_data_dir }}/init.groovy.d/02-providers.groovy"
+    owner: "{{ compose_jenkins_uid }}"
+    group: "{{ compose_jenkins_gid }}"
+    mode: '0640'
+  no_log: true
+
+- name: Recriar Jenkins fase dois para reconciliar labmonitor-api e prometheus-scraper
+  community.docker.docker_compose_v2:
+    project_src: "{{ compose_projects_root }}/jenkins"
+    state: present
+    pull: missing
+    recreate: always
+
+- name: Aguardar Jenkins healthy fase dois após providers
+  ansible.builtin.command: docker inspect --format='{% raw %}{{.State.Health.Status}}{% endraw %}' jenkins
+  register: jenkins_health_phase2
+  retries: "{{ compose_health_retries }}"
+  delay: "{{ compose_health_delay }}"
+  until: jenkins_health_phase2.stdout == "healthy"
+  changed_when: false
+
+- name: Validar admin preservado após fase dois via authenticated REST
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ compose_jenkins_port }}/api/json"
+    user: "admin"
+    password: "{{ jenkins_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    status_code: [200]
+    timeout: 10
+  no_log: true
+
+- name: Validar leitura labmonitor-api em api json com credencial separada
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ compose_jenkins_port }}/api/json"
+    user: "{{ jenkins_labmonitor_user }}"
+    password: "{{ jenkins_labmonitor_api_token }}"
+    force_basic_auth: true
+    return_content: true
+    status_code: [200]
+    timeout: 10
+  no_log: true
+
+- name: Validar scrape prometheus-scraper em prometheus endpoint com trailing slash
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ compose_jenkins_port }}/prometheus/"
+    user: "{{ jenkins_prometheus_user }}"
+    password: "{{ jenkins_prometheus_api_token }}"
+    force_basic_auth: true
+    return_content: true
+    status_code: [200]
+    timeout: 10
+  no_log: true
+
+- name: Validar que trigger de build com labmonitor-api retorna non-2xx e preserva estado
+  ansible.builtin.command: curl -s -o /dev/null -w "%{http_code}" -u "{{ jenkins_labmonitor_user }}:{{ jenkins_labmonitor_api_token }}" -X POST http://127.0.0.1:{{ compose_jenkins_port }}/job/inexistente/build
+  register: jenkins_forbidden_build
+  changed_when: false
+  failed_when: jenkins_forbidden_build.stdout is match('^2..')
+  no_log: true
+
+- name: Validar que administracao Jenkins com provider retorna non-2xx sem codigo unico
+  ansible.builtin.command: curl -s -o /dev/null -w "%{http_code}" -u "{{ jenkins_labmonitor_user }}:{{ jenkins_labmonitor_api_token }}" http://127.0.0.1:{{ compose_jenkins_port }}/manage
+  register: jenkins_forbidden_admin
+  changed_when: false
+  failed_when: jenkins_forbidden_admin.stdout is match('^2..')
+  no_log: true
+
+- name: Verificar que Jenkins exige autenticação antes de considerar 18080 seguro para LAN (pré-requisito para firewall)
+  ansible.builtin.command: curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:{{ compose_jenkins_port }}/api/json
+  register: jenkins_anon_final
+  retries: 6
+  delay: 5
+  until: jenkins_anon_final.stdout is not match('^2..')
+  changed_when: false
+  failed_when: jenkins_anon_final.stdout is match('^2..')
+
+- name: Verificar que socket Docker está montado RW e grupo dockersock aplicado no PID 1
+  ansible.builtin.shell: |
+    set -euo pipefail
+    docker exec jenkins test -S /var/run/docker.sock
+    docker exec jenkins sh -c 'id jenkins | grep -q dockersock'
+    docker exec jenkins docker ps >/dev/null 2>&1 || docker exec jenkins sh -c 'docker ps >/dev/null'
+  args:
+    executable: /bin/bash
+  changed_when: false

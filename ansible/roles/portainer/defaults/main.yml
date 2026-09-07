@@ -1,0 +1,26 @@
+---
+# Portainer — non-secret defaults.
+# Server and Kubernetes Agent run in Kubernetes (namespace portainer); the
+# Docker Agent runs as a separate host Compose project (explicit administrative
+# exception with an RW socket mount). The read-only socket proxy (Task 2)
+# stays the only Docker path consumed by monitoring and the future LabMonitor.
+portainer_namespace: portainer
+portainer_service_name: portainer
+portainer_service_port: 9000
+portainer_nodeport: 30900
+portainer_image: "portainer/portainer-ce:2.19.5"
+portainer_agent_image: "portainer/agent:2.19.5"
+portainer_agent_port: 9001
+# Kubernetes Agent identity (dedicated ServiceAccount/ClusterRole; the future
+# LabMonitor reader identity is never bound to any Portainer RBAC).
+portainer_k8s_agent_service_name: portainer-agent
+# Dedicated Agent Secret (name only — the value lives in the environment Vault
+# as `portainer_agent_secret` and is shared by both agents).
+portainer_agent_secret_name: portainer-agent
+# Server persistent storage (local-path, single RWO writer, Recreate strategy).
+portainer_data_size: 5Gi
+# Host Docker Agent Compose project (separate from docker-provider).
+portainer_compose_project: portainer-agent
+portainer_docker_agent_service_name: portainer-agent
+# Combined rendered manifests consumed by the Step 5 dry-run command.
+portainer_rendered_manifest_path: /tmp/home-server-portainer-rendered.yaml

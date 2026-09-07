@@ -1,0 +1,130 @@
+---
+- name: Validate LabMonitor foundation defaults
+  ansible.builtin.assert:
+    that:
+      - labmonitor_namespace == 'labmonitor'
+      - labmonitor_service_account == 'labmonitor-api'
+      - labmonitor_provider_config_name == 'labmonitor-provider-config'
+      - labmonitor_catalog_name == 'labmonitor-catalog'
+      - labmonitor_jenkins_secret_name == 'labmonitor-jenkins-readonly'
+
+- name: Validate LabMonitor Jenkins Vault contract
+  ansible.builtin.assert:
+    that:
+      - jenkins_labmonitor_user is defined
+      - jenkins_labmonitor_user | length > 0
+      - jenkins_labmonitor_api_token is defined
+      - jenkins_labmonitor_api_token | length > 0
+    fail_msg: >-
+      LabMonitor Vault is incomplete — define
+      jenkins_labmonitor_user and jenkins_labmonitor_api_token (the Task 3
+      read-only provider credential) before provisioning the LabMonitor
+      foundation.
+  no_log: true
+
+- name: Ensure labmonitor namespace exists
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ labmonitor_namespace }}"
+
+- name: Ensure labmonitor-api ServiceAccount exists
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: "{{ labmonitor_service_account }}"
+        namespace: "{{ labmonitor_namespace }}"
+
+- name: Copy LabMonitor RBAC manifest to managed host
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../k8s/labmonitor/rbac.yaml"
+    dest: /tmp/home-server-labmonitor-rbac.yaml
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Apply LabMonitor least-privilege RBAC
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    src: /tmp/home-server-labmonitor-rbac.yaml
+
+- name: Apply LabMonitor provider ConfigMap
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: "{{ labmonitor_provider_config_name }}"
+        namespace: "{{ labmonitor_namespace }}"
+      data:
+        providers.yaml: "{{ lookup('template', 'provider-config.yaml.j2') }}"
+
+- name: Apply LabMonitor service catalog ConfigMap
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: "{{ labmonitor_catalog_name }}"
+        namespace: "{{ labmonitor_namespace }}"
+      data:
+        catalog.yaml: "{{ lookup('template', 'catalog.yaml.j2') }}"
+
+- name: Render LabMonitor Jenkins readonly Secret manifest
+  ansible.builtin.template:
+    src: jenkins-secret.yaml.j2
+    dest: /tmp/home-server-labmonitor-jenkins-secret.yaml
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Apply LabMonitor Jenkins readonly Secret from Vault
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    src: /tmp/home-server-labmonitor-jenkins-secret.yaml
+  no_log: true
+
+# Live RBAC proof: reads of the two named ConfigMaps answer yes, while
+# other-configmap, ConfigMap list/watch, pod creation, and Secret reads
+# answer no. Mirrors the Task 7 Step 8 can-i verification commands.
+- name: Verify LabMonitor RBAC allows reads and denies writes and Secrets
+  ansible.builtin.shell: |
+    set -euo pipefail
+    K="kubectl --kubeconfig={{ kubeconfig_path }}"
+    SA="system:serviceaccount:{{ labmonitor_namespace }}"
+    SA="${SA}:{{ labmonitor_service_account }}"
+    NS="-n {{ labmonitor_namespace }}"
+    CAT="{{ labmonitor_catalog_name }}"
+    PROV="{{ labmonitor_provider_config_name }}"
+    test "$(${K} auth can-i get pods --as=${SA} \
+      --all-namespaces)" = "yes"
+    test "$(${K} auth can-i list deployments.apps --as=${SA} \
+      --all-namespaces)" = "yes"
+    test "$(${K} auth can-i get configmap/${CAT} \
+      ${NS} --as=${SA})" = "yes"
+    test "$(${K} auth can-i get configmap/${PROV} \
+      ${NS} --as=${SA})" = "yes"
+    test "$(${K} auth can-i create pods --as=${SA} \
+      --all-namespaces)" = "no"
+    test "$(${K} auth can-i get secrets --as=${SA} \
+      --all-namespaces)" = "no"
+    test "$(${K} auth can-i get configmap/other-configmap \
+      ${NS} --as=${SA})" = "no"
+    test "$(${K} auth can-i list configmaps ${NS} --as=${SA})" = "no"
+    test "$(${K} auth can-i watch configmaps ${NS} --as=${SA})" = "no"
+  changed_when: false

@@ -1,0 +1,94 @@
+{
+  "title": "Home Server - Kubernetes",
+  "uid": "home-server-kubernetes",
+  "tags": ["home-server", "technical", "kubernetes"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Nodes",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "count(kube_node_info)"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Node info",
+      "type": "table",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "kube_node_info"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Pods by namespace",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "count by (namespace) (kube_pod_info)"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Deployments available replicas",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "kube_deployment_status_replicas_available"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Container CPU usage",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "sum by (namespace, pod) (rate(container_cpu_usage_seconds_total[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Container memory working set",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "sum by (namespace, pod) (container_memory_working_set_bytes)"
+        }
+      ]
+    }
+  ]
+}

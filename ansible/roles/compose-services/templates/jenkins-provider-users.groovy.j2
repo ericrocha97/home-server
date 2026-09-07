@@ -1,0 +1,76 @@
+import jenkins.model.*
+import hudson.model.User
+import hudson.security.*
+import jenkins.security.ApiTokenProperty
+
+def instance = Jenkins.get()
+def env = System.getenv()
+def labUser = env['JENKINS_LABMONITOR_USER'] ?: 'labmonitor-api'
+def labPass = env['JENKINS_LABMONITOR_PASSWORD']
+def labToken = env['JENKINS_LABMONITOR_API_TOKEN']
+def promUser = env['JENKINS_PROMETHEUS_USER'] ?: 'prometheus-scraper'
+def promPass = env['JENKINS_PROMETHEUS_PASSWORD']
+def promToken = env['JENKINS_PROMETHEUS_API_TOKEN']
+if (labPass == null || labPass.trim().isEmpty()) {
+  throw new IllegalStateException("JENKINS_LABMONITOR_PASSWORD ausente — abortando reconciliacao de providers")
+}
+if (labToken == null || labToken.trim().isEmpty()) {
+  throw new IllegalStateException("JENKINS_LABMONITOR_API_TOKEN ausente — abortando reconciliacao de providers")
+}
+if (promPass == null || promPass.trim().isEmpty()) {
+  throw new IllegalStateException("JENKINS_PROMETHEUS_PASSWORD ausente — abortando reconciliacao de providers")
+}
+if (promToken == null || promToken.trim().isEmpty()) {
+  throw new IllegalStateException("JENKINS_PROMETHEUS_API_TOKEN ausente — abortando reconciliacao de providers")
+}
+// Phase two runs only after the phase-one admin checkpoint. Never touch admin here.
+def realm = instance.getSecurityRealm()
+if (!(realm instanceof HudsonPrivateSecurityRealm)) {
+  throw new IllegalStateException("Security realm inesperado — phase-one deve instalar HudsonPrivateSecurityRealm")
+}
+def ensureAccount = { String id, String pass ->
+  def existing = User.getById(id, false)
+  if (existing == null) {
+    ((HudsonPrivateSecurityRealm) realm).createAccount(id, pass)
+    return User.getById(id, false)
+  }
+  def details = HudsonPrivateSecurityRealm.Details.fromPlainPassword(pass)
+  existing.addProperty(details)
+  existing.save()
+  return existing
+}
+def ensureApiToken = { User u, String tokenValue ->
+  def prop = u.getProperty(ApiTokenProperty)
+  if (prop == null) {
+    u.addProperty(new ApiTokenProperty())
+    prop = u.getProperty(ApiTokenProperty)
+  }
+  // Use only the scripting-intended ApiTokenProperty API (verified against
+  // Jenkins 2.568.2 source). Never touch private token-store fields via
+  // property access: the legacy field no longer exists and aborts the
+  // script with MissingFieldException.
+  // revokeAllTokens + addFixedNewToken is idempotent for these dedicated
+  // provider users and self-heals on the next boot if interrupted.
+  try {
+    prop.revokeAllTokens()
+    prop.addFixedNewToken("vault-token", tokenValue)
+  } catch (Exception e) {
+    throw new IllegalStateException("Pinned Jenkins core/plugin set cannot set Vault token deterministically — abortando sem gerar token nao rastreado: ${e.getMessage()}")
+  }
+  u.save()
+}
+def labAccount = ensureAccount(labUser, labPass)
+ensureApiToken(labAccount, labToken)
+def promAccount = ensureAccount(promUser, promPass)
+ensureApiToken(promAccount, promToken)
+// Least privilege on the existing fine-grained strategy; preserve admin grants.
+def strategy = instance.getAuthorizationStrategy()
+if (!(strategy instanceof GlobalMatrixAuthorizationStrategy)) {
+  throw new IllegalStateException("Authorization strategy inesperada — phase-one deve instalar GlobalMatrixAuthorizationStrategy")
+}
+strategy.add(Jenkins.READ, labUser)
+strategy.add(hudson.model.Item.READ, labUser)
+strategy.add(hudson.model.Run.READ, labUser)
+strategy.add(hudson.model.View.READ, labUser)
+strategy.add(Jenkins.READ, promUser)
+instance.save()

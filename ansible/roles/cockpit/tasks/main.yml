@@ -1,0 +1,19 @@
+---
+- name: Instalar Cockpit
+  ansible.builtin.apt:
+    name: cockpit
+    state: present
+
+- name: Configurar Cockpit para o proxy Traefik
+  ansible.builtin.template:
+    src: cockpit.conf.j2
+    dest: "{{ cockpit_config_path }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Habilitar socket Cockpit
+  ansible.builtin.systemd_service:
+    name: cockpit.socket
+    enabled: true
+    state: started

@@ -1,0 +1,144 @@
+---
+# Portainer Kubernetes Agent (Task 6) — runs in Kubernetes, namespace
+# {{ portainer_namespace }}. Administrative RBAC is bound to the dedicated
+# portainer-agent ServiceAccount only; the future LabMonitor reader identity
+# is never referenced here. The Agent mounts nothing (in particular no socket).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: "{{ portainer_k8s_agent_service_name }}"
+  namespace: "{{ portainer_namespace }}"
+  labels:
+    app.kubernetes.io/name: portainer-agent
+---
+# Administrative exception: the Agent manages cluster resources on behalf of
+# the Portainer Server, so it needs broad access. Scoped to its own identity;
+# read-only consumers (monitoring, future LabMonitor) use separate RBAC.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: "{{ portainer_k8s_agent_service_name }}"
+  labels:
+    app.kubernetes.io/name: portainer-agent
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]
+  - nonResourceURLs: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: "{{ portainer_k8s_agent_service_name }}"
+  labels:
+    app.kubernetes.io/name: portainer-agent
+subjects:
+  - kind: ServiceAccount
+    name: "{{ portainer_k8s_agent_service_name }}"
+    namespace: "{{ portainer_namespace }}"
+roleRef:
+  kind: ClusterRole
+  name: "{{ portainer_k8s_agent_service_name }}"
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "{{ portainer_k8s_agent_service_name }}"
+  namespace: "{{ portainer_namespace }}"
+  labels:
+    app: "{{ portainer_k8s_agent_service_name }}"
+spec:
+  # Pod-only endpoint for the Server; the human UI is the Server NodePort.
+  type: ClusterIP
+  selector:
+    app: "{{ portainer_k8s_agent_service_name }}"
+  ports:
+    - name: agent
+      protocol: TCP
+      port: {{ portainer_agent_port | int }}
+      targetPort: 9001
+---
+# The Portainer agent joins its cluster by DNS-looking up
+# "s-portainer-agent-headless" (hard-coded default in cmd/agent/main.go).
+# That name must resolve inside the agent namespace, so a headless Service
+# with the exact name is required; it selects the same agent pods.
+apiVersion: v1
+kind: Service
+metadata:
+  name: s-portainer-agent-headless
+  namespace: "{{ portainer_namespace }}"
+  labels:
+    app: "{{ portainer_k8s_agent_service_name }}"
+spec:
+  type: ClusterIP
+  clusterIP: None
+  # The agent resolves this Service before its readiness probe can pass.
+  # Publish its endpoint immediately to avoid a DNS/readiness deadlock.
+  publishNotReadyAddresses: true
+  selector:
+    app: "{{ portainer_k8s_agent_service_name }}"
+  ports:
+    - name: agent
+      protocol: TCP
+      port: {{ portainer_agent_port | int }}
+      targetPort: 9001
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "{{ portainer_k8s_agent_service_name }}"
+  namespace: "{{ portainer_namespace }}"
+  labels:
+    app: "{{ portainer_k8s_agent_service_name }}"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: "{{ portainer_k8s_agent_service_name }}"
+  template:
+    metadata:
+      labels:
+        app: "{{ portainer_k8s_agent_service_name }}"
+    spec:
+      serviceAccountName: "{{ portainer_k8s_agent_service_name }}"
+      containers:
+        - name: agent
+          image: "{{ portainer_agent_image }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: agent
+              containerPort: 9001
+              protocol: TCP
+          env:
+            - name: AGENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ portainer_agent_secret_name }}"
+                  key: agent-secret
+            # The agent refuses to start on Kubernetes without its own pod
+            # IP (used to build internal edge/tunnel endpoints).
+            - name: KUBERNETES_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          livenessProbe:
+            tcpSocket:
+              port: 9001
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+          readinessProbe:
+            tcpSocket:
+              port: 9001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

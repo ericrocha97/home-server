@@ -1,0 +1,127 @@
+---
+# Portainer Server (Task 6) — runs in Kubernetes, namespace {{ portainer_namespace }}.
+# Human-facing UI on NodePort {{ portainer_nodeport }}; the Server talks to the
+# Kubernetes Agent (portainer-agent:9001, same namespace) and to the host Docker
+# Agent (server_lan_ip:9001 backhaul). Uses only its own ServiceAccount (never
+# the future LabMonitor reader identity); discovery metadata rides on the
+# Server Service only.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: "{{ portainer_namespace }}"
+  labels:
+    app.kubernetes.io/name: portainer
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: "{{ portainer_service_name }}"
+  namespace: "{{ portainer_namespace }}"
+  labels:
+    app.kubernetes.io/name: portainer
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: "{{ portainer_service_name }}-data"
+  namespace: "{{ portainer_namespace }}"
+  labels:
+    app.kubernetes.io/name: portainer
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: "{{ portainer_data_size }}"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "{{ portainer_service_name }}"
+  namespace: "{{ portainer_namespace }}"
+  labels:
+    app: "{{ portainer_service_name }}"
+spec:
+  replicas: 1
+  # Single RWO writer on local-path: Recreate avoids a second pod holding the volume.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: "{{ portainer_service_name }}"
+  template:
+    metadata:
+      labels:
+        app: "{{ portainer_service_name }}"
+    spec:
+      serviceAccountName: "{{ portainer_service_name }}"
+      containers:
+        - name: portainer
+          image: "{{ portainer_image }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 9000
+              protocol: TCP
+          env:
+            # Shared agent credential (dedicated Secret from Vault); the Server
+            # presents it when registering both the Kubernetes and Docker Agents.
+            - name: AGENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ portainer_agent_secret_name }}"
+                  key: agent-secret
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /api/status
+              port: 9000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /api/status
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: "{{ portainer_service_name }}-data"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "{{ portainer_service_name }}"
+  namespace: "{{ portainer_namespace }}"
+  labels:
+    app: "{{ portainer_service_name }}"
+    labmonitor.enabled: "true"
+    labmonitor.id: "portainer"
+    labmonitor.category: "administration"
+    labmonitor.icon: "portainer"
+  annotations:
+    labmonitor.name: "Portainer"
+    labmonitor.open.url: "https://portainer.{{ base_domain }}"
+spec:
+  type: NodePort
+  selector:
+    app: "{{ portainer_service_name }}"
+  ports:
+    - name: http
+      protocol: TCP
+      port: {{ portainer_service_port | int }}
+      targetPort: 9000
+      nodePort: {{ portainer_nodeport | int }}

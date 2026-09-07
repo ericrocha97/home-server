@@ -1,0 +1,10 @@
+---
+- name: Recarregar UFW
+  ansible.builtin.command: ufw reload
+  changed_when: true
+
+- name: Reiniciar política DOCKER-USER
+  ansible.builtin.systemd_service:
+    name: "{{ firewall_docker_user_unit_name }}"
+    daemon_reload: true
+    state: restarted

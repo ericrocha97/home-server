@@ -1,0 +1,14 @@
+---
+kubeconfig_path: /etc/rancher/k3s/k3s.yaml
+traefik_namespace: kube-system
+traefik_release_name: traefik
+traefik_tls_secret_name: traefik-tls
+traefik_tls_mount_path: /certs
+traefik_dynamic_config_path: /tmp/home-server-traefik-helmchartconfig.yaml
+k8s_platform_ingress_path: /tmp/home-server-platform-ingress.yaml
+local_tls_cert_path: "{{ playbook_dir }}/secrets/{{ environment_name }}-tls.crt"
+local_tls_key_path: "{{ playbook_dir }}/secrets/{{ environment_name }}-tls.key"
+cockpit_port: 9090
+jenkins_port: "{{ compose_jenkins_port | default(18080) }}"
+n8n_port: "{{ compose_n8n_port | default(15678) }}"
+metabase_port: "{{ compose_metabase_port | default(13001) }}"

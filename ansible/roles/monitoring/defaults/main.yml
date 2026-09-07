@@ -1,0 +1,74 @@
+---
+# Platform monitoring (kube-prometheus-stack) — non-secret defaults.
+# Task 4 selects the Docker exporter image/mode; Task 5 renders full Helm values
+# and reconciles component images against `helm template` for chart 88.6.1.
+monitoring_chart_version: "88.6.1"
+monitoring_release_name: monitoring
+monitoring_namespace: monitoring
+# Helm v3 binary. The role shells out via kubernetes.core helm modules, which
+# need `helm repo` — removed in Helm v4 — so stay on the latest v3 line.
+# Pinned version + tarball checksum verified 2026-09-06 (helm releases API +
+# get.helm.sh sha256sum file). The v3.21.4 GitHub release carries only .asc
+# signature assets, so download from the official get.helm.sh mirror.
+monitoring_helm_version: "v3.21.4"
+monitoring_helm_download_url: "https://get.helm.sh/helm-v3.21.4-linux-amd64.tar.gz"
+monitoring_helm_tarball_sha256: "61f88ab166748cb19604d7884cb100ae9ccb13804ddeb98e08af167eacbb6a14"
+monitoring_helm_binary_path: /usr/local/bin/helm
+docker_metrics_exporter_port: 9797
+monitoring_prometheus_service_name: prometheus
+monitoring_prometheus_service_port: 9090
+prometheus_nodeport: 30909
+monitoring_grafana_service_name: grafana
+monitoring_grafana_service_port: 3000
+grafana_nodeport: 30300
+monitoring_prometheus_retention: 15d
+monitoring_prometheus_storage_size: 20Gi
+monitoring_grafana_storage_size: 5Gi
+# Grafana admin Secret (Task 5). The password itself lives only in the
+# environment Vault as `monitoring_grafana_admin_password`, never here.
+monitoring_grafana_admin_secret_name: grafana-admin
+monitoring_grafana_admin_user: admin
+# Prometheus additional scrape configs Secret (Task 5). The Jenkins
+# credential interpolates Vault `jenkins_prometheus_api_token` at render
+# time; this file only carries the Secret name/key contract.
+monitoring_additional_scrape_configs_name: prometheus-additional-scrape-configs
+monitoring_additional_scrape_configs_key: additional-scrape-configs.yaml
+# Pinned Jenkins Prometheus plugin endpoint (trailing slash required).
+monitoring_jenkins_metrics_path: /prometheus/
+# Grafana dashboard sidecar: only ConfigMaps labelled `<label>: "1"` in the
+# monitoring namespace are loaded (the four technical dashboards, Task 5).
+monitoring_dashboard_sidecar_label: grafana_dashboard
+# Render destination for the controlled chart values; Step 7 static checks
+# consume this exact path with `helm template --values`.
+monitoring_values_path: /tmp/home-server-monitoring-values.yaml
+# Docker metrics exporter selection (Task 4 compatibility gate, 2026-09-06).
+# Candidate calum4/docker-prometheus-exporter:1.1.3 was run against the
+# read-only proxy: it talks to the proxy over TCP without a socket mount,
+# but exposes only docker_up/container_health (no CPU, memory, network,
+# restart, or state series), never calls /containers/{id}/stats, ignores
+# DOCKER_API_URL, and answers 404 on /healthz. Gate failed, so mode is
+# `built`: the purpose-built HTTP fallback in
+# k8s/monitoring/docker-metrics-exporter is deployed instead.
+docker_metrics_exporter_mode: built
+docker_metrics_exporter_image: "labmonitor-docker-exporter:1.0.0"
+docker_metrics_exporter_app_version: "1.0.0"
+docker_metrics_exporter_build_dir: /srv/home-server/images/docker-metrics-exporter
+# Prod story — required override path (lab keeps the local build+import flow above).
+# Lab builds labmonitor-docker-exporter:1.0.0 on the host and imports it into
+# k3s containerd (see monitoring/tasks/main.yml `docker save | k3s ctr images import`).
+# Prod must override in the ignored inventory (ansible/inventories/prod/group_vars/all.yml,
+# never committed) with a registry digest-pinned ref, e.g.:
+# docker_metrics_exporter_mode: built
+# docker_metrics_exporter_image: "registry.home.arpa/labmonitor-docker-exporter:1.0.0@sha256:<64-hex-digest>"
+# Keep mode `built` unless a future upstream gate passes; never use `latest`.
+# Component images pinned to immutable versions matching the chart era.
+# Every Docker-style reference must be name:tag@sha256:<64-hex> or an exact
+# immutable version tag; never use `latest`. Task 5 records digests where the
+# component supports them.
+monitoring_prometheus_image: "quay.io/prometheus/prometheus:v3.5.0"
+monitoring_grafana_image: "docker.io/grafana/grafana:12.1.0"
+monitoring_node_exporter_image: "quay.io/prometheus/node-exporter:v1.9.1"
+monitoring_kube_state_metrics_image: "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.17.0"
+monitoring_alertmanager_image: "quay.io/prometheus/alertmanager:v0.28.1"
+monitoring_operator_image: "quay.io/prometheus-operator/prometheus-operator:v0.86.0"
+monitoring_config_reloader_image: "quay.io/prometheus-operator/prometheus-config-reloader:v0.86.0"

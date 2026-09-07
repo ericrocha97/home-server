@@ -1,0 +1,230 @@
+---
+- name: Validar CIDR LAN
+  ansible.builtin.assert:
+    that:
+      - lan_cidr | length > 0
+    fail_msg: "lan_cidr deve ser definido no inventário antes de habilitar o firewall."
+
+- name: Construir origens confiáveis
+  ansible.builtin.set_fact:
+    resolved_firewall_trusted_cidrs: >-
+      {{
+        (firewall_trusted_cidrs + firewall_optional_cidrs)
+        | reject('equalto', '')
+        | list
+      }}
+
+- name: Instalar UFW
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+
+- name: Definir política padrão de entrada como deny
+  community.general.ufw:
+    direction: incoming
+    policy: deny
+
+- name: Definir política padrão de saída como allow
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+
+- name: Permitir portas de bootstrap somente da LAN/VPN
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ item.0 }}"
+    port: "{{ item.1.port }}"
+    proto: tcp
+    comment: "{{ item.1.comment }}"
+  loop: "{{ resolved_firewall_trusted_cidrs | product(firewall_base_tcp_ports) | list }}"
+
+- name: Impedir abertura de Jenkins sem securityRealm aplicado
+  ansible.builtin.command: curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:{{ compose_jenkins_port | default(18080) }}/api/json
+  register: firewall_jenkins_anon_code
+  retries: 6
+  delay: 5
+  until: firewall_jenkins_anon_code.stdout is not match('^2..')
+  changed_when: false
+  failed_when: firewall_jenkins_anon_code.stdout is match('^2..')
+  # Esta é uma segunda barreira além da validação da role compose-services; sem non-2xx, não abrir 18080 para LAN/VPN.
+
+- name: Permitir portas diretas Compose somente da LAN/VPN
+  community.general.ufw:
+    rule: allow
+    direction: in
+    from_ip: "{{ item.0 }}"
+    port: "{{ item.1.port }}"
+    proto: tcp
+    comment: "{{ item.1.comment }}"
+  loop: "{{ resolved_firewall_trusted_cidrs | product(firewall_compose_direct_tcp_ports) | list }}"
+
+- name: Permitir Traefik (k3s pod CIDR) acessar backends Compose no host
+  community.general.ufw:
+    rule: allow
+    direction: in
+    from_ip: "{{ k3s_pod_cidr }}"
+    to_ip: "{{ server_lan_ip }}"
+    port: "{{ item.port }}"
+    proto: tcp
+    comment: "{{ item.comment }}"
+  loop: "{{ firewall_compose_backend_ports }}"
+
+- name: Permitir provider Docker read-only somente do k3s pod CIDR (nunca LAN/VPN)
+  community.general.ufw:
+    rule: allow
+    direction: in
+    from_ip: "{{ k3s_pod_cidr }}"
+    to_ip: "{{ server_lan_ip }}"
+    port: "{{ item.port }}"
+    proto: tcp
+    comment: "{{ item.comment }}"
+  loop: "{{ firewall_provider_backhaul_ports }}"
+
+- name: Permitir Portainer Server (k3s pod CIDR) acessar Docker Agent no host
+  community.general.ufw:
+    rule: allow
+    direction: in
+    from_ip: "{{ k3s_pod_cidr }}"
+    to_ip: "{{ server_lan_ip }}"
+    port: "{{ item.port }}"
+    proto: tcp
+    comment: "{{ item.comment }}"
+  loop: "{{ firewall_portainer_agent_backhaul_ports }}"
+
+# Ordem-dependente no UFW (first-match): o allow específico do pod CIDR acima
+# precede este deny global, então o backhaul continua permitido e qualquer
+# outra origem (LAN/VPN/internet) é negada na porta do Agent.
+- name: Negar acesso de qualquer outra origem à porta do Portainer Docker Agent
+  community.general.ufw:
+    rule: deny
+    direction: in
+    port: "{{ item.port }}"
+    proto: tcp
+    comment: "Deny non-k3s to {{ item.comment }}"
+  loop: "{{ firewall_portainer_agent_backhaul_ports }}"
+
+- name: Permitir NodePorts humanas (Portainer UI) somente da LAN/VPN
+  community.general.ufw:
+    rule: allow
+    direction: in
+    from_ip: "{{ item.0 }}"
+    port: "{{ item.1.port }}"
+    proto: tcp
+    comment: "{{ item.1.comment }}"
+  loop: "{{ resolved_firewall_trusted_cidrs | product(firewall_nodeport_allowlist) | list }}"
+
+- name: Bloquear PostgreSQL direto por padrão (sem allowlist)
+  community.general.ufw:
+    rule: deny
+    direction: in
+    port: "{{ firewall_postgres_port }}"
+    proto: tcp
+    comment: "Postgres direct blocked by default"
+  when: not firewall_postgres_direct_enable
+  # idempotente mesmo se regra já existir
+
+- name: Permitir PostgreSQL direto somente da LAN/VPN quando habilitado explicitamente
+  community.general.ufw:
+    rule: allow
+    direction: in
+    from_ip: "{{ item }}"
+    port: "{{ firewall_postgres_port }}"
+    proto: tcp
+    comment: "PostgreSQL temporary admin access"
+  loop: "{{ resolved_firewall_trusted_cidrs }}"
+  when: firewall_postgres_direct_enable
+  # 15432 só será liberado quando firewall_postgres_direct_enable: true no inventário local (admin temporário); nunca por padrão.
+
+- name: Permitir tráfego roteado necessário para o CNI local
+  community.general.ufw:
+    rule: allow
+    route: true
+    from_ip: "{{ k3s_pod_cidr }}"
+    to_ip: "{{ k3s_service_cidr }}"
+
+- name: Configurar UFW para permitir forwarding do k3s
+  ansible.builtin.lineinfile:
+    path: /etc/default/ufw
+    regexp: '^DEFAULT_FORWARD_POLICY='
+    line: 'DEFAULT_FORWARD_POLICY="ACCEPT"'
+  notify: Recarregar UFW
+
+- name: Permitir Traefik acessar Cockpit no host
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ k3s_pod_cidr }}"
+    to_ip: "{{ server_lan_ip }}"
+    port: '9090'
+    proto: tcp
+    comment: Traefik backend Cockpit
+
+- name: Habilitar UFW por último
+  community.general.ufw:
+    state: enabled
+
+# Docker publica portas via iptables que podem furar UFW; a regra DOCKER-USER é o ponto
+# de filtragem recomendado pela documentação Docker. Não usar append simples na chain:
+# Docker instala um RETURN default e regras posteriores seriam inalcançáveis. Não usar
+# source: "!{{ lan_cidr }}": a sintaxe de negação varia e pode virar placebo.
+# --ctorigdst/--ctorigdstport é obrigatório porque DOCKER-USER executa depois do DNAT;
+# sem isso os matches poderiam procurar a porta interna do container em vez da publicada.
+# Alternativas rejeitadas: ufw-docker (dependência externa),
+# DOCKER_OPTS="--iptables=false"/iptables: false (quebraria o roteamento necessário
+# do Docker e o file provider). A chain dedicada e o serviço systemd abaixo são obrigatórios.
+
+- name: Renderizar política DOCKER-USER do Home Server
+  ansible.builtin.template:
+    src: home-server-docker-user.sh.j2
+    dest: "{{ firewall_docker_user_script_path }}"
+    owner: root
+    group: root
+    mode: '0750'
+  when: firewall_docker_user_chain_fix
+  notify: Reiniciar política DOCKER-USER
+
+- name: Renderizar unidade da política DOCKER-USER
+  ansible.builtin.template:
+    src: home-server-docker-user.service.j2
+    dest: "/etc/systemd/system/{{ firewall_docker_user_unit_name }}"
+    owner: root
+    group: root
+    mode: '0644'
+  when: firewall_docker_user_chain_fix
+  notify: Reiniciar política DOCKER-USER
+
+- name: Habilitar política DOCKER-USER depois de Docker e UFW
+  ansible.builtin.systemd_service:
+    name: "{{ firewall_docker_user_unit_name }}"
+    daemon_reload: true
+    enabled: true
+    state: started
+  when: firewall_docker_user_chain_fix
+
+- name: Validar posição e ordem final da política DOCKER-USER
+  ansible.builtin.shell: |
+    set -Eeuo pipefail
+    first_jump="$(iptables -L DOCKER-USER --line-numbers -n | awk '$2 == "{{ firewall_docker_user_chain }}" {print $1; exit}')"
+    [[ "$first_jump" == 1 ]]
+    mapfile -t user_rules < <(iptables -S DOCKER-USER | grep '^-A DOCKER-USER ')
+    [[ "${user_rules[0]}" == "-A DOCKER-USER -j {{ firewall_docker_user_chain }}" ]]
+
+    mapfile -t policy_rules < <(iptables -S "{{ firewall_docker_user_chain }}" | grep '^-A {{ firewall_docker_user_chain }} ')
+    first_drop=-1
+    for index in "${!policy_rules[@]}"; do
+      if [[ "${policy_rules[$index]}" == *" -j DROP"* ]]; then
+        first_drop="$index"
+        break
+      fi
+    done
+    (( first_drop >= 0 ))
+    for ((index = 0; index < first_drop; index++)); do
+      [[ "${policy_rules[$index]}" == *" -j RETURN"* ]]
+    done
+    [[ "${policy_rules[-1]}" == *" -j RETURN"* ]]
+    iptables -L DOCKER-USER --line-numbers -n
+    iptables -S DOCKER-USER
+    iptables -S "{{ firewall_docker_user_chain }}"
+  args:
+    executable: /bin/bash
+  changed_when: false
+  when: firewall_docker_user_chain_fix

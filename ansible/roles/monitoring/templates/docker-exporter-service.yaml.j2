@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: docker-metrics-exporter
+  namespace: "{{ monitoring_namespace }}"
+  labels:
+    app: docker-metrics-exporter
+spec:
+  type: ClusterIP
+  selector:
+    app: docker-metrics-exporter
+  ports:
+    - name: metrics
+      protocol: TCP
+      port: 9797
+      targetPort: 9797

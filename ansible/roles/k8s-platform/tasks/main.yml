@@ -1,0 +1,131 @@
+---
+- name: Verificar certificado TLS local
+  ansible.builtin.stat:
+    path: "{{ local_tls_cert_path }}"
+  register: traefik_tls_cert_file
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Falhar sem certificado TLS local
+  ansible.builtin.fail:
+    msg: "Certificado TLS não encontrado em {{ local_tls_cert_path }}. Gere o certificado mkcert antes do deploy."
+  when: not traefik_tls_cert_file.stat.exists
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Verificar chave TLS local
+  ansible.builtin.stat:
+    path: "{{ local_tls_key_path }}"
+  register: traefik_tls_key_file
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Falhar sem chave TLS local
+  ansible.builtin.fail:
+    msg: "Chave TLS não encontrada em {{ local_tls_key_path }}. Gere a chave mkcert antes do deploy."
+  when: not traefik_tls_key_file.stat.exists
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Aplicar Secret TLS do Traefik
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ traefik_tls_secret_name }}"
+        namespace: "{{ traefik_namespace }}"
+      type: kubernetes.io/tls
+      data:
+        tls.crt: "{{ lookup('file', local_tls_cert_path) | b64encode }}"
+        tls.key: "{{ lookup('file', local_tls_key_path) | b64encode }}"
+  no_log: true
+
+- name: Renderizar HelmChartConfig do Traefik
+  ansible.builtin.template:
+    src: traefik-helmchartconfig.yaml.j2
+    dest: "{{ traefik_dynamic_config_path }}"
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Aplicar HelmChartConfig do Traefik bundled
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    src: "{{ traefik_dynamic_config_path }}"
+
+- name: Aguardar Deployment do Traefik disponível
+  ansible.builtin.command: kubectl --kubeconfig={{ kubeconfig_path }} -n kube-system wait --for=condition=available deployment/traefik --timeout=180s
+  changed_when: false
+
+# LabMonitor discovery contract gate (Task 7): Grafana, Prometheus, and
+# Portainer Services must expose the stable id + open.url metadata before the
+# Task 8 Ingress stage routes to them. Cockpit stays on the file provider.
+- name: Assert LabMonitor discovery metadata on Services
+  ansible.builtin.shell: |
+    set -euo pipefail
+    MON="kubectl --kubeconfig={{ kubeconfig_path }} \
+      -n {{ monitoring_namespace }} get service"
+    PT="kubectl --kubeconfig={{ kubeconfig_path }} \
+      -n {{ portainer_namespace }} get service"
+    GRA="{{ monitoring_grafana_service_name }}"
+    PRO="{{ monitoring_prometheus_service_name }}"
+    POR="{{ portainer_service_name }}"
+    test "$(${MON} ${GRA} \
+      -o jsonpath='{.metadata.labels.labmonitor\.id}')" = "grafana"
+    test "$(${MON} ${GRA} \
+      -o jsonpath='{.metadata.annotations.labmonitor\.open\.url}')" = \
+      "https://grafana.{{ base_domain }}"
+    test "$(${MON} ${PRO} \
+      -o jsonpath='{.metadata.labels.labmonitor\.id}')" = "prometheus"
+    test "$(${MON} ${PRO} \
+      -o jsonpath='{.metadata.annotations.labmonitor\.open\.url}')" = \
+      "https://prometheus.{{ base_domain }}"
+    test "$(${PT} ${POR} \
+      -o jsonpath='{.metadata.labels.labmonitor\.id}')" = "portainer"
+    test "$(${PT} ${POR} \
+      -o jsonpath='{.metadata.annotations.labmonitor\.open\.url}')" = \
+      "https://portainer.{{ base_domain }}"
+    kubectl --kubeconfig={{ kubeconfig_path }} -n labmonitor \
+      get serviceaccount labmonitor-api -o name
+  changed_when: false
+
+# Final platform Ingress stage (Task 8): Traefik Ingress only for human
+# interfaces (Grafana, Prometheus, Portainer). The file provider keeps
+# routing the Compose/Cockpit backends; providers stay ClusterIP-only with
+# no Ingress or NodePort.
+- name: Renderizar Ingress da plataforma (Grafana, Prometheus, Portainer)
+  ansible.builtin.template:
+    src: platform-ingress.yaml.j2
+    dest: "{{ k8s_platform_ingress_path }}"
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Aplicar Ingress da plataforma
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    src: "{{ k8s_platform_ingress_path }}"
+
+- name: Aguardar backends do Ingress da plataforma (Grafana, Prometheus, Portainer)
+  ansible.builtin.command: >-
+    kubectl --kubeconfig={{ kubeconfig_path }}
+    -n {{ item.namespace }} get endpoints {{ item.service }}
+    -o jsonpath='{.subsets[*].addresses[*].ip}'
+  register: platform_ingress_backends
+  retries: 60
+  delay: 5
+  until: platform_ingress_backends.stdout | length > 0
+  changed_when: false
+  loop:
+    - { namespace: "{{ monitoring_namespace }}", service: "{{ monitoring_grafana_service_name }}" }
+    - { namespace: "{{ monitoring_namespace }}", service: "{{ monitoring_prometheus_service_name }}" }
+    - { namespace: "{{ portainer_namespace }}", service: "{{ portainer_service_name }}" }

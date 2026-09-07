@@ -1,245 +1,72 @@
-# AGENTS.md - Home Server Infrastructure Repository
+# Home Server Infrastructure
 
-This repository contains Ansible playbooks and Kubernetes manifests for configuring and deploying a home server running k3s with observability tools (Prometheus/Grafana), Portainer, and external host services routed through Traefik with local HTTPS.
+## Scope And Entry Point
 
-## Repository Structure
+- This is an Ansible-only, lab-first Ubuntu 26.04 home-server platform. `ansible/site.yml` is the only playbook entry point; run it from the repository root with `ANSIBLE_CONFIG="$PWD/ansible/ansible.cfg"`.
+- Roles run in this fixed dependency order: `base` -> `docker` -> `cockpit` -> `k3s` -> `compose-services` -> `docker-provider` -> `firewall` -> `monitoring` -> `portainer` -> `labmonitor-foundation` -> `k8s-platform`.
+- `compose/` is host-native Docker Compose. `k8s/` contains only Kubernetes-side resources. Do not create Kubernetes Services or EndpointSlices for Compose services; Traefik's file provider routes Cockpit, Jenkins, n8n, and Metabase directly to `server_lan_ip`.
+- The platform foundation is final infrastructure only: Prometheus/Grafana, read-only Docker and Jenkins providers, Portainer, and LabMonitor identity/configuration. It deliberately does not deploy a `labmonitor-api` workload, product dashboards, workflows, or restores.
 
-```
-├── ansible/                    # Ansible playbooks
-│   ├── playbook.yml           # Base server setup
-│   ├── k3s_playbook.yml       # K3s installation
-│   ├── k8s_apps_playbook.yml  # Kubernetes apps deployment + local TLS + external services
-│   ├── casaos_playbook.yml    # CasaOS native install (host port 8081)
-│   ├── nvm_node_pnpm_playbook.yml
-│   ├── zsh_starship_playbook.yml
-│   ├── sdkman_playbook.yml
-│   ├── inventory.example.ini  # Public-safe inventory template
-│   ├── inventory.ini          # Local inventory (gitignored)
-│   └── secrets.yml            # Ansible Vault secrets (future)
-├── k8s/                       # Kubernetes manifests
-│   ├── external-services/      # Services + EndpointSlices for host-native/docker apps
-│   ├── ingress/
-│   ├── monitoring/
-│   ├── portainer/
-│   └── secrets/
-└── .vscode/settings.json
-```
+## Layout
 
-## Build/Test/Lint Commands
+- `ansible/roles/`: host and platform implementation. `monitoring`, `portainer`, and `labmonitor-foundation` are platform-foundation roles.
+- `compose/`: `postgres`, `jenkins`, `n8n`, `metabase`, `docker-provider`, and `portainer-agent` Compose projects. Host data lives in `/srv/home-server/data/<service>`, never in this repository.
+- `k8s/monitoring/`: Docker metrics exporter source and Grafana dashboard JSON. `k8s/labmonitor/rbac.yaml` is the future LabMonitor reader RBAC.
+- `scripts/verify/platform.sh`: read-only live acceptance suite. It validates positive and negative security contracts and must not be changed to weaken a failed check.
+- `tests/test_platform_contract.py` and `tests/test_jenkins_clean_baseline.py`: static contract tests.
 
-### Ansible Playbooks
+## Environment And Secrets
 
-All playbooks run from the `ansible/` directory:
+- Real inventories and Vault files are ignored: `ansible/inventories/<env>/hosts.yml` and `group_vars/all/{vars.yml,vault.yml}`. Tracked `*.example.yml` files must use only `192.0.2.10` / `192.0.2.11` placeholders.
+- Keep TLS material only in ignored `ansible/secrets/<env>-tls.{crt,key}` and Vault-backed generated host `.env` files only on the server. Never print rendered `.env` content or secret values; use `no_log: true` for tasks that handle them.
+- Every externally pulled image is pinned in inventory defaults. Do not add `latest`, an unpinned image, a real LAN IP, a password, token, certificate, or Vault content to tracked files.
+- `jenkins_clean_reset_confirmed: true` authorizes a one-time destructive Jenkins clean baseline only while `/srv/home-server/data/jenkins/.clean-baseline-complete` is absent. Leave example inventories `false`; reset the real inventory to `false` after the approved baseline run.
 
-```bash
-# Base server setup (packages + Docker)
-ansible-playbook -i inventory.ini playbook.yml --ask-become-pass
+## Security Boundaries
 
-# Install K3s
-ansible-playbook -i inventory.ini k3s_playbook.yml --ask-become-pass
+- Docker's daemon remains Unix-socket-only. `docker-provider` is the sole monitoring path: GET-only socket proxy on `server_lan_ip:12375`, reachable only from the k3s pod CIDR. Never expose it through an Ingress, NodePort, or LAN/VPN firewall exception.
+- `docker-metrics-exporter` must use the proxy, not mount `/var/run/docker.sock`. The Portainer Docker Agent is the explicit administrative RW socket exception and remains isolated in its own Compose project on port `9001`.
+- Jenkins must not join `home-server-data`; only n8n bridges automation and data networks. `automation_writer` owns shared `automation`; `automation_reader` is read-only and never gains ownership, DML, or `CREATE`.
+- `labmonitor-api` is least-privilege: read cluster topology and exactly two named ConfigMaps, never Secrets or write verbs. Do not add a LabMonitor Deployment in this repository.
+- Human UIs use Traefik/NodePorts as configured. PostgreSQL and providers are not HTTP ingress targets.
 
-# Deploy Kubernetes apps (Portainer, Prometheus Stack, Ingress TLS, external services)
-ansible-playbook -i inventory.ini k8s_apps_playbook.yml --ask-become-pass
+## Ansible Implementation Notes
 
-# Development environment
-ansible-playbook -i inventory.ini nvm_node_pnpm_playbook.yml --ask-become-pass
-ansible-playbook -i inventory.ini zsh_starship_playbook.yml --ask-become-pass
-ansible-playbook -i inventory.ini sdkman_playbook.yml --ask-become-pass
+- `kubernetes.core.k8s` executes on the managed host. If its `src` refers to a repository file, first stage it on the host with `copy` or `template` (for example under `/tmp/home-server-*`) and then apply the host-local path. Do not give the module a controller-only `playbook_dir` path.
+- Use `kubeconfig: "{{ kubeconfig_path }}"` for every cluster-touching `kubernetes.core` module and `kubectl` command. Helm uses `/usr/local/bin/helm` pinned to v3 because the collection needs the removed-in-v4 `helm repo` workflow.
+- Render Secret manifests with `0600` and `no_log: true`; non-secret static manifests may be staged as `root:root` `0644`.
+- Compose services must be healthy before `firewall` and `k8s-platform`; their first full-run port exposure is a known transient window. For a first lab bootstrap, close it with the documented split runs below.
 
-# Install CasaOS
-ansible-playbook -i inventory.ini casaos_playbook.yml --ask-become-pass
-
-# Note: CasaOS is configured to run on host port 8081
-# to avoid conflict with Traefik on ports 80/443.
-
-# Generate local TLS certificate for home.arpa hosts (run on admin machine)
-mkcert -install
-mkcert \
-  -cert-file ansible/secrets/local-home-arpa-tls.crt \
-  -key-file ansible/secrets/local-home-arpa-tls.key \
-  casaos.home.arpa \
-  jenkins.home.arpa \
-  metabase.home.arpa \
-  n8n.home.arpa \
-  portainer.home.arpa \
-  grafana.home.arpa
-
-# Generate Portainer AGENT_SECRET (local-only)
-openssl rand -hex 32 > ansible/secrets/portainer-agent-secret.txt
-chmod 600 ansible/secrets/portainer-agent-secret.txt
-
-# Syntax check all playbooks
-ansible-playbook --syntax-check playbook.yml
-ansible-playbook --syntax-check k3s_playbook.yml
-ansible-playbook --syntax-check k8s_apps_playbook.yml
-
-# List tasks without executing (dry run)
-ansible-playbook -i inventory.ini playbook.yml --list-tasks
-```
-
-### Required Ansible Collections
-
-Install before running playbooks:
+## Commands
 
 ```bash
-ansible-galaxy collection install kubernetes.core
-ansible-galaxy role install xanmanning.k3s
-ansible-galaxy collection install community.docker
+# Controller setup and static checks
+export ANSIBLE_CONFIG="$PWD/ansible/ansible.cfg"
+ansible-playbook --syntax-check ansible/site.yml
+python3 -m unittest tests.test_platform_contract tests.test_jenkins_clean_baseline
+bash -n scripts/hosts/generate-hosts.sh
+bash -n scripts/verify/platform.sh
+git diff --check
+
+# Render every Compose project with sanitized inputs
+for service in postgres jenkins n8n metabase docker-provider portainer-agent; do
+  docker compose --env-file "compose/$service/.env.example" \
+    -f "compose/$service/compose.yaml" config >/dev/null
+done
+
+# Full lab run (real ignored inventory and Vault required)
+ansible-playbook -i ansible/inventories/lab/hosts.yml \
+  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml
+
+# First lab bootstrap: close the Compose-before-firewall window immediately
+ansible-playbook -i ansible/inventories/lab/hosts.yml \
+  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
+  ansible/site.yml --tags compose-services
+ansible-playbook -i ansible/inventories/lab/hosts.yml \
+  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
+  ansible/site.yml --tags firewall,k8s-platform
 ```
 
-### YAML Validation
-
-For Kubernetes manifests and Ansible YAML files:
-
-```bash
-# Validate YAML syntax (requires yamllint)
-yamllint ansible/*.yml k8s/**/*.yaml
-
-# Or using Python YAML parser
-python3 -c "import yaml; [yaml.safe_load_all(open(f)) for f in ['playbook.yml']]"
-```
-
-### Kubernetes Manifests
-
-```bash
-# Apply manifests (requires kubectl configured)
-kubectl apply -f k8s/ --dry-run=client  # Validate without applying
-
-# Validate external host-services manifests
-kubectl apply --dry-run=client -f k8s/external-services/
-
-# Validate ingress split
-kubectl apply --dry-run=client -f k8s/ingress/tools-ingress.yaml
-kubectl apply --dry-run=client -f k8s/ingress/monitoring-ingress.yaml
-
-# Lint Kubernetes YAML
-kubectl create --dry-run=client -f k8s/portainer/portainer-deployment.yaml
-
-# Check Helm values files syntax
-helm lint ./k8s/monitoring/kube-prometheus-stack-values.yaml
-```
-
-## Code Style Guidelines
-
-### YAML Conventions
-
-1. **Document Separators**: Use `---` to separate multiple YAML documents in a single file
-2. **Indentation**: 2 spaces (no tabs)
-3. **Quotes**: Use quotes for strings containing special characters or variables:
-   - Ansible: Always quote variables: `name: "{{ ansible_user }}"`
-   - Kubernetes: Quote port numbers and special values if needed
-4. **Booleans**: Use lowercase `true`/`false` (not `True`/`False`)
-5. **Line Length**: Keep lines under 120 characters when practical
-
-### Ansible Best Practices
-
-1. **Task Names**: Use descriptive names in English, imperative mood:
-   - Good: `Ensure Docker is installed`
-   - Bad: `Installing docker`
-
-2. **Idempotency**: All tasks must be idempotent:
-   - Use `state: present` for packages
-   - Use `creates:` parameter for shell commands
-   - Use `changed_when:` to suppress spurious changes
-
-3. **Become**: Use `become: yes` only when necessary (per-task or per-play):
-   ```yaml
-   - name: Install package requiring root
-     apt:
-       name: curl
-       state: present
-     become: yes
-   ```
-
-4. **Variable Usage**:
-   - Always quote variable interpolation: `"{{ var_name }}"`
-   - Use descriptive variable names: `k8s_manifests_root` not `path`
-   - Define variables in `vars:` block or `ansible/group_vars/`
-
-5. **Error Handling**:
-   - Use `failed_when:` for conditional failures
-   - Use `changed_when: false` for informational commands
-   - Add `run_once: true` for tasks that should execute once per playbook run
-
-6. **Handler Conventions**:
-   - Notify handlers by name, not by task name
-   - Keep handlers simple and focused
-
-### Kubernetes Manifest Conventions
-
-1. **Resource Ordering**: Within a manifest file, resources should be ordered:
-   - Namespace (if creating)
-   - RBAC (ServiceAccount, ClusterRole, Role, RoleBinding, ClusterRoleBinding)
-   - ConfigMap / Secret
-   - Deployment / StatefulSet / DaemonSet
-   - Service
-   - Ingress
-
-2. **Naming Conventions**:
-   - Use lowercase with hyphens: `portainer-deployment.yaml`
-   - Resource names should be descriptive: `tools-ingress` not `ingress`
-   - Labels should follow: `app: portainer` or `app.kubernetes.io/name: grafana`
-
-3. **Ingress Annotations**:
-    - Always specify ingress class: `kubernetes.io/ingress.class: traefik`
-    - Use `pathType: Prefix` for most paths
-    - Prefer `spec.ingressClassName: traefik` in new manifests
-
-4. **Storage**:
-   - Use `storageClassName: local-path` for local-path provisioner
-   - Specify appropriate access modes: `ReadWriteOnce` for most cases
-
-### Secrets Management
-
-1. **Never commit actual secrets**: Use `.example.yaml` suffix for templates
-2. **Secret files pattern**: `*-admin-secret.yaml`
-3. **Check existence in playbooks**: Validate secrets exist before applying
-4. **Permissions**: Secret files should have `0600` permissions
-5. **Local TLS files**: keep mkcert outputs local-only in `ansible/secrets/`:
-   - `local-home-arpa-tls.crt`
-   - `local-home-arpa-tls.key`
-   - never commit them
-6. **Portainer agent secret**: keep local-only in `ansible/secrets/`:
-   - `portainer-agent-secret.txt`
-   - never commit it
-
-### Documentation
-
-1. **Playbook Headers**: Include `name:` for all plays and meaningful task names
-2. **Comments**: Add comments for non-obvious decisions or workarounds
-3. **README**: Keep `/k8s/README.md` updated with access instructions
-
-### General Conventions
-
-1. **Line Endings**: Use LF (Unix-style) - `.gitattributes` enforces this
-2. **File Encoding**: UTF-8
-3. **Executable Bit**: Only set on shell scripts, not on YAML/manifest files
-4. **Trailing Whitespace**: Remove trailing whitespace
-
-## Development Workflow
-
-1. **Before committing**:
-   - Run `ansible-playbook --syntax-check` on all modified playbooks
-   - Verify YAML syntax with `yamllint` (if available)
-   - Ensure no secrets are committed
-
-2. **Testing Changes**:
-   - Use `--check` mode: `ansible-playbook --check playbook.yml`
-   - Use `--diff` to see changes: `ansible-playbook --diff playbook.yml`
-   - Test on a single host with `--limit`
-
-3. **Order of Execution**:
-   ```
-   playbook.yml → k3s_playbook.yml → k8s_apps_playbook.yml
-   ```
-
-## Security Notes
-
-- Portainer Server no longer mounts `/var/run/docker.sock` directly
-- Kubernetes management is done through Portainer Agent in namespace `portainer` (ClusterRoleBinding to `cluster-admin`) - keep access control strict
-- Docker management is done through host `portainer_agent` on `<SERVER_LAN_IP>:9001` (uses Docker socket) - restrict access to trusted local network and keep `AGENT_SECRET` configured
-- Local HTTPS currently uses mkcert + trusted local CA for `*.home.arpa`
-- For production-grade cert automation, consider cert-manager
-- Remove NodePort services once Ingress is stable
-- Do not expose raw PostgreSQL (`5432`/`15432`) via HTTP Ingress; only web UIs (pgAdmin/Adminer) belong behind Ingress
-- Do not commit real LAN IPs in public docs/manifests; use placeholders and runtime variables (`SERVER_LAN_IP` / `ansible_host`)
+- Use a focused role tag for resumable live failures, then rerun the full play: `--tags monitoring`, `portainer`, or `labmonitor-foundation` all require prior roles to be healthy.
+- Repository-wide `yamllint ansible/ k8s/ compose/` currently reports baseline violations in existing files. Lint the changed YAML/template paths and do not treat unrelated baseline output as a regression.
+- Run `scripts/verify/platform.sh` on a provisioned lab host with `SERVER_LAN_IP`, `JENKINS_LABMONITOR_API_TOKEN`, and optionally `GRAFANA_ADMIN_PASSWORD`; it is read-only and is the final live acceptance check.

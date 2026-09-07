@@ -1,204 +1,283 @@
-# Configuração Ansible para Home Server
+# Home Server
 
-Este repositório contém playbooks Ansible e manifests Kubernetes para configurar um home server com k3s, observabilidade (Prometheus/Grafana), Portainer e integração de serviços externos do host via Traefik.
+Ansible provisions a complete single-node home-server platform on a clean
+**Ubuntu 26.04** host. The same code deploys either a `lab` environment
+(`lab.arpa`) or a production environment (`home.arpa`).
 
-## Estrutura de Arquivos
+The platform includes a hardened host, Docker, k3s, Traefik, Compose services,
+monitoring, and administration tooling. Persistent service data is stored on
 
-- `ansible/`: Diretório principal com playbooks.
-  - `playbook.yml`: Setup base (pacotes essenciais, Docker opcional, utilitários).
-  - `k3s_playbook.yml`: Instala e configura k3s (via role `xanmanning.k3s`).
-  - `k8s_apps_playbook.yml`: Implanta stack Kubernetes (Portainer + kube-prometheus-stack + cAdvisor + external-services + ingress TLS).
-  - `casaos_playbook.yml`: Instala CasaOS nativo no Ubuntu e fixa porta `8081`.
-  - `nvm_node_pnpm_playbook.yml`: Instala NVM, Node LTS e pnpm.
-  - `zsh_starship_playbook.yml`: Instala Zsh, Oh My Zsh e Starship.
-  - `sdkman_playbook.yml`: Instala SDKMAN! e dependências.
-  - `inventory.ini`: Inventário de hosts.
-  - `secrets.yml`: Reservado para uso futuro com Ansible Vault.
-- `k8s/`: Manifests da stack.
-  - `external-services/`: Services sem selector + EndpointSlices para apps fora do cluster.
-  - `ingress/`: Ingress separados (`tools` e `monitoring`) com TLS local.
-  - `monitoring/`, `portainer/`, `secrets/`: componentes da stack.
+## Services
 
-## Arquitetura de acesso local
+| Service    | Purpose                              | HTTPS address                 | Direct access (IP:port)        |
+| ---------- | ------------------------------------ | ----------------------------- | ------------------------------ |
+| Cockpit    | Host administration                  | `https://cockpit.<domain>`    | `https://<server LAN IP>:9090` |
+| Jenkins    | CI automation                        | `https://jenkins.<domain>`    | `http://<server LAN IP>:18080` |
+| n8n        | Workflow automation                  | `https://n8n.<domain>`        | `http://<server LAN IP>:15678` |
+| Metabase   | Analytics                            | `https://metabase.<domain>`   | `http://<server LAN IP>:13001` |
+| Grafana    | Dashboards and visualization         | `https://grafana.<domain>`    | `http://<server LAN IP>:30300` |
+| Prometheus | Metrics collection and queries       | `https://prometheus.<domain>` | `http://<server LAN IP>:30909` |
+| Portainer  | Docker and Kubernetes administration | `https://portainer.<domain>`  | `http://<server LAN IP>:30900` |
 
-- Ponto único de entrada em `80/443`: Traefik do k3s.
-- CasaOS continua rodando nativo no host em `8081`.
-- Serviços externos ao cluster (CasaOS/Jenkins/Metabase/n8n) são roteados via:
-  - `Service` Kubernetes sem selector
-  - `EndpointSlice` apontando para `<SERVER_LAN_IP>` e porta publicada no host
-- Domínio padrão local: `home.arpa` (não usar `.local` para estes acessos).
+`<domain>` is `lab.arpa` for lab or `home.arpa` for production. Traefik serves
+these HTTPS endpoints. Cockpit, Jenkins, n8n, and Metabase run as host-native
+Compose services; Grafana, Prometheus, and Portainer run in k3s.
+Direct IP:port access is allowed only from LAN/VPN. Jenkins,
+n8n, and Metabase answer plain HTTP only (TLS is terminated at Traefik); prefer
+the HTTPS addresses.
 
-Hosts usados:
+PostgreSQL is an internal database service, not an HTTP endpoint. The Docker
+socket provider, Docker metrics exporter, and LabMonitor foundation are
+internal-only components. In particular, the Docker provider on port `12375`
+cannot be reached by LAN, VPN, Ingress, or NodePort clients.
 
-- `casaos.home.arpa`
-- `jenkins.home.arpa`
-- `metabase.home.arpa`
-- `n8n.home.arpa`
-- `portainer.home.arpa`
-- `grafana.home.arpa`
+## Prerequisites
 
-## Pré-requisitos
+### Administration workstation
 
-1. **Ansible instalado** na máquina local.
-2. **Acesso SSH** ao servidor alvo com chave configurada.
-3. **Coleções e roles Ansible**:
+- Python 3
+- SSH key access to the target host and a non-root sudo-capable user
+- `mkcert` for local HTTPS certificates
+- Docker Compose, if you will run the local Compose rendering checks
 
-   ```bash
-   ansible-galaxy collection install kubernetes.core
-   ansible-galaxy role install xanmanning.k3s
-   ansible-galaxy collection install community.docker
-   ```
+### Target host
 
-4. **mkcert** instalado na máquina de administração (para HTTPS local).
-5. Crie seu inventário local a partir do exemplo:
+- A clean Ubuntu **26.04** installation
+- A reachable LAN address
+- SSH access for the administration user
 
-   ```bash
-   cp ansible/inventory.example.ini ansible/inventory.ini
-   ```
+## Install the Controller Dependencies
 
-## Variáveis locais para evitar IP hardcoded
-
-Como este repositório é público, o IP LAN real não deve ficar commitado.
-
-Use uma destas opções:
-
-1. editar `ansible/inventory.ini` local com seus valores reais (não commitar alterações locais), ou
-2. exportar variáveis de ambiente antes dos playbooks:
+Run from the repository root:
 
 ```bash
-export SERVER_LAN_IP="<SERVER_LAN_IP>"
-export DOCKER_HOST_AGENT_BIND_IP="$SERVER_LAN_IP"
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r ansible/requirements.txt
+ansible-galaxy collection install -r ansible/requirements.yml
+ansible-galaxy role install -r ansible/requirements.yml
+export ANSIBLE_CONFIG="$PWD/ansible/ansible.cfg"
 ```
 
-As variáveis são usadas por:
+Reactivate `.venv` and export `ANSIBLE_CONFIG` in every new shell.
 
-- `ansible/k3s_playbook.yml` (`node-ip` e `node-external-ip`)
-- `ansible/k8s_apps_playbook.yml` (EndpointSlices e bind do Docker Agent)
+## Configure an Environment
 
-## HTTPS local com mkcert (home.arpa)
-
-Gerar certificado e chave usados pelo playbook:
+Choose `lab` or `prod` and use that name consistently below:
 
 ```bash
+export ENVIRONMENT=lab
+# For production: export ENVIRONMENT=prod
+
+cp "ansible/inventories/$ENVIRONMENT/hosts.example.yml" \
+  "ansible/inventories/$ENVIRONMENT/hosts.yml"
+mkdir -p "ansible/inventories/$ENVIRONMENT/group_vars/all"
+cp "ansible/inventories/$ENVIRONMENT/group_vars/all.example.yml" \
+  "ansible/inventories/$ENVIRONMENT/group_vars/all/vars.yml"
+```
+
+Edit `hosts.yml` and set `ansible_host` to the target's real LAN IP. Then edit
+`group_vars/all/vars.yml`:
+
+- Keep `environment_name` and `base_domain` paired: `lab` / `lab.arpa`, or
+  `prod` / `home.arpa`.
+- Set `lan_cidr`, optionally `vpn_cidr`, and `base_timezone` for your network
+  and location.
+- Leave `server_lan_ip: "{{ ansible_host }}"` unless the host has a different
+  service address.
+- Set `server_lan_interface` or `k3s_flannel_interface` only when automatic
+  interface selection is unsuitable.
+- Keep image references pinned to `name:tag@sha256:<digest>` where the example
+  requires a digest. Never use `latest`.
+- Review ports, retention, storage sizes, and NodePorts before deployment.
+- Leave `jenkins_clean_reset_confirmed: false` unless you explicitly authorize
+  the destructive Jenkins clean baseline. This is a one-shot operation: it
+  runs only while `/srv/home-server/data/jenkins/.clean-baseline-complete` is
+  absent. To run it again, remove that marker and explicitly set the variable
+  to `true`; set it back to `false` immediately after the approved run.
+
+The tracked examples use documentation IPs only. Do not commit the generated
+
+## Configure the Vault
+
+Create the environment Vault:
+
+```bash
+ansible-vault create "ansible/inventories/$ENVIRONMENT/group_vars/all/vault.yml"
+```
+
+It must define non-empty, distinct secret values for:
+
+```yaml
+k3s_token: "<random token>"
+postgres_superuser_password: "<unique password>"
+postgres_n8n_password: "<unique password>"
+postgres_metabase_password: "<unique password>"
+n8n_encryption_key: "<random key>"
+jenkins_admin_password: "<unique password>"
+postgres_automation_writer_password: "<unique password>"
+postgres_automation_reader_password: "<unique password>"
+jenkins_labmonitor_password: "<unique password>"
+jenkins_labmonitor_api_token: "<Jenkins fixed token>"
+jenkins_prometheus_password: "<unique password>"
+jenkins_prometheus_api_token: "<Jenkins fixed token>"
+monitoring_grafana_admin_password: "<unique password>"
+portainer_agent_secret: "<random shared agent secret>"
+```
+
+Jenkins provider API tokens must have the exact format `11` followed by 32
+lowercase hexadecimal characters. Generate one without exposing it in the
+repository:
+
+```bash
+python3 -c "import secrets; print('11' + secrets.token_hex(16))"
+```
+
+All five PostgreSQL passwords must be different. The Jenkins passwords and
+tokens must also be different from each other and from the Jenkins admin
+password. Never print or commit Vault content or generated host `.env` files.
+
+## Configure HTTPS
+
+The deployment requires a certificate and key on the administration
+workstation. Generate them before the first deployment.
+
+```bash
+export ENVIRONMENT=lab
+export DOMAIN=lab.arpa
+# For production: ENVIRONMENT=prod and DOMAIN=home.arpa
+
+mkdir -p ansible/secrets
 mkcert -install
 mkcert \
-  -cert-file ansible/secrets/local-home-arpa-tls.crt \
-  -key-file ansible/secrets/local-home-arpa-tls.key \
-  casaos.home.arpa \
-  jenkins.home.arpa \
-  metabase.home.arpa \
-  n8n.home.arpa \
-  portainer.home.arpa \
-  grafana.home.arpa
-mkcert -CAROOT
+  -cert-file "ansible/secrets/${ENVIRONMENT}-tls.crt" \
+  -key-file "ansible/secrets/${ENVIRONMENT}-tls.key" \
+  "cockpit.${DOMAIN}" \
+  "jenkins.${DOMAIN}" \
+  "n8n.${DOMAIN}" \
+  "metabase.${DOMAIN}" \
+  "grafana.${DOMAIN}" \
+  "prometheus.${DOMAIN}" \
+  "portainer.${DOMAIN}"
+chmod 600 "ansible/secrets/${ENVIRONMENT}-tls.key"
 ```
 
-Notas:
-
-- Os arquivos `ansible/secrets/local-home-arpa-tls.crt` e `ansible/secrets/local-home-arpa-tls.key` são locais e não versionados.
-- Cada cliente que acessar os hosts `*.home.arpa` precisa confiar na CA raiz do mkcert, senão o browser exibirá alerta de certificado.
-
-## Portainer para Kubernetes + Docker (persistente)
-
-O deploy atual deixa o Portainer Server no namespace `tools` e adiciona:
-
-- Portainer Agent Kubernetes no namespace `portainer`
-- Portainer Agent Docker no host (container `portainer_agent` em `<SERVER_LAN_IP>:9001`)
-- `AGENT_SECRET` compartilhado entre server e agents
-
-Antes de executar `k8s_apps_playbook.yml`, crie um segredo forte local:
+Each client that opens the HTTPS URLs must trust the mkcert local CA. Configure
+your local DNS server with the seven names above, or generate client host
+mappings from the inventory:
 
 ```bash
-openssl rand -hex 32 > ansible/secrets/portainer-agent-secret.txt
-chmod 600 ansible/secrets/portainer-agent-secret.txt
+./scripts/hosts/generate-hosts.sh "$ENVIRONMENT"
 ```
 
-Depois de aplicar o playbook, no Portainer UI:
+The script prints mappings only; review and add them to the client manually.
+It prompts for the Vault password because it reads the environment inventory.
 
-1. Add environment -> Kubernetes -> Agent
-   - Address: `portainer-agent.portainer.svc.cluster.local:9001`
-2. Add environment -> Docker Standalone -> Agent
-   - Address: `<SERVER_LAN_IP>:9001`
+## Validate Before Deployment
 
-Sem protocolo (`http://`/`https://`) no campo de endereço.
+Set the target environment again if you opened a new terminal:
 
-## Como executar os playbooks
+```bash
+export ENVIRONMENT=lab
+# For production: export ENVIRONMENT=prod
+export HOME_SERVER_SSH_USER="<target-ssh-user>"
+export ANSIBLE_CONFIG="$PWD/ansible/ansible.cfg"
+test -f "ansible/inventories/$ENVIRONMENT/hosts.yml"
 
-Execute sempre a partir de `ansible/`.
+ansible-playbook \
+  -i "ansible/inventories/$ENVIRONMENT/hosts.example.yml" \
+  --syntax-check ansible/site.yml
+ansible-inventory -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
+  --graph --ask-vault-pass
+ansible -i "ansible/inventories/$ENVIRONMENT/hosts.yml" all -m ping \
+  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass
 
-1. **Configuração inicial do servidor**
-
-   ```bash
-   ansible-playbook -i inventory.ini playbook.yml --ask-become-pass
-   ```
-
-2. **Instalar k3s**
-
-   ```bash
-   ansible-playbook -i inventory.ini k3s_playbook.yml --ask-become-pass
-   ```
-
-3. **Instalar CasaOS (nativo no host)**
-
-   ```bash
-   ansible-playbook -i inventory.ini casaos_playbook.yml --ask-become-pass
-   ```
-
-   O CasaOS permanece no host em `8081`, sem competir com Traefik em `80/443`.
-
-4. **Deploy da stack k8s (Ingress TLS + serviços externos)**
-
-   Antes de rodar:
-
-   - Crie os secrets reais a partir de `k8s/secrets/*.example.yaml`.
-   - Gere os arquivos TLS do mkcert em `ansible/secrets/`.
-
-   ```bash
-   ansible-playbook -i inventory.ini k8s_apps_playbook.yml --ask-become-pass
-   ```
-
-5. **Ambiente de desenvolvimento (opcional)**
-
-   ```bash
-   ansible-playbook -i inventory.ini nvm_node_pnpm_playbook.yml --ask-become-pass
-   ansible-playbook -i inventory.ini zsh_starship_playbook.yml --ask-become-pass
-   ansible-playbook -i inventory.ini sdkman_playbook.yml --ask-become-pass
-   ```
-
-## Acesso aos serviços
-
-Após o deploy com `k8s_apps_playbook.yml`:
-
-- CasaOS: `https://casaos.home.arpa`
-- Jenkins: `https://jenkins.home.arpa`
-- Metabase: `https://metabase.home.arpa`
-- n8n: `https://n8n.home.arpa`
-- Portainer: `https://portainer.home.arpa`
-- Grafana: `https://grafana.home.arpa`
-
-Fallback opcional atual:
-
-- Portainer NodePort: `http://<IP_DO_SERVIDOR>:30900`
-
-## DNS local / resolução de nomes
-
-Opção rápida (`/etc/hosts` no cliente):
-
-```text
-<SERVER_LAN_IP> casaos.home.arpa jenkins.home.arpa metabase.home.arpa n8n.home.arpa portainer.home.arpa grafana.home.arpa
+python3 -m unittest tests.test_platform_contract tests.test_jenkins_clean_baseline
+bash -n scripts/hosts/generate-hosts.sh
+bash -n scripts/verify/platform.sh
+git diff --check
 ```
 
-Opção recomendada: configurar DNS local (roteador, AdGuard Home, Pi-hole) com os mesmos hosts.
+To validate every Compose definition with sanitized inputs:
 
-`*.local` está descontinuado para estes acessos.
+```bash
+for service in postgres jenkins n8n metabase docker-provider portainer-agent; do
+  docker compose --env-file "compose/$service/.env.example" \
+    -f "compose/$service/compose.yaml" config >/dev/null
+done
+```
 
-## Segurança e notas importantes
+## Deploy
 
-- Portainer agora opera com separação de responsabilidades:
-  - Portainer Server no namespace `tools`, sem mount direto de `docker.sock`
-  - Portainer Agent Kubernetes no namespace `portainer`
-  - Portainer Agent Docker no host em `<SERVER_LAN_IP>:9001`
-- `AGENT_SECRET` é obrigatório para vínculo entre server e agents.
-- Como o Docker Agent usa o socket do Docker do host, o endpoint Docker ainda é privilegiado e deve ficar restrito à rede local confiável.
-- Este fluxo trata apenas de serviços **HTTP/HTTPS** atrás de Ingress.
-- PostgreSQL puro (`15432`/`5432`) **não** deve ser exposto por Ingress HTTP; se precisar TLS para banco, tratar separadamente com solução TCP/TLS apropriada.
+For the first deployment, close the short interval between Compose port
+publication and firewall enforcement with the two initial runs below. Then run
+
+```bash
+ansible-playbook -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
+  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
+  ansible/site.yml --tags compose-services
+
+ansible-playbook -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
+  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
+  ansible/site.yml --tags firewall,k8s-platform
+
+ansible-playbook -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
+  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
+  ansible/site.yml
+```
+
+Subsequent runs are idempotent. For a resumable failure, run the affected role
+tag, such as `--tags monitoring`, `--tags portainer`, or
+`--tags labmonitor-foundation`, then rerun the full playbook.
+
+## Verify the Deployment
+
+The script must run **on the provisioned server** (root or sudo): it uses the
+local k3s `kubectl`, inspects `ufw`/`iptables`, and queries endpoints that only
+answer on the host itself. Copy the script to the server and run it there:
+
+```bash
+# From your client (the Ansible controller):
+scp scripts/verify/platform.sh "$HOME_SERVER_SSH_USER@<server LAN IP>":/tmp/
+
+# On the server:
+ssh "$HOME_SERVER_SSH_USER@<server LAN IP>"
+sudo env SERVER_LAN_IP="<server LAN IP>" \
+  JENKINS_LABMONITOR_API_TOKEN="<Vault token>" \
+  GRAFANA_ADMIN_PASSWORD="<Vault password>" \
+  bash /tmp/platform.sh
+```
+
+It checks service readiness, Prometheus targets, Grafana,
+Portainer, Jenkins provider permissions, Docker provider boundaries,
+LabMonitor RBAC, and discovery metadata.
+
+`GRAFANA_ADMIN_PASSWORD` is optional: the script can read the live Kubernetes
+Secret when permitted. The script never changes firewall state or prints
+credentials.
+
+From a separate LAN or VPN client (your client machine, not the server itself —
+a test from inside the host cannot prove the port is closed to external
+clients), this request must fail. A successful
+response means the Docker provider boundary is incorrectly exposed:
+
+```bash
+curl --connect-timeout 5 "http://<server LAN IP>:12375/version"
+```
+
+## Operational Boundaries
+
+- Compose services are routed by Traefik's file provider. Do not create
+  Kubernetes Services or EndpointSlices for Cockpit, Jenkins, n8n, or
+  Metabase.
+- Docker monitoring uses the read-only proxy on port `12375`; the metrics
+  exporter must not mount `/var/run/docker.sock`.
+- The Portainer Docker Agent is the only administrative read-write Docker
+  socket exception and remains isolated on port `9001`.
+- Jenkins does not join the database network. n8n is the only service joining
+  both automation and data networks. `automation_writer` owns the shared
+  database; `automation_reader` has no write or `CREATE` privilege.
+- The LabMonitor identity can read cluster topology and two named ConfigMaps,
+  but cannot read Secrets or change cluster resources. No LabMonitor web API
+  or workload is deployed by this repository.
