@@ -2,7 +2,7 @@
 
 Seven named cases, inspecting Dockerfile, Compose YAML, role defaults/tasks,
 and example inventories. Must fail against 2.504.3-lts-jdk17 and pass after
-2.568.2-lts-jdk21 digest-pinned clean baseline.
+2.568.3-lts-jdk21 digest-pinned clean baseline.
 """
 import pathlib
 import re
@@ -10,9 +10,9 @@ import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 
-TARGET_IMAGE = "jenkins/jenkins:2.568.2-lts-jdk21@sha256:8547df3b0db2803d158ecc9499207a056bb30c23fddc18bb5b4a4dc14e77dd09"
-TARGET_DIGEST = "sha256:8547df3b0db2803d158ecc9499207a056bb30c23fddc18bb5b4a4dc14e77dd09"
-TARGET_TAG = "2.568.2-lts-jdk21"
+TARGET_IMAGE = "jenkins/jenkins:2.568.3-lts-jdk21@sha256:c1e4c349365f6d16d88595b2c5f7e8ff39b8ae1d061f62420bac193b4b9616d0"
+TARGET_DIGEST = "sha256:c1e4c349365f6d16d88595b2c5f7e8ff39b8ae1d061f62420bac193b4b9616d0"
+TARGET_TAG = "2.568.3-lts-jdk21"
 OLD_TAG = "2.504.3-lts-jdk17"
 OLD_DIGEST = "sha256:dd570585c3adadefcfbeba915e27bf7feca1815a0ea8a659d46b51f54fc7ea06"
 
@@ -32,7 +32,7 @@ def read(p: pathlib.Path) -> str:
 
 class TestJenkinsCleanBaseline(unittest.TestCase):
     def test_target_image_uses_java21_lts_version(self):
-        """Defaults and both example inventories must use exact 2.568.2-lts-jdk21 and no jdk17/latest refs."""
+        """Defaults and both example inventories must use exact 2.568.3-lts-jdk21 and no jdk17/latest refs."""
         for path in (DEFAULTS, LAB_EXAMPLE, PROD_EXAMPLE):
             self.assertTrue(path.is_file(), f"missing {path}")
             content = read(path)
@@ -40,7 +40,7 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
                           f"{path} must contain {TARGET_TAG}")
             self.assertIn(TARGET_IMAGE, content,
                           f"{path} must contain full digest-pinned image {TARGET_IMAGE}")
-            self.assertIn('compose_jenkins_build_tag_prefix: "2.568.2-lts-jdk21"', content,
+            self.assertIn('compose_jenkins_build_tag_prefix: "2.568.3-lts-jdk21"', content,
                           f"{path} must pin build tag prefix to {TARGET_TAG} — got {path.read_text()[:500]}")
             self.assertNotIn(OLD_TAG, content,
                              f"{path} must not contain old tag {OLD_TAG}")
