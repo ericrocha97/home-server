@@ -13,6 +13,7 @@ USER root
 # the client is needed — the daemon (containerd/runc/iptables) is unused here.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       docker-cli curl gpg ca-certificates gosu tini \
+      bash git gawk grep sed coreutils findutils \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
          -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \

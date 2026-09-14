@@ -331,6 +331,30 @@ JENKINS_ENV_EXAMPLE = REPO / "compose/jenkins/.env.example"
 JENKINS_ENV_TEMPLATE = REPO / "ansible/roles/compose-services/templates/jenkins.env.j2"
 PHASE1_GROOVY = REPO / "ansible/roles/compose-services/templates/jenkins-init-admin.groovy.j2"
 PHASE2_GROOVY = REPO / "ansible/roles/compose-services/templates/jenkins-provider-users.groovy.j2"
+JENKINS_BLUEFIN_GROOVY = (
+    REPO / "ansible/roles/compose-services/templates/jenkins-bluefin.groovy.j2"
+)
+
+EXPECTED_JENKINS_PLUGINS = [
+    "prometheus:860.v532442b_44e9a_",
+    "matrix-auth:3.3",
+    "workflow-aggregator:608.v67378e9d3db_1",
+    "git:5.10.1",
+    "credentials:1511.v2e3cb_0008ef0",
+    "credentials-binding:728.v902a_273b_8947",
+    "timestamper:1.30",
+]
+
+FORBIDDEN_JENKINS_PLUGINS = [
+    "docker-workflow",
+    "docker-commons",
+    "http_request",
+    "kubernetes",
+    "blueocean",
+    "ssh-agent",
+    "github-branch-source",
+]
+
 COMPOSE_TASKS = REPO / "ansible/roles/compose-services/tasks/main.yml"
 N8N_COMPOSE = REPO / "compose/n8n/compose.yaml"
 METABASE_COMPOSE = REPO / "compose/metabase/compose.yaml"
@@ -582,19 +606,23 @@ class TestJenkinsProviders(unittest.TestCase):
                           f"{path} must expose one navigable labmonitor URL")
 
     def test_jenkins_plugin_file_has_exact_versions(self):
-        """plugins.txt pins the two pinned plugins; Dockerfile installs via the image CLI."""
+        """plugins.txt pins exactly the 7 required top-level plugins; no forbidden extras."""
         self.assertTrue(JENKINS_PLUGINS.is_file(), f"missing {JENKINS_PLUGINS}")
         lines = [ln.strip() for ln in read(JENKINS_PLUGINS).splitlines()
                  if ln.strip() and not ln.strip().startswith("#")]
-        self.assertEqual(sorted(lines),
-                         sorted(["prometheus:860.v532442b_44e9a_", "matrix-auth:3.3"]),
-                         f"{JENKINS_PLUGINS} must pin exactly prometheus:860.v532442b_44e9a_ "
-                         f"and matrix-auth:3.3 — got {lines}")
-        self.assertEqual(len(lines), 2,
-                         f"{JENKINS_PLUGINS} must contain exactly two pinned plugins — got {lines}")
+        self.assertEqual(sorted(lines), sorted(EXPECTED_JENKINS_PLUGINS),
+                         f"{JENKINS_PLUGINS} must pin exactly {EXPECTED_JENKINS_PLUGINS} — got {lines}")
+        self.assertEqual(len(lines), len(EXPECTED_JENKINS_PLUGINS),
+                         f"{JENKINS_PLUGINS} must contain exactly {len(EXPECTED_JENKINS_PLUGINS)} pins — got {lines}")
         for line in lines:
             self.assertNotIn("latest", line.lower(),
                              f"{JENKINS_PLUGINS} must never use 'latest' — got {line}")
+            self.assertRegex(line, r"^[a-z0-9-]+:[0-9]",
+                             f"{JENKINS_PLUGINS} entries must be name:version — got {line}")
+        joined = read(JENKINS_PLUGINS)
+        for forbidden in FORBIDDEN_JENKINS_PLUGINS:
+            self.assertNotIn(forbidden, joined,
+                             f"{JENKINS_PLUGINS} must not contain {forbidden}")
         dockerfile = read(JENKINS_DOCKERFILE)
         self.assertIn("ARG JENKINS_BASE_IMAGE", dockerfile,
                       f"{JENKINS_DOCKERFILE} must keep the base image in a required build arg")
@@ -602,8 +630,6 @@ class TestJenkinsProviders(unittest.TestCase):
                       f"{JENKINS_DOCKERFILE} must build FROM ${{JENKINS_BASE_IMAGE}}")
         self.assertNotIn("FROM jenkins/jenkins:", dockerfile,
                          f"{JENKINS_DOCKERFILE} must not hardcode the base image reference")
-        # Debian trixie split the CLI out of docker.io (Recommends only); with
-        # --no-install-recommends the image would ship no /usr/bin/docker.
         self.assertIn("docker-cli", dockerfile,
                       f"{JENKINS_DOCKERFILE} must install docker-cli explicitly for the dockersock check")
         self.assertIn("plugins.txt", dockerfile,
@@ -613,6 +639,20 @@ class TestJenkinsProviders(unittest.TestCase):
         tasks = read(COMPOSE_TASKS)
         self.assertIn("plugins.txt", tasks,
                       f"{COMPOSE_TASKS} must ship plugins.txt to the host and fingerprint it")
+
+    def test_jenkins_dockerfile_has_pipeline_cli_tooling(self):
+        """The agent image carries the Unix/CLI tooling the Jenkinsfiles shell out to."""
+        self.assertTrue(JENKINS_DOCKERFILE.is_file(), f"missing {JENKINS_DOCKERFILE}")
+        dockerfile = read(JENKINS_DOCKERFILE)
+        for pkg in ("gawk", "grep", "sed", "coreutils", "findutils", "bash"):
+            self.assertRegex(dockerfile, rf"\b{re.escape(pkg)}\b",
+                             f"{JENKINS_DOCKERFILE} must install {pkg}")
+        self.assertRegex(dockerfile, r"\bgit\b",
+                         f"{JENKINS_DOCKERFILE} must install git")
+        self.assertNotIn("dockerd", dockerfile,
+                         f"{JENKINS_DOCKERFILE} must not run a daemon (no DinD)")
+        self.assertNotIn("docker:dind", dockerfile,
+                         f"{JENKINS_DOCKERFILE} must not use docker:dind")
 
 
 EXPORTER_DEPLOYMENT = REPO / "ansible/roles/monitoring/templates/docker-exporter-deployment.yaml.j2"
