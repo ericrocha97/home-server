@@ -35,7 +35,7 @@
 - `kubernetes.core.k8s` executes on the managed host. If its `src` refers to a repository file, first stage it on the host with `copy` or `template` (for example under `/tmp/home-server-*`) and then apply the host-local path. Do not give the module a controller-only `playbook_dir` path.
 - Use `kubeconfig: "{{ kubeconfig_path }}"` for every cluster-touching `kubernetes.core` module and `kubectl` command. Helm uses `/usr/local/bin/helm` pinned to v3 because the collection needs the removed-in-v4 `helm repo` workflow.
 - Render Secret manifests with `0600` and `no_log: true`; non-secret static manifests may be staged as `root:root` `0644`.
-- Compose services must be healthy before `firewall` and `k8s-platform`; their first full-run port exposure is a known transient window. For a first lab bootstrap, close it with the documented split runs below.
+- Compose services must be healthy before `firewall`. `k8s-platform` is last and validates Services in the `monitoring`/`portainer` namespaces, so it requires `monitoring`, `portainer`, and `labmonitor-foundation` to have run first. On a truly empty host, install host prerequisites (`base,docker,cockpit,k3s`) before `compose-services` (Docker must exist), and close the Compose-before-firewall window with `--tags firewall` before the full reconcile run.
 
 ## Commands
 
@@ -58,15 +58,23 @@ done
 ansible-playbook -i ansible/inventories/lab/hosts.yml \
   -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml
 
-# First lab bootstrap: close the Compose-before-firewall window immediately
+# First bootstrap on an empty host: host prerequisites -> Compose -> close the
+# Compose-before-firewall window -> full reconcile. `k8s-platform` runs last and
+# needs monitoring/portainer/labmonitor-foundation to exist, so it is not a
+# standalone early tag.
+ansible-playbook -i ansible/inventories/lab/hosts.yml \
+  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
+  ansible/site.yml --tags base,docker,cockpit,k3s
 ansible-playbook -i ansible/inventories/lab/hosts.yml \
   -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
   ansible/site.yml --tags compose-services
 ansible-playbook -i ansible/inventories/lab/hosts.yml \
   -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
-  ansible/site.yml --tags firewall,k8s-platform
+  ansible/site.yml --tags firewall
+ansible-playbook -i ansible/inventories/lab/hosts.yml \
+  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass ansible/site.yml
 ```
 
-- Use a focused role tag for resumable live failures, then rerun the full play: `--tags monitoring`, `portainer`, or `labmonitor-foundation` all require prior roles to be healthy.
+- Use a focused role tag for resumable live failures, then rerun the full play: `--tags monitoring`, `portainer`, or `labmonitor-foundation` all require prior roles to be healthy. `k8s-platform` must run after `monitoring`, `portainer`, and `labmonitor-foundation` (it validates their namespaces).
 - Repository-wide `yamllint ansible/ k8s/ compose/` currently reports baseline violations in existing files. Lint the changed YAML/template paths and do not treat unrelated baseline output as a regression.
 - Run `scripts/verify/platform.sh` on a provisioned lab host with `SERVER_LAN_IP`, `JENKINS_LABMONITOR_API_TOKEN`, and optionally `GRAFANA_ADMIN_PASSWORD`; it is read-only and is the final live acceptance check.

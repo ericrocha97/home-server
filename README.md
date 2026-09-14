@@ -44,7 +44,10 @@ cannot be reached by LAN, VPN, Ingress, or NodePort clients.
 
 - A clean Ubuntu **26.04** installation
 - A reachable LAN address
-- SSH access for the administration user
+- SSH access for a non-root user with `sudo`. Passwordless `sudo` is
+  recommended for unattended runs; otherwise add `--ask-become-pass` to every
+  playbook command.
+- Docker and k3s are installed by the playbook; the host only needs SSH.
 
 ## Install the Controller Dependencies
 
@@ -97,7 +100,8 @@ Edit `hosts.yml` and set `ansible_host` to the target's real LAN IP. Then edit
   absent. To run it again, remove that marker and explicitly set the variable
   to `true`; set it back to `false` immediately after the approved run.
 
-The tracked examples use documentation IPs only. Do not commit the generated
+The tracked examples use documentation IPs only. Do not commit `hosts.yml`,
+`group_vars/all/vars.yml`, `vault.yml`, or generated host `.env` files.
 
 ## Configure the Vault
 
@@ -210,26 +214,48 @@ done
 
 ## Deploy
 
-For the first deployment, close the short interval between Compose port
-publication and firewall enforcement with the two initial runs below. Then run
+Roles run in this fixed order: `base` → `docker` → `cockpit` → `k3s` →
+`compose-services` → `docker-provider` → `firewall` → `monitoring` →
+`portainer` → `labmonitor-foundation` → `k8s-platform`. On an empty host two
+dependencies matter: `compose-services` needs Docker to already be installed,
+and `k8s-platform` validates Services in the `monitoring` and `portainer`
+namespaces, so it must run after those roles.
+
+Bootstrap an empty host in four steps: host prerequisites, Compose, close the
+port-exposure window, then reconcile everything.
 
 ```bash
+# 1. Host prerequisites — installs Docker and k3s (required before Compose)
 ansible-playbook -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
-  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
+  -u "$HOME_SERVER_SSH_USER" --ask-vault-pass \
+  ansible/site.yml --tags base,docker,cockpit,k3s
+
+# 2. Compose services — Docker is now available
+ansible-playbook -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
+  -u "$HOME_SERVER_SSH_USER" --ask-vault-pass \
   ansible/site.yml --tags compose-services
 
+# 3. Close the Compose-before-firewall window immediately
 ansible-playbook -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
-  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
-  ansible/site.yml --tags firewall,k8s-platform
+  -u "$HOME_SERVER_SSH_USER" --ask-vault-pass \
+  ansible/site.yml --tags firewall
 
+# 4. Reconcile the rest (monitoring → portainer → labmonitor → k8s-platform)
 ansible-playbook -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
-  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
+  -u "$HOME_SERVER_SSH_USER" --ask-vault-pass \
   ansible/site.yml
 ```
 
+If you accept the short port-exposure window, a single
+`ansible-playbook ... ansible/site.yml` performs the same steps in the correct
+order. Add `--ask-become-pass` to any command if the target's `sudo` requires a
+password.
+
 Subsequent runs are idempotent. For a resumable failure, run the affected role
 tag, such as `--tags monitoring`, `--tags portainer`, or
-`--tags labmonitor-foundation`, then rerun the full playbook.
+`--tags labmonitor-foundation`, then rerun the full playbook. Because
+`k8s-platform` is last and validates the `monitoring`/`portainer` namespaces,
+never run `--tags k8s-platform` before those roles have completed.
 
 ## Verify the Deployment
 

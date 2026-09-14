@@ -45,7 +45,10 @@ não pode ser acessado por clientes LAN, VPN, Ingress ou NodePort.
 
 - Uma instalação limpa do Ubuntu **26.04**
 - Um endereço LAN acessível
-- Acesso SSH para o usuário de administração
+- Acesso SSH para um usuário não root com `sudo`. `sudo` sem senha é
+  recomendado para execuções não assistidas; caso contrário, adicione
+  `--ask-become-pass` a todos os comandos do playbook.
+- Docker e k3s são instalados pelo playbook; o host precisa apenas de SSH.
 
 ## Instalar as Dependências do Controlador
 
@@ -212,27 +215,48 @@ done
 
 ## Fazer o Deploy
 
-Para o primeiro deploy, feche o curto intervalo entre a publicação de portas do
-Compose e a aplicação do firewall com as duas execuções iniciais abaixo. Depois, execute o
-playbook completo.
+As funções rodam nesta ordem fixa: `base` → `docker` → `cockpit` → `k3s` →
+`compose-services` → `docker-provider` → `firewall` → `monitoring` →
+`portainer` → `labmonitor-foundation` → `k8s-platform`. Em um host vazio, duas
+dependências importam: `compose-services` precisa que o Docker já esteja
+instalado, e `k8s-platform` valida Services nos namespaces `monitoring` e
+`portainer`, portanto precisa rodar depois dessas funções.
+
+Faça o bootstrap de um host vazio em quatro passos: pré-requisitos do host,
+Compose, fechar a janela de exposição de portas e reconciliar o restante.
 
 ```bash
+# 1. Pré-requisitos do host — instala Docker e k3s (necessário antes do Compose)
 ansible-playbook -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
-  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
+  -u "$HOME_SERVER_SSH_USER" --ask-vault-pass \
+  ansible/site.yml --tags base,docker,cockpit,k3s
+
+# 2. Serviços Compose — o Docker já está disponível
+ansible-playbook -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
+  -u "$HOME_SERVER_SSH_USER" --ask-vault-pass \
   ansible/site.yml --tags compose-services
 
+# 3. Fechar imediatamente a janela entre o Compose e o firewall
 ansible-playbook -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
-  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
-  ansible/site.yml --tags firewall,k8s-platform
+  -u "$HOME_SERVER_SSH_USER" --ask-vault-pass \
+  ansible/site.yml --tags firewall
 
+# 4. Reconciliar o restante (monitoring → portainer → labmonitor → k8s-platform)
 ansible-playbook -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
-  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
+  -u "$HOME_SERVER_SSH_USER" --ask-vault-pass \
   ansible/site.yml
 ```
+
+Se você aceitar a curta janela de exposição de portas, um único
+`ansible-playbook ... ansible/site.yml` executa os mesmos passos na ordem
+correta. Adicione `--ask-become-pass` a qualquer comando se o `sudo` do destino
+exigir senha.
 
 As execuções subsequentes são idempotentes. Para uma falha retomável, execute a tag
 da função afetada, como `--tags monitoring`, `--tags portainer` ou
 `--tags labmonitor-foundation`, e depois execute novamente o playbook completo.
+Como `k8s-platform` é a última e valida os namespaces `monitoring`/`portainer`,
+nunca execute `--tags k8s-platform` antes dessas funções terem concluído.
 
 ## Verificar o Deploy
 
