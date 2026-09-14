@@ -148,7 +148,7 @@
     port: "{{ portainer_agent_port }}"
     timeout: 120
 
-# LabMonitor discovery contract gate (Task 7): the Server Service alone carries
+# LabMonitor discovery contract gate: the Server Service alone carries
 # the stable id/category/URL metadata; the Deployment is never a second source.
 - name: Assert Portainer Service carries LabMonitor discovery metadata
   ansible.builtin.shell: |

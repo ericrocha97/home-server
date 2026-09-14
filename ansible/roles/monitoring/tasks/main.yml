@@ -34,8 +34,8 @@
       - monitoring_release_name == 'monitoring'
     fail_msg: >-
       Monitoring Vault is incomplete — define
-      monitoring_grafana_admin_password and the Task 3
-      jenkins_prometheus_api_token before installing the stack.
+      monitoring_grafana_admin_password and the jenkins_prometheus_api_token
+      before installing the stack.
   no_log: true
 
 - name: Check installed Helm version
@@ -231,7 +231,7 @@
         # monitoring-kube-prometheus-prometheus Service (the chart
         # fullname truncates to 26 chars -> monitoring-kube-prometheus,
         # plus operator.prometheus.io/name from the _helpers.tpl crname
-        # helper). Task 7 consumes this stable name; never the
+        # helper). This stable name is consumed downstream; never the
         # generated Helm name.
         selector:
           app.kubernetes.io/name: prometheus
@@ -274,8 +274,8 @@
         type: ClusterIP
         # Proven against chart 88.6.1 (helm template): the chart Service
         # monitoring-grafana selects app.kubernetes.io/name=grafana plus
-        # app.kubernetes.io/instance=<release>. Task 7 consumes this stable
-        # name; the Task 8 monitoring/grafana:3000 Ingress backend points here.
+        # app.kubernetes.io/instance=<release>. This stable name is consumed
+        # downstream; the monitoring/grafana:3000 Ingress backend points here.
         selector:
           app.kubernetes.io/name: grafana
           app.kubernetes.io/instance: "{{ monitoring_release_name }}"

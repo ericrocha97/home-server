@@ -95,6 +95,9 @@ Edite `hosts.yml` e defina `ansible_host` como o IP LAN real do destino. Depois 
 - Mantenha as referências de imagem fixadas em `name:tag@sha256:<digest>` onde o exemplo
   exigir um digest. Nunca use `latest`.
 - Revise portas, retenção, tamanhos de armazenamento e NodePorts antes do deploy.
+- `jenkins_bluefin_enabled` é `false` por padrão. Defina como `true` para provisionar
+  os dois jobs do pipeline Bluefin e suas credenciais (exige os valores extras do
+  Vault listados abaixo); mantendo `false`, o Jenkins é implantado sem alterações.
 - Mantenha `jenkins_clean_reset_confirmed: false` a menos que você autorize explicitamente
   a linha de base limpa destrutiva do Jenkins. Esta é uma operação única: ela
   é executada somente enquanto `/srv/home-server/data/jenkins/.clean-baseline-complete` estiver
@@ -142,6 +145,38 @@ python3 -c "import secrets; print('11' + secrets.token_hex(16))"
 As cinco senhas do PostgreSQL devem ser diferentes. As senhas e os tokens do Jenkins
 também devem ser diferentes entre si e da senha de administrador do Jenkins. Nunca imprima
 nem faça commit do conteúdo do Vault ou dos arquivos `.env` gerados no host.
+
+Quando `jenkins_bluefin_enabled: true`, o Vault também deve definir os itens a
+seguir (o play falha fechado se algum estiver ausente):
+
+```yaml
+jenkins_github_token: "<PAT do GitHub com repo + write:packages>"
+jenkins_ghcr_username: "<usuário do GitHub que pode publicar no GHCR>"
+jenkins_ghcr_token: "<token com permissão de publicar no GHCR>"
+jenkins_n8n_webhook_url: "https://n8n.<domain>/webhook/<path>"
+jenkins_n8n_webhook_token: "<token compartilhado do webhook n8n>"
+```
+
+### Pipeline Bluefin do Jenkins (opcional)
+
+Com `jenkins_bluefin_enabled: true`, o play instala os plugins de Pipeline fixados
+na imagem do Jenkins e a role `compose-services` cria:
+
+- as credenciais `github-token`, `ghcr-creds`, `n8n-webhook-url` e
+  `n8n-webhook-token`;
+- os jobs de Pipeline `bluefin-cosmic-dx` e `bluefin-cosmic-dx-nvidia`, que
+  constroem e publicam `ghcr.io/ericrocha97/bluefin-cosmic-dx` (e `-nvidia`) a
+  partir do repositório público `ericrocha97/bluefin` e criam os GitHub
+  Releases correspondentes.
+
+Desabilitar a flag nunca apaga jobs, credenciais ou histórico de builds; remove
+apenas o script de provisionamento staged. A role verifica os quatro IDs de
+credencial com uma checagem autenticada somente leitura:
+`jenkins_bluefin_credential_check` seleciona o mecanismo — `rest` (padrão) usa o
+endpoint REST de credenciais do Jenkins, e `groovy` cai para uma checagem interna
+somente leitura caso esse endpoint não esteja disponível no Jenkins fixado. Após
+o primeiro deploy, dispare cada job uma vez no Jenkins para materializar o
+gatilho `cron` definido no Jenkinsfile.
 
 ## Configurar HTTPS
 

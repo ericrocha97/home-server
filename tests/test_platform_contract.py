@@ -4,8 +4,7 @@ Three named cases asserting the exact site role order, the non-secret
 example-inventory contract (with no secret values), and stable platform
 ports/defaults. Stdlib only (no PyYAML) so the suite runs on any Python 3.
 
-Task 8 adds the legacy-reference assertion after the active tree is ready
-for the final removal check.
+The suite also asserts the active tree carries no legacy-reference concepts.
 """
 import pathlib
 import re
@@ -263,8 +262,8 @@ class TestPlatformContract(unittest.TestCase):
         self.assertTrue(mount.endswith(":ro"),
                         f"{PROVIDER_COMPOSE} socket mount must be read-only (:ro) — got {mount}")
         # Repo-wide: no other Compose project may mount the socket, except the
-        # pre-existing Jenkins RW build exception (never read-only) and
-        # the Task 6 Portainer Docker Agent RW admin exception (never read-only).
+        # pre-existing Jenkins RW build exception (never read-only) and the
+        # Portainer Docker Agent RW admin exception (never read-only).
         for project in sorted((REPO / "compose").glob("*/compose.yaml")):
             if project == PROVIDER_COMPOSE:
                 continue
@@ -272,7 +271,7 @@ class TestPlatformContract(unittest.TestCase):
                 self.assertIn(project.parent.name, ("jenkins", "portainer-agent"),
                               f"{project} unexpectedly mounts the Docker socket — "
                               "only jenkins (RW build exception), "
-                              "portainer-agent (Task 6 RW admin exception), and "
+                              "portainer-agent (RW admin exception), and "
                               "docker-provider (read-only proxy) may do so")
 
     def test_socket_proxy_has_only_read_mount_and_no_mutating_flags(self):
@@ -1027,7 +1026,7 @@ class TestMonitoringStack(unittest.TestCase):
                           f"{MONITORING_VALUES} {header} must set enabled: true")
         self.assertIn("cAdvisor: true", values_block(content, "kubelet:", 800),
                       f"{MONITORING_VALUES} kubelet must enable cAdvisor collection")
-        # Docker exporter target stays covered by the Task 4 ServiceMonitor.
+        # The Docker exporter target stays covered by its ServiceMonitor.
         self.assertTrue(EXPORTER_SERVICEMONITOR.is_file(),
                         f"missing {EXPORTER_SERVICEMONITOR}")
         servicemonitor = read(EXPORTER_SERVICEMONITOR)
@@ -1855,8 +1854,8 @@ ROOT_README = REPO / "README.md"
 K8S_README = REPO / "k8s/README.md"
 INGRESS_README = REPO / "k8s/ingress/README.md"
 
-# Final navigable services (Task 8): the legacy dashboard is gone, so the
-# helper and examples emit exactly these seven names.
+# Final navigable services: the legacy dashboard is gone, so the helper and
+# examples emit exactly these seven names.
 EXPECTED_ACTIVE_SERVICES = (
     "cockpit",
     "grafana",
@@ -2031,7 +2030,7 @@ class TestFinalRoutes(unittest.TestCase):
         tasks = read(K8S_PLATFORM_TASKS)
         # k8s-platform stays the only Traefik owner with the explicit final order:
         # TLS Secret -> HelmChartConfig -> wait Traefik -> platform Ingress ->
-        # wait backends. The Task 7 discovery gate stays ahead of the Ingress stage.
+        # wait backends. The discovery gate stays ahead of the Ingress stage.
         order_markers = (
             "Aplicar Secret TLS do Traefik",
             "Aplicar HelmChartConfig do Traefik bundled",
@@ -2231,7 +2230,7 @@ class TestFinalFixWave(unittest.TestCase):
                       "README.md must document the Jenkins one-shot revert")
 
     def test_firewall_anon_gate_is_non_2xx(self):
-        """Anonymous /api/json gate aligns to the Task 3 non-2xx contract."""
+        """Anonymous /api/json gate asserts the non-2xx contract."""
         tasks = read(FIREWALL_TASKS)
         self.assertIn("is not match('^2..')", tasks,
                       f"{FIREWALL_TASKS} until must assert non-2xx")

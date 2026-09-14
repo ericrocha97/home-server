@@ -13,7 +13,7 @@ k3s_flannel_interface: ""
 base_admin_user: "{{ ansible_user }}"
 
 # --- Compose services ---
-# Preencher com as quatro refs completas nome:tag@sha256:<64-hex> obtidas no Step 1.
+# Preencher com as quatro refs completas nome:tag@sha256:<64-hex>.
 compose_postgres_image: "postgres:17.5@sha256:aadf2c0696f5ef357aa7a68da995137f0cf17bad0bf6e1f17de06ae5c769b302"
 compose_jenkins_base_image: "jenkins/jenkins:2.568.3-lts-jdk21@sha256:c1e4c349365f6d16d88595b2c5f7e8ff39b8ae1d061f62420bac193b4b9616d0"
 compose_jenkins_build_tag_prefix: "2.568.3-lts-jdk21"

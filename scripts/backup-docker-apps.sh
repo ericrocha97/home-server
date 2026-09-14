@@ -87,7 +87,7 @@ preflight() {
   echo "[preflight] FINAL_DIR=${FINAL_DIR} WORK_DIR=${WORK_DIR}"
 
   # Step 1: Validate backup filesystem
-  # Required checks (verbatim from spec):
+  # Required checks:
   # test "$(findmnt -no TARGET /ssd)" = "/ssd"
   # test "$(findmnt -no SOURCE /ssd)" = "/dev/sdc1"
   # test ! -e "$FINAL_DIR"
@@ -273,7 +273,7 @@ capture_inventory() {
   } > "${inventory_file}" 2>&1 || true
   echo "[capture_inventory] inventory written to ${inventory_file}"
 
-  # Minimal manifest for Task 2 (Task 5 will extend)
+  # Minimal manifest (extended by the full backup flow)
   {
     echo "BACKUP_ID=${BACKUP_ID}"
     echo "BACKUP_ROOT=${BACKUP_ROOT}"
@@ -771,8 +771,8 @@ trap cleanup EXIT
 main() {
   preflight
 
-  # Task 2 Step 3: Create timestamped work structure after preflight succeeds.
-  # PAYLOAD_DIR is under WORK_DIR (temp, allowed even in dry-run); FINAL_DIR is not created until Task 5.
+  # Create timestamped work structure after preflight succeeds.
+  # PAYLOAD_DIR is under WORK_DIR (temp, allowed even in dry-run); FINAL_DIR is created only by the full backup flow.
   mkdir -p "${PAYLOAD_DIR}/postgres"
   mkdir -p "${PAYLOAD_DIR}/jenkins/jenkins-home"
   mkdir -p "${PAYLOAD_DIR}/n8n/n8n-data"

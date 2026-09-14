@@ -6,6 +6,7 @@
 - Roles run in this fixed dependency order: `base` -> `docker` -> `cockpit` -> `k3s` -> `compose-services` -> `docker-provider` -> `firewall` -> `monitoring` -> `portainer` -> `labmonitor-foundation` -> `k8s-platform`.
 - `compose/` is host-native Docker Compose. `k8s/` contains only Kubernetes-side resources. Do not create Kubernetes Services or EndpointSlices for Compose services; Traefik's file provider routes Cockpit, Jenkins, n8n, and Metabase directly to `server_lan_ip`.
 - The platform foundation is final infrastructure only: Prometheus/Grafana, read-only Docker and Jenkins providers, Portainer, and LabMonitor identity/configuration. It deliberately does not deploy a `labmonitor-api` workload, product dashboards, workflows, or restores.
+- Jenkins can run the Bluefin pipeline as an opt-in feature: `jenkins_bluefin_enabled: true` (default `false`) installs the pinned Pipeline plugins and creates four credentials (`github-token`, `ghcr-creds`, `n8n-webhook-url`, `n8n-webhook-token`) and two jobs (`bluefin-cosmic-dx`, `bluefin-cosmic-dx-nvidia`). Disabling it removes only the staged `03-bluefin.groovy`; it never deletes jobs, credentials, or build history.
 
 ## Layout
 
@@ -21,6 +22,7 @@
 - Keep TLS material only in ignored `ansible/secrets/<env>-tls.{crt,key}` and Vault-backed generated host `.env` files only on the server. Never print rendered `.env` content or secret values; use `no_log: true` for tasks that handle them.
 - Every externally pulled image is pinned in inventory defaults. Do not add `latest`, an unpinned image, a real LAN IP, a password, token, certificate, or Vault content to tracked files.
 - `jenkins_clean_reset_confirmed: true` authorizes a one-time destructive Jenkins clean baseline only while `/srv/home-server/data/jenkins/.clean-baseline-complete` is absent. Leave example inventories `false`; reset the real inventory to `false` after the approved baseline run.
+- Bluefin Vault values (required only when `jenkins_bluefin_enabled: true`): `jenkins_github_token`, `jenkins_ghcr_username`, `jenkins_ghcr_token`, `jenkins_n8n_webhook_url`, `jenkins_n8n_webhook_token`. `jenkins_bluefin_credential_check` selects `rest` (default) or `groovy` for the read-only credential verification.
 
 ## Security Boundaries
 

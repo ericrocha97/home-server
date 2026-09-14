@@ -1,4 +1,4 @@
-"""Clean Jenkins Java 21 LTS baseline contract — Task 0.
+"""Clean Jenkins Java 21 LTS baseline contract.
 
 Seven named cases, inspecting Dockerfile, Compose YAML, role defaults/tasks,
 and example inventories. Must fail against 2.504.3-lts-jdk17 and pass after
@@ -204,11 +204,10 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
         lowered = tasks.lower()
         # forbid backup/restore/migration/archive as tasks
         for keyword in ("backup", "restore", "migration"):
-            # count occurrences, fail if any active task contains them
-            # allow comments that explicitly say "no backup"? But spec says do not add path, so even mentions should be avoided outside docs
-            # We'll fail if keyword appears in tasks file at all except maybe in fail_msg mentioning backup is forbidden? But spec says don't add those, so any occurrence is suspect.
-            # To be practical, assert that tasks file does not contain those words as active logic (e.g., 'backup' in a task name or shell).
-            # We'll search case-insensitive but allow the word in fail_msg? Safer to forbid entirely for Task 0 baseline.
+            # Count occurrences and fail if any active task contains them.
+            # To be practical, assert that the tasks file does not contain
+            # those words as active logic (e.g. 'backup' in a task name or
+            # shell); search case-insensitively and forbid them entirely.
             if keyword in lowered:
                 # locate lines containing keyword
                 lines = [l for l in tasks.splitlines() if keyword in l.lower()]
@@ -311,10 +310,10 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
     def test_existing_admin_is_the_only_baseline_account(self):
         """Phase-one bootstrap creates only the existing admin; providers arrive in phase two.
 
-        Task 0 baseline: admin-only phase-one Groovy, no provider users before
-        the admin checkpoint. Task 3 evolution adds phase-two provider
-        reconciliation (labmonitor-api, prometheus-scraper) to the same tasks
-        file — allowed only after the phase-two render marker.
+        The admin-only phase-one Groovy must not reference provider users before
+        the admin checkpoint. Phase-two provider reconciliation (labmonitor-api,
+        prometheus-scraper) lives in the same tasks file — allowed only after the
+        phase-two render marker.
         """
         groovy = read(GROOVY)
         tasks = read(TASKS)
@@ -328,17 +327,16 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
                       "groovy must reference JENKINS_ADMIN_PASSWORD")
         self.assertIn("HudsonPrivateSecurityRealm", groovy,
                       "groovy must use HudsonPrivateSecurityRealm for admin")
-        # phase-one groovy stays admin-only: no provider users in Task 0 baseline
-        # nor in the Task 3 phase-one template.
+        # The phase-one Groovy stays admin-only: no provider users there.
         for user in ("labmonitor-api", "labmonitor", "prometheus-scraper", "prometheus_scraper"):
             self.assertNotIn(user, groovy.lower(),
-                             f"groovy must not create provider user {user} in Task 0 baseline")
-        # tasks may reference provider users only in the Task 3 phase-two
-        # segment (at/after the phase-two render), never in the baseline portion.
+                             f"groovy must not create provider user {user} in the baseline")
+        # Tasks may reference provider users only in the phase-two segment
+        # (at/after the phase-two render), never in the baseline portion.
         phase2_marker = "jenkins-provider-users.groovy.j2"
         phase2_idx = tasks.find(phase2_marker)
         self.assertNotEqual(phase2_idx, -1,
-                            f"tasks must render {phase2_marker} (Task 3 phase two)")
+                            f"tasks must render {phase2_marker} (phase two)")
         baseline_segment = tasks[:phase2_idx].lower()
         for user in ("labmonitor-api", "prometheus-scraper", "prometheus_scraper"):
             self.assertNotIn(user, baseline_segment,
@@ -348,22 +346,22 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
             self.assertIn(user, tasks.lower(),
                           f"tasks phase-two segment must reconcile provider user {user}")
 
-        # Task 3 pins exactly the prometheus + matrix-auth plugins in
-        # plugins.txt, installed via the image-provided installer; the Task 0
-        # invariants stay: ARG-fed base image, no hardcoded FROM ref, never `latest`.
+        # plugins.txt pins the prometheus + matrix-auth plugins, installed via
+        # the image-provided installer; the baseline invariants stay: ARG-fed
+        # base image, no hardcoded FROM ref, never `latest`.
         plugins = read(REPO / "compose/jenkins/plugins.txt")
         for plugin_keyword in ("prometheus:", "matrix-auth"):
             self.assertIn(plugin_keyword, plugins.lower(),
-                          f"plugins.txt must pin Task 3 plugin {plugin_keyword}")
+                          f"plugins.txt must pin plugin {plugin_keyword}")
         self.assertIn("plugins.txt", dockerfile,
-                      "Dockerfile must reference plugins.txt (Task 3 evolution)")
+                      "Dockerfile must reference plugins.txt")
         self.assertIn("jenkins-plugin-cli", dockerfile,
                       "Dockerfile must run the image-provided plugin installer")
         self.assertNotIn("latest", dockerfile.lower(),
                          "Dockerfile must never use 'latest'")
 
-        # compose .env.example carries Task 3 provider placeholders only —
-        # changeme values, never Vault interpolation or real secrets.
+        # compose .env.example carries provider placeholders only — changeme
+        # values, never Vault interpolation or real secrets.
         if ENV_EXAMPLE.is_file():
             env_ex = read(ENV_EXAMPLE)
             self.assertIn("JENKINS_LABMONITOR_USER=labmonitor-api", env_ex,
@@ -377,7 +375,7 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
                     self.assertIn("changeme", line.lower(),
                                   f".env.example secret placeholder must use changeme — got {line!r}")
 
-        # groovy must still be admin-only — check that authorization strategy remains FullControl or is at least not provider-permissive
-        # In Task 0 baseline, it uses FullControlOnceLoggedInAuthorizationStrategy (checked in audit) — allow either that or future GlobalMatrix after Task 3, but Task 0 must not yet add provider perms
+        # The Groovy must stay admin-only: allow the legacy FullControlOnceLoggedIn
+        # strategy or the fine-grained matrix strategy, but no provider grants.
         # Ensure no grant for labmonitor
         self.assertNotIn("labmonitor", groovy.lower())
