@@ -1,2 +1,7 @@
 prometheus:860.v532442b_44e9a_
 matrix-auth:3.3
+workflow-aggregator:608.v67378e9d3db_1
+git:5.10.1
+credentials:1511.v2e3cb_0008ef0
+credentials-binding:728.v902a_273b_8947
+timestamper:1.30

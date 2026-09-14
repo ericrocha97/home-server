@@ -19,6 +19,12 @@ services:
       JENKINS_PROMETHEUS_USER: "${JENKINS_PROMETHEUS_USER:-prometheus-scraper}"
       JENKINS_PROMETHEUS_PASSWORD: "${JENKINS_PROMETHEUS_PASSWORD:?required}"
       JENKINS_PROMETHEUS_API_TOKEN: "${JENKINS_PROMETHEUS_API_TOKEN:?required}"
+      # Integração Bluefin (opt-in; vazio quando desabilitada)
+      JENKINS_GH_TOKEN: "${JENKINS_GH_TOKEN:-}"
+      JENKINS_GHCR_USERNAME: "${JENKINS_GHCR_USERNAME:-}"
+      JENKINS_GHCR_TOKEN: "${JENKINS_GHCR_TOKEN:-}"
+      JENKINS_N8N_WEBHOOK_URL: "${JENKINS_N8N_WEBHOOK_URL:-}"
+      JENKINS_N8N_WEBHOOK_TOKEN: "${JENKINS_N8N_WEBHOOK_TOKEN:-}"
     labels:
       labmonitor.enabled: "${LABMONITOR_ENABLED:-true}"
       labmonitor.id: "${LABMONITOR_ID:?required}"

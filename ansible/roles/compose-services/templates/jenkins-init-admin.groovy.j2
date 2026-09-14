@@ -2,6 +2,7 @@ import jenkins.model.*
 import hudson.model.User
 import hudson.security.*
 import hudson.security.csrf.DefaultCrumbIssuer
+import org.jenkinsci.plugins.matrixauth.PermissionEntry
 
 def instance = Jenkins.get()
 def env = System.getenv()
@@ -30,7 +31,14 @@ if (!(strategy instanceof GlobalMatrixAuthorizationStrategy)) {
   strategy = new GlobalMatrixAuthorizationStrategy()
   instance.setAuthorizationStrategy(strategy)
 }
-strategy.add(Jenkins.ADMINISTER, adminId)
+// Reconcile the admin grant deterministically as an explicit USER entry:
+// drop any existing grant for this account first (including legacy ambiguous
+// EITHER entries), then re-add it. matrix-auth 3.x flags leftover legacy
+// entries as ambiguous.
+strategy.getGrantedPermissionEntries().values().each { entries ->
+  entries.removeIf { it.sid == adminId }
+}
+strategy.add(Jenkins.ADMINISTER, PermissionEntry.user(adminId))
 instance.setCrumbIssuer(new DefaultCrumbIssuer(true))
 instance.save()
 def loc = JenkinsLocationConfiguration.get()

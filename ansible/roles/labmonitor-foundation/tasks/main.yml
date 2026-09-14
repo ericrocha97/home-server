@@ -17,9 +17,8 @@
       - jenkins_labmonitor_api_token | length > 0
     fail_msg: >-
       LabMonitor Vault is incomplete — define
-      jenkins_labmonitor_user and jenkins_labmonitor_api_token (the Task 3
-      read-only provider credential) before provisioning the LabMonitor
-      foundation.
+      jenkins_labmonitor_user and jenkins_labmonitor_api_token (the read-only
+      provider credential) before provisioning the LabMonitor foundation.
   no_log: true
 
 - name: Ensure labmonitor namespace exists
@@ -101,7 +100,7 @@
 
 # Live RBAC proof: reads of the two named ConfigMaps answer yes, while
 # other-configmap, ConfigMap list/watch, pod creation, and Secret reads
-# answer no. Mirrors the Task 7 Step 8 can-i verification commands.
+# answer no. Mirrors the can-i verification commands.
 - name: Verify LabMonitor RBAC allows reads and denies writes and Secrets
   ansible.builtin.shell: |
     set -euo pipefail

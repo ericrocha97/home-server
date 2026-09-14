@@ -1,5 +1,5 @@
 ---
-# Portainer Docker Agent — explicit administrative exception (Task 6).
+# Portainer Docker Agent — explicit administrative exception.
 # Separate Compose project from the read-only docker-socket-proxy provider:
 # this RW socket mount is reachable only from k3s pods via server_lan_ip:9001
 # (UFW backhaul + DOCKER-USER DROP for any other source). AGENT_SECRET comes

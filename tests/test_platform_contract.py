@@ -4,8 +4,7 @@ Three named cases asserting the exact site role order, the non-secret
 example-inventory contract (with no secret values), and stable platform
 ports/defaults. Stdlib only (no PyYAML) so the suite runs on any Python 3.
 
-Task 8 adds the legacy-reference assertion after the active tree is ready
-for the final removal check.
+The suite also asserts the active tree carries no legacy-reference concepts.
 """
 import pathlib
 import re
@@ -263,8 +262,8 @@ class TestPlatformContract(unittest.TestCase):
         self.assertTrue(mount.endswith(":ro"),
                         f"{PROVIDER_COMPOSE} socket mount must be read-only (:ro) — got {mount}")
         # Repo-wide: no other Compose project may mount the socket, except the
-        # pre-existing Jenkins RW build exception (never read-only) and
-        # the Task 6 Portainer Docker Agent RW admin exception (never read-only).
+        # pre-existing Jenkins RW build exception (never read-only) and the
+        # Portainer Docker Agent RW admin exception (never read-only).
         for project in sorted((REPO / "compose").glob("*/compose.yaml")):
             if project == PROVIDER_COMPOSE:
                 continue
@@ -272,7 +271,7 @@ class TestPlatformContract(unittest.TestCase):
                 self.assertIn(project.parent.name, ("jenkins", "portainer-agent"),
                               f"{project} unexpectedly mounts the Docker socket — "
                               "only jenkins (RW build exception), "
-                              "portainer-agent (Task 6 RW admin exception), and "
+                              "portainer-agent (RW admin exception), and "
                               "docker-provider (read-only proxy) may do so")
 
     def test_socket_proxy_has_only_read_mount_and_no_mutating_flags(self):
@@ -331,6 +330,30 @@ JENKINS_ENV_EXAMPLE = REPO / "compose/jenkins/.env.example"
 JENKINS_ENV_TEMPLATE = REPO / "ansible/roles/compose-services/templates/jenkins.env.j2"
 PHASE1_GROOVY = REPO / "ansible/roles/compose-services/templates/jenkins-init-admin.groovy.j2"
 PHASE2_GROOVY = REPO / "ansible/roles/compose-services/templates/jenkins-provider-users.groovy.j2"
+JENKINS_BLUEFIN_GROOVY = (
+    REPO / "ansible/roles/compose-services/templates/jenkins-bluefin.groovy.j2"
+)
+
+EXPECTED_JENKINS_PLUGINS = [
+    "prometheus:860.v532442b_44e9a_",
+    "matrix-auth:3.3",
+    "workflow-aggregator:608.v67378e9d3db_1",
+    "git:5.10.1",
+    "credentials:1511.v2e3cb_0008ef0",
+    "credentials-binding:728.v902a_273b_8947",
+    "timestamper:1.30",
+]
+
+FORBIDDEN_JENKINS_PLUGINS = [
+    "docker-workflow",
+    "docker-commons",
+    "http_request",
+    "kubernetes",
+    "blueocean",
+    "ssh-agent",
+    "github-branch-source",
+]
+
 COMPOSE_TASKS = REPO / "ansible/roles/compose-services/tasks/main.yml"
 N8N_COMPOSE = REPO / "compose/n8n/compose.yaml"
 METABASE_COMPOSE = REPO / "compose/metabase/compose.yaml"
@@ -400,6 +423,22 @@ class TestJenkinsProviders(unittest.TestCase):
         phase2 = read(PHASE2_GROOVY)
         self.assertIn("GlobalMatrixAuthorizationStrategy", phase2,
                       f"{PHASE2_GROOVY} must reconcile against GlobalMatrixAuthorizationStrategy")
+        # matrix-auth 3.x marks grants created with the legacy add(Permission, String)
+        # API as ambiguous; explicit user entries plus a deterministic drop-by-sid
+        # reconciliation keep the strategy unambiguous.
+        self.assertIn("PermissionEntry.user", content,
+                      f"{PHASE1_GROOVY} must grant the admin via an explicit user PermissionEntry")
+        self.assertIn("removeIf", content,
+                      f"{PHASE1_GROOVY} must drop legacy grants before re-adding")
+        self.assertIn("PermissionEntry.user", phase2,
+                      f"{PHASE2_GROOVY} must grant providers via explicit user PermissionEntry")
+        self.assertIn("removeIf", phase2,
+                      f"{PHASE2_GROOVY} must drop legacy grants before re-adding")
+
+    def test_jenkins_verifies_no_legacy_ambiguous_permissions(self):
+        """compose-services fails closed if a managed account keeps a legacy ambiguous grant."""
+        self.assertIn("ambiguous legacy permission", read(COMPOSE_TASKS),
+                      f"{COMPOSE_TASKS} must verify no legacy ambiguous permission remains")
 
     def test_jenkins_admin_checkpoint_precedes_provider_user_render(self):
         """Admin checkpoint (login, anon non-2xx, health, strategy) precedes phase-two render."""
@@ -582,19 +621,23 @@ class TestJenkinsProviders(unittest.TestCase):
                           f"{path} must expose one navigable labmonitor URL")
 
     def test_jenkins_plugin_file_has_exact_versions(self):
-        """plugins.txt pins the two pinned plugins; Dockerfile installs via the image CLI."""
+        """plugins.txt pins exactly the 7 required top-level plugins; no forbidden extras."""
         self.assertTrue(JENKINS_PLUGINS.is_file(), f"missing {JENKINS_PLUGINS}")
         lines = [ln.strip() for ln in read(JENKINS_PLUGINS).splitlines()
                  if ln.strip() and not ln.strip().startswith("#")]
-        self.assertEqual(sorted(lines),
-                         sorted(["prometheus:860.v532442b_44e9a_", "matrix-auth:3.3"]),
-                         f"{JENKINS_PLUGINS} must pin exactly prometheus:860.v532442b_44e9a_ "
-                         f"and matrix-auth:3.3 — got {lines}")
-        self.assertEqual(len(lines), 2,
-                         f"{JENKINS_PLUGINS} must contain exactly two pinned plugins — got {lines}")
+        self.assertEqual(sorted(lines), sorted(EXPECTED_JENKINS_PLUGINS),
+                         f"{JENKINS_PLUGINS} must pin exactly {EXPECTED_JENKINS_PLUGINS} — got {lines}")
+        self.assertEqual(len(lines), len(EXPECTED_JENKINS_PLUGINS),
+                         f"{JENKINS_PLUGINS} must contain exactly {len(EXPECTED_JENKINS_PLUGINS)} pins — got {lines}")
         for line in lines:
             self.assertNotIn("latest", line.lower(),
                              f"{JENKINS_PLUGINS} must never use 'latest' — got {line}")
+            self.assertRegex(line, r"^[a-z0-9-]+:[0-9]",
+                             f"{JENKINS_PLUGINS} entries must be name:version — got {line}")
+        joined = read(JENKINS_PLUGINS)
+        for forbidden in FORBIDDEN_JENKINS_PLUGINS:
+            self.assertNotIn(forbidden, joined,
+                             f"{JENKINS_PLUGINS} must not contain {forbidden}")
         dockerfile = read(JENKINS_DOCKERFILE)
         self.assertIn("ARG JENKINS_BASE_IMAGE", dockerfile,
                       f"{JENKINS_DOCKERFILE} must keep the base image in a required build arg")
@@ -602,8 +645,6 @@ class TestJenkinsProviders(unittest.TestCase):
                       f"{JENKINS_DOCKERFILE} must build FROM ${{JENKINS_BASE_IMAGE}}")
         self.assertNotIn("FROM jenkins/jenkins:", dockerfile,
                          f"{JENKINS_DOCKERFILE} must not hardcode the base image reference")
-        # Debian trixie split the CLI out of docker.io (Recommends only); with
-        # --no-install-recommends the image would ship no /usr/bin/docker.
         self.assertIn("docker-cli", dockerfile,
                       f"{JENKINS_DOCKERFILE} must install docker-cli explicitly for the dockersock check")
         self.assertIn("plugins.txt", dockerfile,
@@ -613,6 +654,135 @@ class TestJenkinsProviders(unittest.TestCase):
         tasks = read(COMPOSE_TASKS)
         self.assertIn("plugins.txt", tasks,
                       f"{COMPOSE_TASKS} must ship plugins.txt to the host and fingerprint it")
+
+    def test_jenkins_dockerfile_has_pipeline_cli_tooling(self):
+        """The agent image carries the Unix/CLI tooling the Jenkinsfiles shell out to."""
+        self.assertTrue(JENKINS_DOCKERFILE.is_file(), f"missing {JENKINS_DOCKERFILE}")
+        dockerfile = read(JENKINS_DOCKERFILE)
+        for pkg in ("gawk", "grep", "sed", "coreutils", "findutils", "bash"):
+            self.assertRegex(dockerfile, rf"\b{re.escape(pkg)}\b",
+                             f"{JENKINS_DOCKERFILE} must install {pkg}")
+        self.assertRegex(dockerfile, r"\bgit\b",
+                         f"{JENKINS_DOCKERFILE} must install git")
+        self.assertNotIn("dockerd", dockerfile,
+                         f"{JENKINS_DOCKERFILE} must not run a daemon (no DinD)")
+        self.assertNotIn("docker:dind", dockerfile,
+                         f"{JENKINS_DOCKERFILE} must not use docker:dind")
+
+    def test_jenkins_bluefin_enablement_is_opt_in_and_fail_closed(self):
+        """Flag defaults false in defaults and both examples; validation is fail-closed when true."""
+        defaults = parse_simple_vars(COMPOSE_DEFAULTS)
+        self.assertEqual(defaults.get("jenkins_bluefin_enabled"), "false",
+                         f"{COMPOSE_DEFAULTS} must default jenkins_bluefin_enabled to false")
+        self.assertEqual(defaults.get("jenkins_bluefin_repo_url"),
+                         "https://github.com/ericrocha97/bluefin.git",
+                         f"{COMPOSE_DEFAULTS} must pin the Bluefin repo URL")
+        self.assertEqual(defaults.get("jenkins_bluefin_branch"), "*/main",
+                         f"{COMPOSE_DEFAULTS} must pin the Bluefin branch spec")
+        for path in (LAB_EXAMPLE, PROD_EXAMPLE):
+            self.assertEqual(parse_simple_vars(path).get("jenkins_bluefin_enabled"), "false",
+                             f"{path} must keep jenkins_bluefin_enabled false")
+        tasks = read(COMPOSE_TASKS)
+        self.assertIn("when: jenkins_bluefin_enabled | default(false)", tasks,
+                      f"{COMPOSE_TASKS} must gate Bluefin work on the flag")
+        for var in ("jenkins_github_token", "jenkins_ghcr_username", "jenkins_ghcr_token",
+                    "jenkins_n8n_webhook_url", "jenkins_n8n_webhook_token"):
+            self.assertIn(var, tasks,
+                          f"{COMPOSE_TASKS} must validate {var} when enabled")
+        self.assertIn("match('^https?://')", tasks,
+                      f"{COMPOSE_TASKS} must require an http(s) webhook URL")
+
+    def test_jenkins_env_forwards_bluefin_secrets(self):
+        """The env template, Compose file, and example all carry the 5 Bluefin env vars."""
+        env_vars = ("JENKINS_GH_TOKEN", "JENKINS_GHCR_USERNAME", "JENKINS_GHCR_TOKEN",
+                    "JENKINS_N8N_WEBHOOK_URL", "JENKINS_N8N_WEBHOOK_TOKEN")
+        template = read(JENKINS_ENV_TEMPLATE)
+        self.assertIn("{% if jenkins_bluefin_enabled", template,
+                      f"{JENKINS_ENV_TEMPLATE} must gate Bluefin env vars on the flag")
+        for var in env_vars:
+            self.assertIn(var, template, f"{JENKINS_ENV_TEMPLATE} must emit {var}")
+            self.assertIn(var, read(JENKINS_COMPOSE),
+                          f"{JENKINS_COMPOSE} must pass {var}")
+            self.assertIn(var, read(JENKINS_ENV_EXAMPLE),
+                          f"{JENKINS_ENV_EXAMPLE} must placeholder {var}")
+        example = read(JENKINS_ENV_EXAMPLE)
+        self.assertNotRegex(example, r"ghp_|github_pat_",
+                            f"{JENKINS_ENV_EXAMPLE} must not contain a real token")
+        start = template.index("{% if jenkins_bluefin_enabled")
+        end = template.index("{% endif %}", start)
+        block = template[start:end]
+        for var in env_vars:
+            self.assertIn(var, block,
+                          f"{JENKINS_ENV_TEMPLATE} must emit {var} inside the Bluefin conditional")
+
+    def test_jenkins_bluefin_job_mapping_is_explicit(self):
+        """Defaults map each job name to its Jenkinsfile path."""
+        defaults = read(COMPOSE_DEFAULTS)
+        self.assertIn("name: bluefin-cosmic-dx", defaults,
+                      f"{COMPOSE_DEFAULTS} must define the stable job")
+        self.assertIn("jenkinsfile: ci/jenkins/Jenkinsfile.stable", defaults,
+                      f"{COMPOSE_DEFAULTS} must map the stable Jenkinsfile")
+        self.assertIn("name: bluefin-cosmic-dx-nvidia", defaults,
+                      f"{COMPOSE_DEFAULTS} must define the nvidia job")
+        self.assertIn("jenkinsfile: ci/jenkins/Jenkinsfile.nvidia", defaults,
+                      f"{COMPOSE_DEFAULTS} must map the nvidia Jenkinsfile")
+
+    def test_jenkins_bluefin_groovy_provisions_credentials_and_jobs(self):
+        """The Groovy script reads secrets from env and upserts credentials and jobs."""
+        self.assertTrue(JENKINS_BLUEFIN_GROOVY.is_file(), f"missing {JENKINS_BLUEFIN_GROOVY}")
+        groovy = read(JENKINS_BLUEFIN_GROOVY)
+        for cred in ("github-token", "ghcr-creds", "n8n-webhook-url", "n8n-webhook-token"):
+            self.assertIn(cred, groovy, f"{JENKINS_BLUEFIN_GROOVY} must reference credential {cred}")
+        for symbol in ("SystemCredentialsProvider", "addCredentials", "updateCredentials",
+                       "new WorkflowJob", "CpsScmFlowDefinition", "setLightweight(true)",
+                       "System.getenv", "ericrocha97/bluefin",
+                       "ci/jenkins/Jenkinsfile.stable", "ci/jenkins/Jenkinsfile.nvidia"):
+            self.assertIn(symbol, groovy, f"{JENKINS_BLUEFIN_GROOVY} must contain {symbol}")
+        self.assertNotRegex(groovy, r"ghp_|github_pat_",
+                            f"{JENKINS_BLUEFIN_GROOVY} must contain no real token")
+        self.assertNotIn("JENKINS_GH_TOKEN=", groovy,
+                         f"{JENKINS_BLUEFIN_GROOVY} must not embed a secret literal")
+        # Atomic validation: all env vars are checked before any credential write.
+        self.assertLess(groovy.index("requiredEnv.each"),
+                        groovy.index("addCredentials"),
+                        f"{JENKINS_BLUEFIN_GROOVY} must validate all env vars before writing")
+
+    def test_jenkins_bluefin_groovy_staging_is_non_destructive(self):
+        """The script is staged only when enabled and removed when disabled; nothing else is deleted."""
+        tasks = read(COMPOSE_TASKS)
+        self.assertIn("03-bluefin.groovy", tasks,
+                      f"{COMPOSE_TASKS} must stage 03-bluefin.groovy")
+        self.assertIsNotNone(
+            re.search(r"03-bluefin\.groovy.*?state: absent", tasks, re.S),
+            f"{COMPOSE_TASKS} must remove the staged script when disabled")
+        # No JENKINS_HOME job/credential/build state is ever deleted by this feature.
+        self.assertNotIn("credentials.xml", tasks,
+                         f"{COMPOSE_TASKS} must not delete the credentials store")
+        # No `state: absent` removal may target the jobs directory (read-only
+        # references to it elsewhere are fine).
+        for match in re.finditer(r"state:\s*absent", tasks):
+            window = tasks[max(0, match.start() - 400):match.start() + 100]
+            self.assertNotIn("/jobs", window,
+                             f"{COMPOSE_TASKS} must not remove a jobs path via state: absent")
+
+    def test_jenkins_bluefin_verification_is_read_only(self):
+        """Live checks probe CLIs/daemon and verify jobs/credentials read-only, never building."""
+        tasks = read(COMPOSE_TASKS)
+        for probe in ("command -v $cmd", "docker info", "gh --version"):
+            self.assertIn(probe, tasks,
+                          f"{COMPOSE_TASKS} must contain read-only probe '{probe}'")
+        for cred in ("github-token", "ghcr-creds", "n8n-webhook-url", "n8n-webhook-token"):
+            self.assertIn(cred, tasks,
+                          f"{COMPOSE_TASKS} must verify credential {cred}")
+        self.assertIn("jenkins_bluefin_enabled | default(false)", tasks,
+                      f"{COMPOSE_TASKS} must gate Bluefin verification on the flag")
+        self.assertGreaterEqual(
+            tasks.count("when: jenkins_bluefin_enabled | default(false)"), 4,
+            f"{COMPOSE_TASKS} must gate each Bluefin job/credential verification task")
+        self.assertNotIn("/job/{{ item.name }}/build", tasks,
+                         f"{COMPOSE_TASKS} must never trigger a Bluefin build")
+        self.assertNotIn("buildWithParameters", tasks,
+                         f"{COMPOSE_TASKS} must never trigger a parameterized build")
 
 
 EXPORTER_DEPLOYMENT = REPO / "ansible/roles/monitoring/templates/docker-exporter-deployment.yaml.j2"
@@ -856,7 +1026,7 @@ class TestMonitoringStack(unittest.TestCase):
                           f"{MONITORING_VALUES} {header} must set enabled: true")
         self.assertIn("cAdvisor: true", values_block(content, "kubelet:", 800),
                       f"{MONITORING_VALUES} kubelet must enable cAdvisor collection")
-        # Docker exporter target stays covered by the Task 4 ServiceMonitor.
+        # The Docker exporter target stays covered by its ServiceMonitor.
         self.assertTrue(EXPORTER_SERVICEMONITOR.is_file(),
                         f"missing {EXPORTER_SERVICEMONITOR}")
         servicemonitor = read(EXPORTER_SERVICEMONITOR)
@@ -1684,8 +1854,8 @@ ROOT_README = REPO / "README.md"
 K8S_README = REPO / "k8s/README.md"
 INGRESS_README = REPO / "k8s/ingress/README.md"
 
-# Final navigable services (Task 8): the legacy dashboard is gone, so the
-# helper and examples emit exactly these seven names.
+# Final navigable services: the legacy dashboard is gone, so the helper and
+# examples emit exactly these seven names.
 EXPECTED_ACTIVE_SERVICES = (
     "cockpit",
     "grafana",
@@ -1860,7 +2030,7 @@ class TestFinalRoutes(unittest.TestCase):
         tasks = read(K8S_PLATFORM_TASKS)
         # k8s-platform stays the only Traefik owner with the explicit final order:
         # TLS Secret -> HelmChartConfig -> wait Traefik -> platform Ingress ->
-        # wait backends. The Task 7 discovery gate stays ahead of the Ingress stage.
+        # wait backends. The discovery gate stays ahead of the Ingress stage.
         order_markers = (
             "Aplicar Secret TLS do Traefik",
             "Aplicar HelmChartConfig do Traefik bundled",
@@ -2011,17 +2181,26 @@ class TestFinalFixWave(unittest.TestCase):
         self.assertIn("jenkins_baseline_marker", tasks,
                       f"{COMPOSE_TASKS} must gate destruction on the marker fact")
         # Every `state: absent` removal of the exact Jenkins path is conditional.
+        # The Bluefin init-script removal is intentionally non-destructive and is
+        # covered separately by
+        # test_jenkins_bluefin_groovy_staging_is_non_destructive.
         absent_blocks = [m.start() for m in re.finditer(r"state:\s*absent", tasks)]
         self.assertGreaterEqual(len(absent_blocks), 2,
                                 f"{COMPOSE_TASKS} must keep exact-path removals — got {len(absent_blocks)}")
+        gated_blocks = 0
         for idx in absent_blocks:
             window = tasks[max(0, idx - 500):idx + 800]
+            if "03-bluefin.groovy" in window:
+                continue
+            gated_blocks += 1
             self.assertIn("/srv/home-server/data/jenkins", window,
                           f"{COMPOSE_TASKS} absent removal must target the exact Jenkins path")
             self.assertIn("jenkins_baseline_marker", window,
                           f"{COMPOSE_TASKS} absent removal must check the marker (no unconditional wipe)")
             self.assertIn("jenkins_clean_reset_confirmed", window,
                           f"{COMPOSE_TASKS} absent removal must require explicit opt-in")
+        self.assertGreaterEqual(gated_blocks, 2,
+                                f"{COMPOSE_TASKS} must keep both marker-gated Jenkins removals — got {gated_blocks}")
         # Container removal is equally gated.
         self.assertIn("jenkins_clean_reset_confirmed is sameas true", tasks,
                       f"{COMPOSE_TASKS} must keep explicit opt-in (sameas true)")
@@ -2051,7 +2230,7 @@ class TestFinalFixWave(unittest.TestCase):
                       "README.md must document the Jenkins one-shot revert")
 
     def test_firewall_anon_gate_is_non_2xx(self):
-        """Anonymous /api/json gate aligns to the Task 3 non-2xx contract."""
+        """Anonymous /api/json gate asserts the non-2xx contract."""
         tasks = read(FIREWALL_TASKS)
         self.assertIn("is not match('^2..')", tasks,
                       f"{FIREWALL_TASKS} until must assert non-2xx")

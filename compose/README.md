@@ -4,7 +4,7 @@ Projetos host-native. Dados persistentes ficam em `/srv/home-server/data/<servic
 
 ## Topologia — shared `automation` database
 
-PostgreSQL roda apenas em `home-server-data`; n8n usa ambas as redes externas, Jenkins permanece em `home-server-automation`, Metabase permanece em `home-server-data`. O Ansible cria `automation`, `automation_writer` e `automation_reader`; n8n recebe o contrato writer e Metabase o contrato reader. Nenhuma tabela de aplicação, workflow n8n, dashboard Metabase, Service ou EndpointSlice é criada nesta mudança.
+PostgreSQL roda apenas em `home-server-data`; n8n usa ambas as redes externas, Jenkins permanece em `home-server-automation`, Metabase permanece em `home-server-data`. O Ansible cria `automation`, `automation_writer` e `automation_reader`; n8n recebe o contrato writer e Metabase o contrato reader. Nenhuma tabela de aplicação, workflow n8n, dashboard Metabase, Service ou EndpointSlice é criada por este projeto.
 
 Mapeamento exato (topologia):
 
@@ -69,6 +69,8 @@ ansible-playbook -i ansible/inventories/lab/hosts.yml \
 
 O primeiro comando preserva os dados existentes de n8n e Metabase e adiciona apenas a database/roles compartilhadas e o contrato de ambiente. O segundo restaura o estágio de firewall e Traefik.
 
+Nota: esta é uma migração incremental sobre um deploy já existente (por isso `--tags firewall,k8s-platform` funciona — os namespaces `monitoring`/`portainer` já existem). Em um host vazio, siga o fluxo de bootstrap do `README.md` raiz (`base,docker,cockpit,k3s` → `compose-services` → `firewall` → play completo).
+
 ## Conexão — n8n (writer) e Metabase (reader)
 
 Nenhuma tabela de aplicação é criada por esta task — `AUTOMATION_DB_*` é apenas contrato de conexão. Workflows n8n e data sources Metabase que usam `automation` são criados fora desta mudança.
@@ -129,9 +131,7 @@ git status --short
 
 Confirmar que nenhum arquivo rastreado contém senha real, `192.168.100.179`, `latest` ou referência de imagem sem pinagem `name:tag@sha256:<64-hex>`.
 
-Dados sanitizados alternativos quando Docker não está disponível (simulação Python da interpolação `${VAR:-default}` / `${VAR:?required}`) — ver task reports anteriores.
-
-Validação estática:
+Validação estática dos quatro projetos Compose:
 
 ```bash
 docker compose --env-file compose/postgres/.env.example -f compose/postgres/compose.yaml config

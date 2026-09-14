@@ -45,7 +45,10 @@ não pode ser acessado por clientes LAN, VPN, Ingress ou NodePort.
 
 - Uma instalação limpa do Ubuntu **26.04**
 - Um endereço LAN acessível
-- Acesso SSH para o usuário de administração
+- Acesso SSH para um usuário não root com `sudo`. `sudo` sem senha é
+  recomendado para execuções não assistidas; caso contrário, adicione
+  `--ask-become-pass` a todos os comandos do playbook.
+- Docker e k3s são instalados pelo playbook; o host precisa apenas de SSH.
 
 ## Instalar as Dependências do Controlador
 
@@ -92,6 +95,9 @@ Edite `hosts.yml` e defina `ansible_host` como o IP LAN real do destino. Depois 
 - Mantenha as referências de imagem fixadas em `name:tag@sha256:<digest>` onde o exemplo
   exigir um digest. Nunca use `latest`.
 - Revise portas, retenção, tamanhos de armazenamento e NodePorts antes do deploy.
+- `jenkins_bluefin_enabled` é `false` por padrão. Defina como `true` para provisionar
+  os dois jobs do pipeline Bluefin e suas credenciais (exige os valores extras do
+  Vault listados abaixo); mantendo `false`, o Jenkins é implantado sem alterações.
 - Mantenha `jenkins_clean_reset_confirmed: false` a menos que você autorize explicitamente
   a linha de base limpa destrutiva do Jenkins. Esta é uma operação única: ela
   é executada somente enquanto `/srv/home-server/data/jenkins/.clean-baseline-complete` estiver
@@ -139,6 +145,38 @@ python3 -c "import secrets; print('11' + secrets.token_hex(16))"
 As cinco senhas do PostgreSQL devem ser diferentes. As senhas e os tokens do Jenkins
 também devem ser diferentes entre si e da senha de administrador do Jenkins. Nunca imprima
 nem faça commit do conteúdo do Vault ou dos arquivos `.env` gerados no host.
+
+Quando `jenkins_bluefin_enabled: true`, o Vault também deve definir os itens a
+seguir (o play falha fechado se algum estiver ausente):
+
+```yaml
+jenkins_github_token: "<PAT do GitHub com repo + write:packages>"
+jenkins_ghcr_username: "<usuário do GitHub que pode publicar no GHCR>"
+jenkins_ghcr_token: "<token com permissão de publicar no GHCR>"
+jenkins_n8n_webhook_url: "https://n8n.<domain>/webhook/<path>"
+jenkins_n8n_webhook_token: "<token compartilhado do webhook n8n>"
+```
+
+### Pipeline Bluefin do Jenkins (opcional)
+
+Com `jenkins_bluefin_enabled: true`, o play instala os plugins de Pipeline fixados
+na imagem do Jenkins e a role `compose-services` cria:
+
+- as credenciais `github-token`, `ghcr-creds`, `n8n-webhook-url` e
+  `n8n-webhook-token`;
+- os jobs de Pipeline `bluefin-cosmic-dx` e `bluefin-cosmic-dx-nvidia`, que
+  constroem e publicam `ghcr.io/ericrocha97/bluefin-cosmic-dx` (e `-nvidia`) a
+  partir do repositório público `ericrocha97/bluefin` e criam os GitHub
+  Releases correspondentes.
+
+Desabilitar a flag nunca apaga jobs, credenciais ou histórico de builds; remove
+apenas o script de provisionamento staged. A role verifica os quatro IDs de
+credencial com uma checagem autenticada somente leitura:
+`jenkins_bluefin_credential_check` seleciona o mecanismo — `rest` (padrão) usa o
+endpoint REST de credenciais do Jenkins, e `groovy` cai para uma checagem interna
+somente leitura caso esse endpoint não esteja disponível no Jenkins fixado. Após
+o primeiro deploy, dispare cada job uma vez no Jenkins para materializar o
+gatilho `cron` definido no Jenkinsfile.
 
 ## Configurar HTTPS
 
@@ -212,27 +250,48 @@ done
 
 ## Fazer o Deploy
 
-Para o primeiro deploy, feche o curto intervalo entre a publicação de portas do
-Compose e a aplicação do firewall com as duas execuções iniciais abaixo. Depois, execute o
-playbook completo.
+As funções rodam nesta ordem fixa: `base` → `docker` → `cockpit` → `k3s` →
+`compose-services` → `docker-provider` → `firewall` → `monitoring` →
+`portainer` → `labmonitor-foundation` → `k8s-platform`. Em um host vazio, duas
+dependências importam: `compose-services` precisa que o Docker já esteja
+instalado, e `k8s-platform` valida Services nos namespaces `monitoring` e
+`portainer`, portanto precisa rodar depois dessas funções.
+
+Faça o bootstrap de um host vazio em quatro passos: pré-requisitos do host,
+Compose, fechar a janela de exposição de portas e reconciliar o restante.
 
 ```bash
+# 1. Pré-requisitos do host — instala Docker e k3s (necessário antes do Compose)
 ansible-playbook -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
-  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
+  -u "$HOME_SERVER_SSH_USER" --ask-vault-pass \
+  ansible/site.yml --tags base,docker,cockpit,k3s
+
+# 2. Serviços Compose — o Docker já está disponível
+ansible-playbook -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
+  -u "$HOME_SERVER_SSH_USER" --ask-vault-pass \
   ansible/site.yml --tags compose-services
 
+# 3. Fechar imediatamente a janela entre o Compose e o firewall
 ansible-playbook -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
-  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
-  ansible/site.yml --tags firewall,k8s-platform
+  -u "$HOME_SERVER_SSH_USER" --ask-vault-pass \
+  ansible/site.yml --tags firewall
 
+# 4. Reconciliar o restante (monitoring → portainer → labmonitor → k8s-platform)
 ansible-playbook -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
-  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
+  -u "$HOME_SERVER_SSH_USER" --ask-vault-pass \
   ansible/site.yml
 ```
+
+Se você aceitar a curta janela de exposição de portas, um único
+`ansible-playbook ... ansible/site.yml` executa os mesmos passos na ordem
+correta. Adicione `--ask-become-pass` a qualquer comando se o `sudo` do destino
+exigir senha.
 
 As execuções subsequentes são idempotentes. Para uma falha retomável, execute a tag
 da função afetada, como `--tags monitoring`, `--tags portainer` ou
 `--tags labmonitor-foundation`, e depois execute novamente o playbook completo.
+Como `k8s-platform` é a última e valida os namespaces `monitoring`/`portainer`,
+nunca execute `--tags k8s-platform` antes dessas funções terem concluído.
 
 ## Verificar o Deploy
 

@@ -6,6 +6,7 @@ Ansible provisions a complete single-node home-server platform on a clean
 
 The platform includes a hardened host, Docker, k3s, Traefik, Compose services,
 monitoring, and administration tooling. Persistent service data is stored on
+`/srv/home-server/data/`.
 
 ## Services
 
@@ -44,7 +45,10 @@ cannot be reached by LAN, VPN, Ingress, or NodePort clients.
 
 - A clean Ubuntu **26.04** installation
 - A reachable LAN address
-- SSH access for the administration user
+- SSH access for a non-root user with `sudo`. Passwordless `sudo` is
+  recommended for unattended runs; otherwise add `--ask-become-pass` to every
+  playbook command.
+- Docker and k3s are installed by the playbook; the host only needs SSH.
 
 ## Install the Controller Dependencies
 
@@ -91,13 +95,17 @@ Edit `hosts.yml` and set `ansible_host` to the target's real LAN IP. Then edit
 - Keep image references pinned to `name:tag@sha256:<digest>` where the example
   requires a digest. Never use `latest`.
 - Review ports, retention, storage sizes, and NodePorts before deployment.
+- `jenkins_bluefin_enabled` defaults to `false`. Set it to `true` to provision
+  the two Bluefin pipeline jobs and their credentials (it requires the extra
+  Vault values listed below); leaving it `false` deploys Jenkins unchanged.
 - Leave `jenkins_clean_reset_confirmed: false` unless you explicitly authorize
   the destructive Jenkins clean baseline. This is a one-shot operation: it
   runs only while `/srv/home-server/data/jenkins/.clean-baseline-complete` is
   absent. To run it again, remove that marker and explicitly set the variable
   to `true`; set it back to `false` immediately after the approved run.
 
-The tracked examples use documentation IPs only. Do not commit the generated
+The tracked examples use documentation IPs only. Do not commit `hosts.yml`,
+`group_vars/all/vars.yml`, `vault.yml`, or generated host `.env` files.
 
 ## Configure the Vault
 
@@ -137,6 +145,38 @@ python3 -c "import secrets; print('11' + secrets.token_hex(16))"
 All five PostgreSQL passwords must be different. The Jenkins passwords and
 tokens must also be different from each other and from the Jenkins admin
 password. Never print or commit Vault content or generated host `.env` files.
+
+When `jenkins_bluefin_enabled: true`, the Vault must also define the following
+(the play fails closed if any is missing):
+
+```yaml
+jenkins_github_token: "<GitHub PAT with repo + write:packages>"
+jenkins_ghcr_username: "<GitHub user that can push to GHCR>"
+jenkins_ghcr_token: "<token allowed to push to GHCR>"
+jenkins_n8n_webhook_url: "https://n8n.<domain>/webhook/<path>"
+jenkins_n8n_webhook_token: "<n8n webhook shared token>"
+```
+
+### Jenkins Bluefin pipeline (optional)
+
+With `jenkins_bluefin_enabled: true`, the play installs the pinned Pipeline
+plugins in the Jenkins image and the `compose-services` role creates:
+
+- the credentials `github-token`, `ghcr-creds`, `n8n-webhook-url`, and
+  `n8n-webhook-token`;
+- the Pipeline jobs `bluefin-cosmic-dx` and `bluefin-cosmic-dx-nvidia`, which
+  build and push `ghcr.io/ericrocha97/bluefin-cosmic-dx` (and `-nvidia`) from
+  the public `ericrocha97/bluefin` repository and create the matching GitHub
+  releases.
+
+Disabling the flag never deletes jobs, credentials, or build history; it only
+removes the staged provisioning script. The role verifies the four credential
+IDs with an authenticated read-only check: `jenkins_bluefin_credential_check`
+selects the mechanism — `rest` (default) uses the Jenkins credentials REST
+endpoint, and `groovy` falls back to an internal read-only check if that
+endpoint is unavailable on the pinned Jenkins. After the first deploy, trigger
+each job once in Jenkins to materialize the `cron` trigger from its
+Jenkinsfile.
 
 ## Configure HTTPS
 
@@ -210,26 +250,48 @@ done
 
 ## Deploy
 
-For the first deployment, close the short interval between Compose port
-publication and firewall enforcement with the two initial runs below. Then run
+Roles run in this fixed order: `base` → `docker` → `cockpit` → `k3s` →
+`compose-services` → `docker-provider` → `firewall` → `monitoring` →
+`portainer` → `labmonitor-foundation` → `k8s-platform`. On an empty host two
+dependencies matter: `compose-services` needs Docker to already be installed,
+and `k8s-platform` validates Services in the `monitoring` and `portainer`
+namespaces, so it must run after those roles.
+
+Bootstrap an empty host in four steps: host prerequisites, Compose, close the
+port-exposure window, then reconcile everything.
 
 ```bash
+# 1. Host prerequisites — installs Docker and k3s (required before Compose)
 ansible-playbook -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
-  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
+  -u "$HOME_SERVER_SSH_USER" --ask-vault-pass \
+  ansible/site.yml --tags base,docker,cockpit,k3s
+
+# 2. Compose services — Docker is now available
+ansible-playbook -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
+  -u "$HOME_SERVER_SSH_USER" --ask-vault-pass \
   ansible/site.yml --tags compose-services
 
+# 3. Close the Compose-before-firewall window immediately
 ansible-playbook -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
-  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
-  ansible/site.yml --tags firewall,k8s-platform
+  -u "$HOME_SERVER_SSH_USER" --ask-vault-pass \
+  ansible/site.yml --tags firewall
 
+# 4. Reconcile the rest (monitoring → portainer → labmonitor → k8s-platform)
 ansible-playbook -i "ansible/inventories/$ENVIRONMENT/hosts.yml" \
-  -u "$HOME_SERVER_SSH_USER" --ask-become-pass --ask-vault-pass \
+  -u "$HOME_SERVER_SSH_USER" --ask-vault-pass \
   ansible/site.yml
 ```
 
+If you accept the short port-exposure window, a single
+`ansible-playbook ... ansible/site.yml` performs the same steps in the correct
+order. Add `--ask-become-pass` to any command if the target's `sudo` requires a
+password.
+
 Subsequent runs are idempotent. For a resumable failure, run the affected role
 tag, such as `--tags monitoring`, `--tags portainer`, or
-`--tags labmonitor-foundation`, then rerun the full playbook.
+`--tags labmonitor-foundation`, then rerun the full playbook. Because
+`k8s-platform` is last and validates the `monitoring`/`portainer` namespaces,
+never run `--tags k8s-platform` before those roles have completed.
 
 ## Verify the Deployment
 

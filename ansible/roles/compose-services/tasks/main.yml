@@ -34,6 +34,19 @@
     fail_msg: "Vault dos providers Jenkins incompleto — defina jenkins_labmonitor_password, jenkins_labmonitor_api_token, jenkins_prometheus_password e jenkins_prometheus_api_token distintos do admin; os dois api_token devem usar o formato fixo do Jenkins 11 + 32 hex minusculos (34 chars, ex.: python3 -c \"import secrets; print('11' + secrets.token_hex(16))\")"
   no_log: true
 
+- name: Validar Vault obrigatório da integração Bluefin (opt-in)
+  ansible.builtin.assert:
+    that:
+      - jenkins_github_token is defined and jenkins_github_token | length > 0
+      - jenkins_ghcr_username is defined and jenkins_ghcr_username | length > 0
+      - jenkins_ghcr_token is defined and jenkins_ghcr_token | length > 0
+      - jenkins_n8n_webhook_url is defined and jenkins_n8n_webhook_url | length > 0
+      - jenkins_n8n_webhook_token is defined and jenkins_n8n_webhook_token | length > 0
+      - jenkins_n8n_webhook_url is match('^https?://')
+    fail_msg: "jenkins_bluefin_enabled: true exige jenkins_github_token, jenkins_ghcr_username, jenkins_ghcr_token, jenkins_n8n_webhook_url (http/https) e jenkins_n8n_webhook_token no Vault"
+  no_log: true
+  when: jenkins_bluefin_enabled | default(false)
+
 - name: Validar referências de imagem completas e pinadas
   ansible.builtin.assert:
     that:
@@ -642,6 +655,22 @@
     mode: '0640'
   no_log: true
 
+- name: Renderizar Groovy de provisionamento Bluefin (credenciais + jobs)
+  ansible.builtin.template:
+    src: jenkins-bluefin.groovy.j2
+    dest: "{{ compose_jenkins_data_dir }}/init.groovy.d/03-bluefin.groovy"
+    owner: "{{ compose_jenkins_uid }}"
+    group: "{{ compose_jenkins_gid }}"
+    mode: '0640'
+  no_log: true
+  when: jenkins_bluefin_enabled | default(false)
+
+- name: Remover Groovy Bluefin quando a integração está desabilitada (não destrutivo)
+  ansible.builtin.file:
+    path: "{{ compose_jenkins_data_dir }}/init.groovy.d/03-bluefin.groovy"
+    state: absent
+  when: not (jenkins_bluefin_enabled | default(false))
+
 - name: Recriar Jenkins fase dois para reconciliar labmonitor-api e prometheus-scraper
   community.docker.docker_compose_v2:
     project_src: "{{ compose_projects_root }}/jenkins"
@@ -719,6 +748,115 @@
     docker exec jenkins test -S /var/run/docker.sock
     docker exec jenkins sh -c 'id jenkins | grep -q dockersock'
     docker exec jenkins docker ps >/dev/null 2>&1 || docker exec jenkins sh -c 'docker ps >/dev/null'
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Verificar CLIs e Docker daemon no agente Jenkins (read-only)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    for cmd in bash git docker gh curl awk grep sed sort paste date; do
+      docker exec jenkins sh -lc "command -v $cmd >/dev/null" || { echo "missing: $cmd"; exit 1; }
+    done
+    docker exec jenkins sh -lc 'docker info >/dev/null'
+    docker exec jenkins gh --version >/dev/null
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Verificar jobs Bluefin via API (read-only)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ compose_jenkins_port }}/job/{{ item.name }}/api/json"
+    user: admin
+    password: "{{ jenkins_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    status_code: [200]
+    timeout: 10
+  register: jenkins_bluefin_job_check
+  loop: "{{ jenkins_bluefin_jobs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  when: jenkins_bluefin_enabled | default(false)
+
+- name: Verificar repo e Jenkinsfile do job no config.xml (read-only)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    config="{{ compose_jenkins_data_dir }}/jobs/{{ item.name }}/config.xml"
+    grep -q "{{ item.jenkinsfile }}" "$config"
+    grep -q "ericrocha97/bluefin" "$config"
+  args:
+    executable: /bin/bash
+  loop: "{{ jenkins_bluefin_jobs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: false
+  when: jenkins_bluefin_enabled | default(false)
+
+# O endpoint REST de credenciais (credentials/store/system/domain/_/api/json) ainda
+# NÃO foi confirmado como confiável e somente-leitura na versão fixada do Jenkins.
+# Defina jenkins_bluefin_credential_check: groovy para selecionar a verificação Groovy
+# interna via CLI (também nunca lê valores de credenciais). Use 'rest' somente depois de
+# confirmar o endpoint em um host provisionado.
+- name: Consultar credenciais do sistema Jenkins via REST (read-only)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ compose_jenkins_port }}/credentials/store/system/domain/_/api/json?tree=credentials[id]"
+    user: admin
+    password: "{{ jenkins_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    status_code: [200]
+    timeout: 10
+  register: jenkins_bluefin_creds
+  no_log: true
+  when: jenkins_bluefin_enabled | default(false) and jenkins_bluefin_credential_check == 'rest'
+
+- name: Assert credenciais Bluefin presentes (read-only)
+  ansible.builtin.assert:
+    that:
+      - "'github-token' in (jenkins_bluefin_creds.json.credentials | map(attribute='id') | list)"
+      - "'ghcr-creds' in (jenkins_bluefin_creds.json.credentials | map(attribute='id') | list)"
+      - "'n8n-webhook-url' in (jenkins_bluefin_creds.json.credentials | map(attribute='id') | list)"
+      - "'n8n-webhook-token' in (jenkins_bluefin_creds.json.credentials | map(attribute='id') | list)"
+    fail_msg: "Credenciais Bluefin ausentes no Jenkins (esperado github-token, ghcr-creds, n8n-webhook-url, n8n-webhook-token)"
+  no_log: true
+  when: jenkins_bluefin_enabled | default(false) and jenkins_bluefin_credential_check == 'rest'
+
+- name: Verificar credenciais Bluefin via Groovy interno (read-only)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    docker exec -i jenkins sh -lc 'cat > /tmp/check-bluefin-creds.groovy' <<'GROOVY'
+    def ids = com.cloudbees.plugins.credentials.SystemCredentialsProvider.getInstance()
+      .getStore()
+      .getCredentials(com.cloudbees.plugins.credentials.domains.Domain.global())*.id
+    def required = ['github-token', 'ghcr-creds', 'n8n-webhook-url', 'n8n-webhook-token']
+    def missing = required.findAll { !ids.contains(it) }
+    if (missing) { throw new IllegalStateException("missing credentials: ${missing}") }
+    GROOVY
+    docker exec jenkins sh -lc \
+      'java -jar /var/jenkins_home/war/WEB-INF/lib/cli.jar -s http://127.0.0.1:8080 \
+        -auth "$JENKINS_ADMIN_ID:$JENKINS_ADMIN_PASSWORD" groovy = \
+        < /tmp/check-bluefin-creds.groovy'
+  args:
+    executable: /bin/bash
+  no_log: true
+  changed_when: false
+  when: jenkins_bluefin_enabled | default(false) and jenkins_bluefin_credential_check == 'groovy'
+
+- name: Verificar que não há permissões ambíguas legadas para contas gerenciadas (read-only)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    config="{{ compose_jenkins_data_dir }}/config.xml"
+    status=0
+    for user in admin {{ jenkins_labmonitor_user }} {{ jenkins_prometheus_user }}; do
+      legacy="$(grep -oE "<permission>[^<]*:${user}</permission>" "$config" | grep -vE "<permission>(USER|GROUP):" || true)"
+      if [[ -n "$legacy" ]]; then
+        printf 'ambiguous legacy permission for %s: %s\n' "$user" "$legacy" >&2
+        status=1
+      fi
+    done
+    exit "$status"
   args:
     executable: /bin/bash
   changed_when: false

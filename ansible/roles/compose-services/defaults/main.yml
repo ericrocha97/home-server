@@ -61,7 +61,7 @@ compose_jenkins_url: "https://jenkins.{{ base_domain }}"
 compose_n8n_editor_base_url: "https://n8n.{{ base_domain }}"
 compose_n8n_webhook_url: "https://n8n.{{ base_domain }}/"
 
-# LabMonitor metadata (non-secret, stable IDs — Task 3 renders labels)
+# LabMonitor metadata (non-secret, stable IDs used to render container labels)
 compose_jenkins_labmonitor_id: jenkins
 compose_jenkins_labmonitor_name: Jenkins
 compose_jenkins_labmonitor_category: automation
@@ -76,3 +76,18 @@ compose_metabase_labmonitor_category: analytics
 compose_metabase_labmonitor_icon: metabase
 jenkins_labmonitor_user: labmonitor-api
 jenkins_prometheus_user: prometheus-scraper
+
+# --- Jenkins Bluefin pipeline (opt-in; keep false in examples) ---
+jenkins_bluefin_enabled: false
+jenkins_bluefin_repo_url: "https://github.com/ericrocha97/bluefin.git"
+jenkins_bluefin_branch: "*/main"
+jenkins_bluefin_jobs:
+  - name: bluefin-cosmic-dx
+    jenkinsfile: ci/jenkins/Jenkinsfile.stable
+  - name: bluefin-cosmic-dx-nvidia
+    jenkinsfile: ci/jenkins/Jenkinsfile.nvidia
+
+# Bluefin credential verification mechanism. Use 'rest' only after confirming
+# the credentials REST endpoint is reliable/read-only on the pinned Jenkins;
+# otherwise select 'groovy' (internal read-only Groovy check).
+jenkins_bluefin_credential_check: rest

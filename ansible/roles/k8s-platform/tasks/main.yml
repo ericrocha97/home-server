@@ -65,9 +65,9 @@
   ansible.builtin.command: kubectl --kubeconfig={{ kubeconfig_path }} -n kube-system wait --for=condition=available deployment/traefik --timeout=180s
   changed_when: false
 
-# LabMonitor discovery contract gate (Task 7): Grafana, Prometheus, and
-# Portainer Services must expose the stable id + open.url metadata before the
-# Task 8 Ingress stage routes to them. Cockpit stays on the file provider.
+# LabMonitor discovery contract gate: Grafana, Prometheus, and Portainer
+# Services must expose the stable id + open.url metadata before the Ingress
+# stage routes to them. Cockpit stays on the file provider.
 - name: Assert LabMonitor discovery metadata on Services
   ansible.builtin.shell: |
     set -euo pipefail
@@ -97,10 +97,10 @@
       get serviceaccount labmonitor-api -o name
   changed_when: false
 
-# Final platform Ingress stage (Task 8): Traefik Ingress only for human
-# interfaces (Grafana, Prometheus, Portainer). The file provider keeps
-# routing the Compose/Cockpit backends; providers stay ClusterIP-only with
-# no Ingress or NodePort.
+# Final platform Ingress stage: Traefik Ingress only for human interfaces
+# (Grafana, Prometheus, Portainer). The file provider keeps routing the
+# Compose/Cockpit backends; providers stay ClusterIP-only with no Ingress or
+# NodePort.
 - name: Renderizar Ingress da plataforma (Grafana, Prometheus, Portainer)
   ansible.builtin.template:
     src: platform-ingress.yaml.j2
