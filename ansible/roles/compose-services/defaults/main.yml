@@ -86,3 +86,8 @@ jenkins_bluefin_jobs:
     jenkinsfile: ci/jenkins/Jenkinsfile.stable
   - name: bluefin-cosmic-dx-nvidia
     jenkinsfile: ci/jenkins/Jenkinsfile.nvidia
+
+# Bluefin credential verification mechanism. Use 'rest' only after confirming
+# the credentials REST endpoint is reliable/read-only on the pinned Jenkins;
+# otherwise select 'groovy' (internal read-only Groovy check).
+jenkins_bluefin_credential_check: rest

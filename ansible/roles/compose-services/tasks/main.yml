@@ -796,9 +796,9 @@
 
 # O endpoint REST de credenciais (credentials/store/system/domain/_/api/json) ainda
 # NÃO foi confirmado como confiável e somente-leitura na versão fixada do Jenkins.
-# Confirme-o em um host provisionado antes de depender desta checagem; se ele não for
-# confiável/somente-leitura, use a alternativa de verificação Groovy interna via CLI do
-# Jenkins (fallback do brief, Step 6), que também nunca lê valores de credenciais.
+# Defina jenkins_bluefin_credential_check: groovy para selecionar a verificação Groovy
+# interna via CLI (também nunca lê valores de credenciais). Use 'rest' somente depois de
+# confirmar o endpoint em um host provisionado.
 - name: Consultar credenciais do sistema Jenkins via REST (read-only)
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ compose_jenkins_port }}/credentials/store/system/domain/_/api/json?tree=credentials[id]"
@@ -810,7 +810,7 @@
     timeout: 10
   register: jenkins_bluefin_creds
   no_log: true
-  when: jenkins_bluefin_enabled | default(false)
+  when: jenkins_bluefin_enabled | default(false) and jenkins_bluefin_credential_check == 'rest'
 
 - name: Assert credenciais Bluefin presentes (read-only)
   ansible.builtin.assert:
@@ -821,4 +821,25 @@
       - "'n8n-webhook-token' in (jenkins_bluefin_creds.json.credentials | map(attribute='id') | list)"
     fail_msg: "Credenciais Bluefin ausentes no Jenkins (esperado github-token, ghcr-creds, n8n-webhook-url, n8n-webhook-token)"
   no_log: true
-  when: jenkins_bluefin_enabled | default(false)
+  when: jenkins_bluefin_enabled | default(false) and jenkins_bluefin_credential_check == 'rest'
+
+- name: Verificar credenciais Bluefin via Groovy interno (read-only)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    docker exec -i jenkins sh -lc 'cat > /tmp/check-bluefin-creds.groovy' <<'GROOVY'
+    def ids = com.cloudbees.plugins.credentials.SystemCredentialsProvider.getInstance()
+      .getStore()
+      .getCredentials(com.cloudbees.plugins.credentials.domains.Domain.global())*.id
+    def required = ['github-token', 'ghcr-creds', 'n8n-webhook-url', 'n8n-webhook-token']
+    def missing = required.findAll { !ids.contains(it) }
+    if (missing) { throw new IllegalStateException("missing credentials: ${missing}") }
+    GROOVY
+    docker exec jenkins sh -lc \
+      'java -jar /var/jenkins_home/war/WEB-INF/lib/cli.jar -s http://127.0.0.1:8080 \
+        -auth "$JENKINS_ADMIN_ID:$JENKINS_ADMIN_PASSWORD" groovy = \
+        < /tmp/check-bluefin-creds.groovy'
+  args:
+    executable: /bin/bash
+  no_log: true
+  changed_when: false
+  when: jenkins_bluefin_enabled | default(false) and jenkins_bluefin_credential_check == 'groovy'

@@ -693,6 +693,12 @@ class TestJenkinsProviders(unittest.TestCase):
         example = read(JENKINS_ENV_EXAMPLE)
         self.assertNotRegex(example, r"ghp_|github_pat_",
                             f"{JENKINS_ENV_EXAMPLE} must not contain a real token")
+        start = template.index("{% if jenkins_bluefin_enabled")
+        end = template.index("{% endif %}", start)
+        block = template[start:end]
+        for var in env_vars:
+            self.assertIn(var, block,
+                          f"{JENKINS_ENV_TEMPLATE} must emit {var} inside the Bluefin conditional")
 
     def test_jenkins_bluefin_job_mapping_is_explicit(self):
         """Defaults map each job name to its Jenkinsfile path."""
