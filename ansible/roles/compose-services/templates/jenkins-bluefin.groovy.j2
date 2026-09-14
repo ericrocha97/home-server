@@ -1,0 +1,88 @@
+import com.cloudbees.plugins.credentials.CredentialsScope
+import com.cloudbees.plugins.credentials.SystemCredentialsProvider
+import com.cloudbees.plugins.credentials.domains.Domain
+import com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl
+import hudson.plugins.git.BranchSpec
+import hudson.plugins.git.GitSCM
+import hudson.plugins.git.UserRemoteConfig
+import hudson.util.Secret
+import jenkins.model.Jenkins
+import org.jenkinsci.plugins.plaincredentials.impl.StringCredentialsImpl
+import org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition
+import org.jenkinsci.plugins.workflow.job.WorkflowJob
+
+// Secrets are read from the container environment at boot and stored in the
+// Jenkins credentials store. This script contains no secret literal; secrets
+// originate from Ansible Vault and are never committed in plaintext. Jenkins
+// may persist the credentials normally in its credentials store.
+def instance = Jenkins.get()
+def env = System.getenv()
+
+def requiredEnv = [
+  'JENKINS_GH_TOKEN',
+  'JENKINS_GHCR_USERNAME',
+  'JENKINS_GHCR_TOKEN',
+  'JENKINS_N8N_WEBHOOK_URL',
+  'JENKINS_N8N_WEBHOOK_TOKEN',
+]
+requiredEnv.each { key ->
+  def value = env[key]
+  if (value == null || value.trim().isEmpty()) {
+    throw new IllegalStateException("${key} ausente — abortando provisionamento Bluefin")
+  }
+}
+
+def store = SystemCredentialsProvider.getInstance().getStore()
+def domain = Domain.global()
+
+def upsert = { next ->
+  def existing = store.getCredentials(domain).find { it.id == next.id }
+  if (existing == null) {
+    store.addCredentials(domain, next)
+  } else {
+    store.updateCredentials(domain, existing, next)
+  }
+}
+
+upsert(new StringCredentialsImpl(
+  CredentialsScope.GLOBAL, 'github-token', 'GitHub token for gh CLI',
+  Secret.fromString(env['JENKINS_GH_TOKEN'])))
+upsert(new UsernamePasswordCredentialsImpl(
+  CredentialsScope.GLOBAL, 'ghcr-creds', 'GHCR username and token',
+  env['JENKINS_GHCR_USERNAME'], env['JENKINS_GHCR_TOKEN']))
+upsert(new StringCredentialsImpl(
+  CredentialsScope.GLOBAL, 'n8n-webhook-url', 'n8n build-events webhook URL',
+  Secret.fromString(env['JENKINS_N8N_WEBHOOK_URL'])))
+upsert(new StringCredentialsImpl(
+  CredentialsScope.GLOBAL, 'n8n-webhook-token', 'n8n webhook shared token',
+  Secret.fromString(env['JENKINS_N8N_WEBHOOK_TOKEN'])))
+
+// Defaults supplied by the inventory (non-secret): repository
+// https://github.com/ericrocha97/bluefin.git, branch */main, and the jobs
+// bluefin-cosmic-dx -> ci/jenkins/Jenkinsfile.stable and
+// bluefin-cosmic-dx-nvidia -> ci/jenkins/Jenkinsfile.nvidia.
+def repoUrl = '{{ jenkins_bluefin_repo_url }}'
+def branch = '{{ jenkins_bluefin_branch }}'
+def jobs = [
+{% for job in jenkins_bluefin_jobs %}
+  ['{{ job.name }}', '{{ job.jenkinsfile }}'],
+{% endfor %}
+]
+
+jobs.each { name, jenkinsfile ->
+  def scm = new GitSCM(
+    [new UserRemoteConfig(repoUrl, null, null, null)],
+    [new BranchSpec(branch)],
+    false, [], null, null, []
+  )
+  def definition = new CpsScmFlowDefinition(scm, jenkinsfile)
+  definition.setLightweight(true)
+  def job = instance.getItemByFullName(name) as WorkflowJob
+  if (job == null) {
+    job = new WorkflowJob(instance, name)
+    instance.add(job, name)
+  }
+  job.setDefinition(definition)
+  job.save()
+  println("Bluefin job reconciled: ${name} -> ${jenkinsfile}")
+}

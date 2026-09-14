@@ -706,6 +706,40 @@ class TestJenkinsProviders(unittest.TestCase):
         self.assertIn("jenkinsfile: ci/jenkins/Jenkinsfile.nvidia", defaults,
                       f"{COMPOSE_DEFAULTS} must map the nvidia Jenkinsfile")
 
+    def test_jenkins_bluefin_groovy_provisions_credentials_and_jobs(self):
+        """The Groovy script reads secrets from env and upserts credentials and jobs."""
+        self.assertTrue(JENKINS_BLUEFIN_GROOVY.is_file(), f"missing {JENKINS_BLUEFIN_GROOVY}")
+        groovy = read(JENKINS_BLUEFIN_GROOVY)
+        for cred in ("github-token", "ghcr-creds", "n8n-webhook-url", "n8n-webhook-token"):
+            self.assertIn(cred, groovy, f"{JENKINS_BLUEFIN_GROOVY} must reference credential {cred}")
+        for symbol in ("SystemCredentialsProvider", "addCredentials", "updateCredentials",
+                       "new WorkflowJob", "CpsScmFlowDefinition", "setLightweight(true)",
+                       "System.getenv", "ericrocha97/bluefin",
+                       "ci/jenkins/Jenkinsfile.stable", "ci/jenkins/Jenkinsfile.nvidia"):
+            self.assertIn(symbol, groovy, f"{JENKINS_BLUEFIN_GROOVY} must contain {symbol}")
+        self.assertNotRegex(groovy, r"ghp_|github_pat_",
+                            f"{JENKINS_BLUEFIN_GROOVY} must contain no real token")
+        self.assertNotIn("JENKINS_GH_TOKEN=", groovy,
+                         f"{JENKINS_BLUEFIN_GROOVY} must not embed a secret literal")
+        # Atomic validation: all env vars are checked before any credential write.
+        self.assertLess(groovy.index("requiredEnv.each"),
+                        groovy.index("addCredentials"),
+                        f"{JENKINS_BLUEFIN_GROOVY} must validate all env vars before writing")
+
+    def test_jenkins_bluefin_groovy_staging_is_non_destructive(self):
+        """The script is staged only when enabled and removed when disabled; nothing else is deleted."""
+        tasks = read(COMPOSE_TASKS)
+        self.assertIn("03-bluefin.groovy", tasks,
+                      f"{COMPOSE_TASKS} must stage 03-bluefin.groovy")
+        self.assertIsNotNone(
+            re.search(r"03-bluefin\.groovy.*?state: absent", tasks, re.S),
+            f"{COMPOSE_TASKS} must remove the staged script when disabled")
+        # No JENKINS_HOME job/credential/build state is ever deleted by this feature.
+        self.assertNotIn("credentials.xml", tasks,
+                         f"{COMPOSE_TASKS} must not delete the credentials store")
+        self.assertNotIn("/jobs/", tasks,
+                         f"{COMPOSE_TASKS} must not delete the jobs directory")
+
 
 EXPORTER_DEPLOYMENT = REPO / "ansible/roles/monitoring/templates/docker-exporter-deployment.yaml.j2"
 EXPORTER_SERVICE = REPO / "ansible/roles/monitoring/templates/docker-exporter-service.yaml.j2"
@@ -2103,17 +2137,26 @@ class TestFinalFixWave(unittest.TestCase):
         self.assertIn("jenkins_baseline_marker", tasks,
                       f"{COMPOSE_TASKS} must gate destruction on the marker fact")
         # Every `state: absent` removal of the exact Jenkins path is conditional.
+        # The Bluefin init-script removal is intentionally non-destructive and is
+        # covered separately by
+        # test_jenkins_bluefin_groovy_staging_is_non_destructive.
         absent_blocks = [m.start() for m in re.finditer(r"state:\s*absent", tasks)]
         self.assertGreaterEqual(len(absent_blocks), 2,
                                 f"{COMPOSE_TASKS} must keep exact-path removals — got {len(absent_blocks)}")
+        gated_blocks = 0
         for idx in absent_blocks:
             window = tasks[max(0, idx - 500):idx + 800]
+            if "03-bluefin.groovy" in window:
+                continue
+            gated_blocks += 1
             self.assertIn("/srv/home-server/data/jenkins", window,
                           f"{COMPOSE_TASKS} absent removal must target the exact Jenkins path")
             self.assertIn("jenkins_baseline_marker", window,
                           f"{COMPOSE_TASKS} absent removal must check the marker (no unconditional wipe)")
             self.assertIn("jenkins_clean_reset_confirmed", window,
                           f"{COMPOSE_TASKS} absent removal must require explicit opt-in")
+        self.assertGreaterEqual(gated_blocks, 2,
+                                f"{COMPOSE_TASKS} must keep both marker-gated Jenkins removals — got {gated_blocks}")
         # Container removal is equally gated.
         self.assertIn("jenkins_clean_reset_confirmed is sameas true", tasks,
                       f"{COMPOSE_TASKS} must keep explicit opt-in (sameas true)")

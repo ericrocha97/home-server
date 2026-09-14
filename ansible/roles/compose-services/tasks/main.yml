@@ -655,6 +655,22 @@
     mode: '0640'
   no_log: true
 
+- name: Renderizar Groovy de provisionamento Bluefin (credenciais + jobs)
+  ansible.builtin.template:
+    src: jenkins-bluefin.groovy.j2
+    dest: "{{ compose_jenkins_data_dir }}/init.groovy.d/03-bluefin.groovy"
+    owner: "{{ compose_jenkins_uid }}"
+    group: "{{ compose_jenkins_gid }}"
+    mode: '0640'
+  no_log: true
+  when: jenkins_bluefin_enabled | default(false)
+
+- name: Remover Groovy Bluefin quando a integração está desabilitada (não destrutivo)
+  ansible.builtin.file:
+    path: "{{ compose_jenkins_data_dir }}/init.groovy.d/03-bluefin.groovy"
+    state: absent
+  when: not (jenkins_bluefin_enabled | default(false))
+
 - name: Recriar Jenkins fase dois para reconciliar labmonitor-api e prometheus-scraper
   community.docker.docker_compose_v2:
     project_src: "{{ compose_projects_root }}/jenkins"
