@@ -21,6 +21,8 @@ compose_n8n_image: "n8nio/n8n:2.39.4@sha256:5fa13ec66b5703f3ae0189eb979940baec35
 compose_metabase_image: "metabase/metabase:v0.63.17@sha256:918187453bd5d70849d14bb6af0bb482a617dc849f251502679a8e626d98f4ee"
 # Jenkins clean baseline — explicit opt-in, operator changes to true only for the clean baseline run
 jenkins_clean_reset_confirmed: false
+# Jenkins Bluefin pipeline (opt-in; keep false in examples)
+jenkins_bluefin_enabled: false
 compose_postgres_port: 15432
 compose_jenkins_port: 18080
 compose_n8n_port: 15678

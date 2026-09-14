@@ -34,6 +34,19 @@
     fail_msg: "Vault dos providers Jenkins incompleto — defina jenkins_labmonitor_password, jenkins_labmonitor_api_token, jenkins_prometheus_password e jenkins_prometheus_api_token distintos do admin; os dois api_token devem usar o formato fixo do Jenkins 11 + 32 hex minusculos (34 chars, ex.: python3 -c \"import secrets; print('11' + secrets.token_hex(16))\")"
   no_log: true
 
+- name: Validar Vault obrigatório da integração Bluefin (opt-in)
+  ansible.builtin.assert:
+    that:
+      - jenkins_github_token is defined and jenkins_github_token | length > 0
+      - jenkins_ghcr_username is defined and jenkins_ghcr_username | length > 0
+      - jenkins_ghcr_token is defined and jenkins_ghcr_token | length > 0
+      - jenkins_n8n_webhook_url is defined and jenkins_n8n_webhook_url | length > 0
+      - jenkins_n8n_webhook_token is defined and jenkins_n8n_webhook_token | length > 0
+      - jenkins_n8n_webhook_url is match('^https?://')
+    fail_msg: "jenkins_bluefin_enabled: true exige jenkins_github_token, jenkins_ghcr_username, jenkins_ghcr_token, jenkins_n8n_webhook_url (http/https) e jenkins_n8n_webhook_token no Vault"
+  no_log: true
+  when: jenkins_bluefin_enabled | default(false)
+
 - name: Validar referências de imagem completas e pinadas
   ansible.builtin.assert:
     that:

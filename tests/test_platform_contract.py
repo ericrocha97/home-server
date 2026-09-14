@@ -654,6 +654,58 @@ class TestJenkinsProviders(unittest.TestCase):
         self.assertNotIn("docker:dind", dockerfile,
                          f"{JENKINS_DOCKERFILE} must not use docker:dind")
 
+    def test_jenkins_bluefin_enablement_is_opt_in_and_fail_closed(self):
+        """Flag defaults false in defaults and both examples; validation is fail-closed when true."""
+        defaults = parse_simple_vars(COMPOSE_DEFAULTS)
+        self.assertEqual(defaults.get("jenkins_bluefin_enabled"), "false",
+                         f"{COMPOSE_DEFAULTS} must default jenkins_bluefin_enabled to false")
+        self.assertEqual(defaults.get("jenkins_bluefin_repo_url"),
+                         "https://github.com/ericrocha97/bluefin.git",
+                         f"{COMPOSE_DEFAULTS} must pin the Bluefin repo URL")
+        self.assertEqual(defaults.get("jenkins_bluefin_branch"), "*/main",
+                         f"{COMPOSE_DEFAULTS} must pin the Bluefin branch spec")
+        for path in (LAB_EXAMPLE, PROD_EXAMPLE):
+            self.assertEqual(parse_simple_vars(path).get("jenkins_bluefin_enabled"), "false",
+                             f"{path} must keep jenkins_bluefin_enabled false")
+        tasks = read(COMPOSE_TASKS)
+        self.assertIn("when: jenkins_bluefin_enabled | default(false)", tasks,
+                      f"{COMPOSE_TASKS} must gate Bluefin work on the flag")
+        for var in ("jenkins_github_token", "jenkins_ghcr_username", "jenkins_ghcr_token",
+                    "jenkins_n8n_webhook_url", "jenkins_n8n_webhook_token"):
+            self.assertIn(var, tasks,
+                          f"{COMPOSE_TASKS} must validate {var} when enabled")
+        self.assertIn("match('^https?://')", tasks,
+                      f"{COMPOSE_TASKS} must require an http(s) webhook URL")
+
+    def test_jenkins_env_forwards_bluefin_secrets(self):
+        """The env template, Compose file, and example all carry the 5 Bluefin env vars."""
+        env_vars = ("JENKINS_GH_TOKEN", "JENKINS_GHCR_USERNAME", "JENKINS_GHCR_TOKEN",
+                    "JENKINS_N8N_WEBHOOK_URL", "JENKINS_N8N_WEBHOOK_TOKEN")
+        template = read(JENKINS_ENV_TEMPLATE)
+        self.assertIn("{% if jenkins_bluefin_enabled", template,
+                      f"{JENKINS_ENV_TEMPLATE} must gate Bluefin env vars on the flag")
+        for var in env_vars:
+            self.assertIn(var, template, f"{JENKINS_ENV_TEMPLATE} must emit {var}")
+            self.assertIn(var, read(JENKINS_COMPOSE),
+                          f"{JENKINS_COMPOSE} must pass {var}")
+            self.assertIn(var, read(JENKINS_ENV_EXAMPLE),
+                          f"{JENKINS_ENV_EXAMPLE} must placeholder {var}")
+        example = read(JENKINS_ENV_EXAMPLE)
+        self.assertNotRegex(example, r"ghp_|github_pat_",
+                            f"{JENKINS_ENV_EXAMPLE} must not contain a real token")
+
+    def test_jenkins_bluefin_job_mapping_is_explicit(self):
+        """Defaults map each job name to its Jenkinsfile path."""
+        defaults = read(COMPOSE_DEFAULTS)
+        self.assertIn("name: bluefin-cosmic-dx", defaults,
+                      f"{COMPOSE_DEFAULTS} must define the stable job")
+        self.assertIn("jenkinsfile: ci/jenkins/Jenkinsfile.stable", defaults,
+                      f"{COMPOSE_DEFAULTS} must map the stable Jenkinsfile")
+        self.assertIn("name: bluefin-cosmic-dx-nvidia", defaults,
+                      f"{COMPOSE_DEFAULTS} must define the nvidia job")
+        self.assertIn("jenkinsfile: ci/jenkins/Jenkinsfile.nvidia", defaults,
+                      f"{COMPOSE_DEFAULTS} must map the nvidia Jenkinsfile")
+
 
 EXPORTER_DEPLOYMENT = REPO / "ansible/roles/monitoring/templates/docker-exporter-deployment.yaml.j2"
 EXPORTER_SERVICE = REPO / "ansible/roles/monitoring/templates/docker-exporter-service.yaml.j2"
