@@ -740,6 +740,22 @@ class TestJenkinsProviders(unittest.TestCase):
         self.assertNotIn("/jobs/", tasks,
                          f"{COMPOSE_TASKS} must not delete the jobs directory")
 
+    def test_jenkins_bluefin_verification_is_read_only(self):
+        """Live checks probe CLIs/daemon and verify jobs/credentials read-only, never building."""
+        tasks = read(COMPOSE_TASKS)
+        for probe in ("command -v $cmd", "docker info", "gh --version"):
+            self.assertIn(probe, tasks,
+                          f"{COMPOSE_TASKS} must contain read-only probe '{probe}'")
+        for cred in ("github-token", "ghcr-creds", "n8n-webhook-url", "n8n-webhook-token"):
+            self.assertIn(cred, tasks,
+                          f"{COMPOSE_TASKS} must verify credential {cred}")
+        self.assertIn("jenkins_bluefin_enabled | default(false)", tasks,
+                      f"{COMPOSE_TASKS} must gate Bluefin verification on the flag")
+        self.assertNotIn("/job/{{ item.name }}/build", tasks,
+                         f"{COMPOSE_TASKS} must never trigger a Bluefin build")
+        self.assertNotIn("buildWithParameters", tasks,
+                         f"{COMPOSE_TASKS} must never trigger a parameterized build")
+
 
 EXPORTER_DEPLOYMENT = REPO / "ansible/roles/monitoring/templates/docker-exporter-deployment.yaml.j2"
 EXPORTER_SERVICE = REPO / "ansible/roles/monitoring/templates/docker-exporter-service.yaml.j2"

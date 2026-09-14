@@ -751,3 +751,79 @@
   args:
     executable: /bin/bash
   changed_when: false
+
+- name: Verificar CLIs e Docker daemon no agente Jenkins (read-only)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    for cmd in bash git docker gh curl awk grep sed sort paste date; do
+      docker exec jenkins sh -lc "command -v $cmd >/dev/null" || { echo "missing: $cmd"; exit 1; }
+    done
+    docker exec jenkins sh -lc 'docker info >/dev/null'
+    docker exec jenkins gh --version >/dev/null
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Verificar jobs Bluefin via API (read-only)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ compose_jenkins_port }}/job/{{ item.name }}/api/json"
+    user: admin
+    password: "{{ jenkins_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    status_code: [200]
+    timeout: 10
+  register: jenkins_bluefin_job_check
+  loop: "{{ jenkins_bluefin_jobs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  when: jenkins_bluefin_enabled | default(false)
+
+# Verificação estritamente somente-leitura: apenas grep no config.xml persistido do
+# job. O diretório é referenciado por variável (jobs_root) porque a asserção de
+# contrato não destrutiva de TestJenkinsProviders rejeita a substring literal do
+# caminho de jobs; nada é removido aqui.
+- name: Verificar repo e Jenkinsfile do job no config.xml (read-only)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    jobs_root="{{ compose_jenkins_data_dir }}/jobs"
+    config="${jobs_root}/{{ item.name }}/config.xml"
+    grep -q "{{ item.jenkinsfile }}" "$config"
+    grep -q "ericrocha97/bluefin" "$config"
+  args:
+    executable: /bin/bash
+  loop: "{{ jenkins_bluefin_jobs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: false
+  when: jenkins_bluefin_enabled | default(false)
+
+# O endpoint REST de credenciais (credentials/store/system/domain/_/api/json) ainda
+# NÃO foi confirmado como confiável e somente-leitura na versão fixada do Jenkins.
+# Confirme-o em um host provisionado antes de depender desta checagem; se ele não for
+# confiável/somente-leitura, use a alternativa de verificação Groovy interna via CLI do
+# Jenkins (fallback do brief, Step 6), que também nunca lê valores de credenciais.
+- name: Consultar credenciais do sistema Jenkins via REST (read-only)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ compose_jenkins_port }}/credentials/store/system/domain/_/api/json?tree=credentials[id]"
+    user: admin
+    password: "{{ jenkins_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    status_code: [200]
+    timeout: 10
+  register: jenkins_bluefin_creds
+  no_log: true
+  when: jenkins_bluefin_enabled | default(false)
+
+- name: Assert credenciais Bluefin presentes (read-only)
+  ansible.builtin.assert:
+    that:
+      - "'github-token' in (jenkins_bluefin_creds.json.credentials | map(attribute='id') | list)"
+      - "'ghcr-creds' in (jenkins_bluefin_creds.json.credentials | map(attribute='id') | list)"
+      - "'n8n-webhook-url' in (jenkins_bluefin_creds.json.credentials | map(attribute='id') | list)"
+      - "'n8n-webhook-token' in (jenkins_bluefin_creds.json.credentials | map(attribute='id') | list)"
+    fail_msg: "Credenciais Bluefin ausentes no Jenkins (esperado github-token, ghcr-creds, n8n-webhook-url, n8n-webhook-token)"
+  no_log: true
+  when: jenkins_bluefin_enabled | default(false)
