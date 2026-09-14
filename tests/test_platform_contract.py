@@ -737,8 +737,12 @@ class TestJenkinsProviders(unittest.TestCase):
         # No JENKINS_HOME job/credential/build state is ever deleted by this feature.
         self.assertNotIn("credentials.xml", tasks,
                          f"{COMPOSE_TASKS} must not delete the credentials store")
-        self.assertNotIn("/jobs/", tasks,
-                         f"{COMPOSE_TASKS} must not delete the jobs directory")
+        # No `state: absent` removal may target the jobs directory (read-only
+        # references to it elsewhere are fine).
+        for match in re.finditer(r"state:\s*absent", tasks):
+            window = tasks[max(0, match.start() - 400):match.start() + 100]
+            self.assertNotIn("/jobs", window,
+                             f"{COMPOSE_TASKS} must not remove a jobs path via state: absent")
 
     def test_jenkins_bluefin_verification_is_read_only(self):
         """Live checks probe CLIs/daemon and verify jobs/credentials read-only, never building."""
@@ -751,6 +755,9 @@ class TestJenkinsProviders(unittest.TestCase):
                           f"{COMPOSE_TASKS} must verify credential {cred}")
         self.assertIn("jenkins_bluefin_enabled | default(false)", tasks,
                       f"{COMPOSE_TASKS} must gate Bluefin verification on the flag")
+        self.assertGreaterEqual(
+            tasks.count("when: jenkins_bluefin_enabled | default(false)"), 4,
+            f"{COMPOSE_TASKS} must gate each Bluefin job/credential verification task")
         self.assertNotIn("/job/{{ item.name }}/build", tasks,
                          f"{COMPOSE_TASKS} must never trigger a Bluefin build")
         self.assertNotIn("buildWithParameters", tasks,

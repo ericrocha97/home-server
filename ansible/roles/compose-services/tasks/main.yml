@@ -780,15 +780,10 @@
   no_log: true
   when: jenkins_bluefin_enabled | default(false)
 
-# Verificação estritamente somente-leitura: apenas grep no config.xml persistido do
-# job. O diretório é referenciado por variável (jobs_root) porque a asserção de
-# contrato não destrutiva de TestJenkinsProviders rejeita a substring literal do
-# caminho de jobs; nada é removido aqui.
 - name: Verificar repo e Jenkinsfile do job no config.xml (read-only)
   ansible.builtin.shell: |
     set -euo pipefail
-    jobs_root="{{ compose_jenkins_data_dir }}/jobs"
-    config="${jobs_root}/{{ item.name }}/config.xml"
+    config="{{ compose_jenkins_data_dir }}/jobs/{{ item.name }}/config.xml"
     grep -q "{{ item.jenkinsfile }}" "$config"
     grep -q "ericrocha97/bluefin" "$config"
   args:
