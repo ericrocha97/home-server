@@ -843,3 +843,20 @@
   no_log: true
   changed_when: false
   when: jenkins_bluefin_enabled | default(false) and jenkins_bluefin_credential_check == 'groovy'
+
+- name: Verificar que não há permissões ambíguas legadas para contas gerenciadas (read-only)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    config="{{ compose_jenkins_data_dir }}/config.xml"
+    status=0
+    for user in admin {{ jenkins_labmonitor_user }} {{ jenkins_prometheus_user }}; do
+      legacy="$(grep -oE "<permission>[^<]*:${user}</permission>" "$config" | grep -vE "<permission>(USER|GROUP):" || true)"
+      if [[ -n "$legacy" ]]; then
+        printf 'ambiguous legacy permission for %s: %s\n' "$user" "$legacy" >&2
+        status=1
+      fi
+    done
+    exit "$status"
+  args:
+    executable: /bin/bash
+  changed_when: false

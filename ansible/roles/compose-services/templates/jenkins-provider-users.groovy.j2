@@ -2,6 +2,7 @@ import jenkins.model.*
 import hudson.model.User
 import hudson.security.*
 import jenkins.security.ApiTokenProperty
+import org.jenkinsci.plugins.matrixauth.PermissionEntry
 
 def instance = Jenkins.get()
 def env = System.getenv()
@@ -68,9 +69,16 @@ def strategy = instance.getAuthorizationStrategy()
 if (!(strategy instanceof GlobalMatrixAuthorizationStrategy)) {
   throw new IllegalStateException("Authorization strategy inesperada — phase-one deve instalar GlobalMatrixAuthorizationStrategy")
 }
-strategy.add(Jenkins.READ, labUser)
-strategy.add(hudson.model.Item.READ, labUser)
-strategy.add(hudson.model.Run.READ, labUser)
-strategy.add(hudson.model.View.READ, labUser)
-strategy.add(Jenkins.READ, promUser)
+// Reconcile provider grants deterministically as explicit USER entries: drop
+// every existing grant for these accounts first (including legacy ambiguous
+// EITHER entries), then re-add the least-privilege set.
+def managedProviders = [labUser, promUser]
+strategy.getGrantedPermissionEntries().values().each { entries ->
+  entries.removeIf { managedProviders.contains(it.sid) }
+}
+strategy.add(Jenkins.READ, PermissionEntry.user(labUser))
+strategy.add(hudson.model.Item.READ, PermissionEntry.user(labUser))
+strategy.add(hudson.model.Run.READ, PermissionEntry.user(labUser))
+strategy.add(hudson.model.View.READ, PermissionEntry.user(labUser))
+strategy.add(Jenkins.READ, PermissionEntry.user(promUser))
 instance.save()

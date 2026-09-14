@@ -424,6 +424,22 @@ class TestJenkinsProviders(unittest.TestCase):
         phase2 = read(PHASE2_GROOVY)
         self.assertIn("GlobalMatrixAuthorizationStrategy", phase2,
                       f"{PHASE2_GROOVY} must reconcile against GlobalMatrixAuthorizationStrategy")
+        # matrix-auth 3.x marks grants created with the legacy add(Permission, String)
+        # API as ambiguous; explicit user entries plus a deterministic drop-by-sid
+        # reconciliation keep the strategy unambiguous.
+        self.assertIn("PermissionEntry.user", content,
+                      f"{PHASE1_GROOVY} must grant the admin via an explicit user PermissionEntry")
+        self.assertIn("removeIf", content,
+                      f"{PHASE1_GROOVY} must drop legacy grants before re-adding")
+        self.assertIn("PermissionEntry.user", phase2,
+                      f"{PHASE2_GROOVY} must grant providers via explicit user PermissionEntry")
+        self.assertIn("removeIf", phase2,
+                      f"{PHASE2_GROOVY} must drop legacy grants before re-adding")
+
+    def test_jenkins_verifies_no_legacy_ambiguous_permissions(self):
+        """compose-services fails closed if a managed account keeps a legacy ambiguous grant."""
+        self.assertIn("ambiguous legacy permission", read(COMPOSE_TASKS),
+                      f"{COMPOSE_TASKS} must verify no legacy ambiguous permission remains")
 
     def test_jenkins_admin_checkpoint_precedes_provider_user_render(self):
         """Admin checkpoint (login, anon non-2xx, health, strategy) precedes phase-two render."""
