@@ -4,6 +4,7 @@ Seven named cases, inspecting Dockerfile, Compose YAML, role defaults/tasks,
 and example inventories. Must fail against 2.504.3-lts-jdk17 and pass after
 2.568.3-lts-jdk21 digest-pinned clean baseline.
 """
+
 import pathlib
 import re
 import unittest
@@ -11,7 +12,9 @@ import unittest
 REPO = pathlib.Path(__file__).resolve().parents[1]
 
 TARGET_IMAGE = "jenkins/jenkins:2.568.3-lts-jdk21@sha256:c1e4c349365f6d16d88595b2c5f7e8ff39b8ae1d061f62420bac193b4b9616d0"
-TARGET_DIGEST = "sha256:c1e4c349365f6d16d88595b2c5f7e8ff39b8ae1d061f62420bac193b4b9616d0"
+TARGET_DIGEST = (
+    "sha256:c1e4c349365f6d16d88595b2c5f7e8ff39b8ae1d061f62420bac193b4b9616d0"
+)
 TARGET_TAG = "2.568.3-lts-jdk21"
 OLD_TAG = "2.504.3-lts-jdk17"
 OLD_DIGEST = "sha256:dd570585c3adadefcfbeba915e27bf7feca1815a0ea8a659d46b51f54fc7ea06"
@@ -36,46 +39,65 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
         for path in (DEFAULTS, LAB_EXAMPLE, PROD_EXAMPLE):
             self.assertTrue(path.is_file(), f"missing {path}")
             content = read(path)
-            self.assertIn(TARGET_TAG, content,
-                          f"{path} must contain {TARGET_TAG}")
-            self.assertIn(TARGET_IMAGE, content,
-                          f"{path} must contain full digest-pinned image {TARGET_IMAGE}")
-            self.assertIn('compose_jenkins_build_tag_prefix: "2.568.3-lts-jdk21"', content,
-                          f"{path} must pin build tag prefix to {TARGET_TAG} — got {path.read_text()[:500]}")
-            self.assertNotIn(OLD_TAG, content,
-                             f"{path} must not contain old tag {OLD_TAG}")
-            self.assertNotIn("jdk17", content,
-                             f"{path} must not contain jdk17 — Java 21 baseline required")
+            self.assertIn(TARGET_TAG, content, f"{path} must contain {TARGET_TAG}")
+            self.assertIn(
+                TARGET_IMAGE,
+                content,
+                f"{path} must contain full digest-pinned image {TARGET_IMAGE}",
+            )
+            self.assertIn(
+                'compose_jenkins_build_tag_prefix: "2.568.3-lts-jdk21"',
+                content,
+                f"{path} must pin build tag prefix to {TARGET_TAG} — got {path.read_text()[:500]}",
+            )
+            self.assertNotIn(
+                OLD_TAG, content, f"{path} must not contain old tag {OLD_TAG}"
+            )
+            self.assertNotIn(
+                "jdk17",
+                content,
+                f"{path} must not contain jdk17 — Java 21 baseline required",
+            )
             # old digest must not remain
-            self.assertNotIn(OLD_DIGEST, content,
-                             f"{path} must not contain old digest")
+            self.assertNotIn(OLD_DIGEST, content, f"{path} must not contain old digest")
             # no latest tag refs for jenkins
             # allow unrelated 'latest' in comments? Strict: active jenkins image must not contain :latest
             # Check jenkins image lines specifically
             for line in content.splitlines():
                 if "compose_jenkins" in line and "latest" in line.lower():
-                    self.fail(f"{path} Jenkins image line must not contain 'latest': {line}")
+                    self.fail(
+                        f"{path} Jenkins image line must not contain 'latest': {line}"
+                    )
                 if "jenkins/jenkins" in line and "latest" in line.lower():
-                    self.fail(f"{path} must not contain 'latest' in Jenkins image ref: {line}")
+                    self.fail(
+                        f"{path} must not contain 'latest' in Jenkins image ref: {line}"
+                    )
 
         # Dockerfile must keep ARG pattern and FROM must receive digest-pinned ref via ARG
         dockerfile = read(DOCKERFILE)
-        self.assertIn("ARG JENKINS_BASE_IMAGE", dockerfile,
-                      "Dockerfile must keep ARG JENKINS_BASE_IMAGE pattern")
-        self.assertIn("FROM ${JENKINS_BASE_IMAGE}", dockerfile,
-                      "Dockerfile FROM must receive full digest-pinned reference via ARG")
+        self.assertIn(
+            "ARG JENKINS_BASE_IMAGE",
+            dockerfile,
+            "Dockerfile must keep ARG JENKINS_BASE_IMAGE pattern",
+        )
+        self.assertIn(
+            "FROM ${JENKINS_BASE_IMAGE}",
+            dockerfile,
+            "Dockerfile FROM must receive full digest-pinned reference via ARG",
+        )
         # Dockerfile must not hardcode old jdk17 or any lts/latest bare ref
-        self.assertNotIn("jdk17", dockerfile,
-                         "Dockerfile must not contain jdk17")
-        self.assertNotIn(OLD_TAG, dockerfile,
-                         "Dockerfile must not contain old tag")
-        self.assertNotIn(OLD_DIGEST, dockerfile,
-                         "Dockerfile must not contain old digest")
+        self.assertNotIn("jdk17", dockerfile, "Dockerfile must not contain jdk17")
+        self.assertNotIn(OLD_TAG, dockerfile, "Dockerfile must not contain old tag")
+        self.assertNotIn(
+            OLD_DIGEST, dockerfile, "Dockerfile must not contain old digest"
+        )
         # Ensure no hardcoded FROM jenkins/jenkins:... without ARG
         for line in dockerfile.splitlines():
             stripped = line.strip()
             if stripped.startswith("FROM jenkins/jenkins"):
-                self.fail(f"Dockerfile must not hardcode FROM image, must use ARG: {line}")
+                self.fail(
+                    f"Dockerfile must not hardcode FROM image, must use ARG: {line}"
+                )
 
         # Compose must not contain old version nor jdk17
         compose = read(COMPOSE)
@@ -86,16 +108,20 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
         if ENV_EXAMPLE.is_file():
             env_ex = read(ENV_EXAMPLE)
             if "jenkins" in env_ex.lower():
-                self.assertNotIn("jdk17", env_ex.lower(),
-                                 ".env.example must not contain jdk17")
-                self.assertNotIn("2.504.3", env_ex,
-                                 ".env.example must not contain old version")
+                self.assertNotIn(
+                    "jdk17", env_ex.lower(), ".env.example must not contain jdk17"
+                )
+                self.assertNotIn(
+                    "2.504.3", env_ex, ".env.example must not contain old version"
+                )
 
         # Groovy and compose must keep JENKINS_URL derived from base_domain and port 18080
-        self.assertIn("base_domain", read(DEFAULTS),
-                      "defaults must keep JENKINS_URL derived from base_domain")
-        self.assertIn("18080", compose,
-                      "compose must preserve port 18080")
+        self.assertIn(
+            "base_domain",
+            read(DEFAULTS),
+            "defaults must keep JENKINS_URL derived from base_domain",
+        )
+        self.assertIn("18080", compose, "compose must preserve port 18080")
 
     def test_target_image_is_digest_pinned(self):
         """All Jenkins base image refs must be name:tag@sha256:<64-hex> with exact digest."""
@@ -106,40 +132,47 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
             m = re.search(r'compose_jenkins_base_image:\s*"([^"]+)"', content)
             self.assertIsNotNone(m, f"{path} must define compose_jenkins_base_image")
             image = m.group(1)
-            self.assertRegex(image, pattern,
-                             f"{path} compose_jenkins_base_image must be digest-pinned name:tag@sha256: {image}")
-            self.assertIn(TARGET_DIGEST, image,
-                          f"{path} must contain expected digest {TARGET_DIGEST} — got {image}")
-            self.assertIn(TARGET_TAG, image,
-                          f"{path} must contain tag {TARGET_TAG} — got {image}")
+            self.assertRegex(
+                image,
+                pattern,
+                f"{path} compose_jenkins_base_image must be digest-pinned name:tag@sha256: {image}",
+            )
+            self.assertIn(
+                TARGET_DIGEST,
+                image,
+                f"{path} must contain expected digest {TARGET_DIGEST} — got {image}",
+            )
+            self.assertIn(
+                TARGET_TAG, image, f"{path} must contain tag {TARGET_TAG} — got {image}"
+            )
 
         # Dockerfile must use ARG, not hardcoded digest
         dockerfile = read(DOCKERFILE)
         self.assertIn("FROM ${JENKINS_BASE_IMAGE}", dockerfile)
         # Defaults validation task must still enforce digest pin
         tasks = read(TASKS)
-        self.assertIn("@sha256", tasks,
-                      "tasks must still validate @sha256 pin")
-        self.assertIn("compose_jenkins_base_image is match", tasks,
-                      "tasks must validate jenkins base image is digest-pinned")
+        self.assertIn("@sha256", tasks, "tasks must still validate @sha256 pin")
+        self.assertIn(
+            "compose_jenkins_base_image is match",
+            tasks,
+            "tasks must validate jenkins base image is digest-pinned",
+        )
 
     def test_compose_does_not_publish_agent_port(self):
         """Compose must not publish 50000 and must keep only 18080:8080."""
         compose = read(COMPOSE)
-        self.assertNotIn("50000", compose,
-                         "compose must not publish agent port 50000")
+        self.assertNotIn("50000", compose, "compose must not publish agent port 50000")
         # also check tasks file doesn't publish it
         tasks = read(TASKS)
-        self.assertNotIn("50000", tasks,
-                         "tasks must not publish 50000")
+        self.assertNotIn("50000", tasks, "tasks must not publish 50000")
         dockerfile = read(DOCKERFILE)
-        self.assertNotIn("50000", dockerfile,
-                         "Dockerfile must not expose 50000")
+        self.assertNotIn("50000", dockerfile, "Dockerfile must not expose 50000")
         # ports section must contain 18080:8080 (via JENKINS_PORT variable)
-        self.assertIn("8080", compose,
-                      "compose must publish 8080")
-        self.assertTrue("18080" in compose or "JENKINS_PORT" in compose,
-                        "compose must reference 18080 via JENKINS_PORT")
+        self.assertIn("8080", compose, "compose must publish 8080")
+        self.assertTrue(
+            "18080" in compose or "JENKINS_PORT" in compose,
+            "compose must reference 18080 via JENKINS_PORT",
+        )
         # ensure no additional agent container
         # crude check: only one service named jenkins, no inbound-agent
         self.assertNotIn("inbound-agent", compose.lower())
@@ -150,8 +183,11 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
         """Jenkins clean reset must require jenkins_clean_reset_confirmed == true; examples keep false with explanation."""
         tasks = read(TASKS)
         # must reference jenkins_clean_reset_confirmed
-        self.assertIn("jenkins_clean_reset_confirmed", tasks,
-                      "tasks must reference jenkins_clean_reset_confirmed for clean-reset opt-in")
+        self.assertIn(
+            "jenkins_clean_reset_confirmed",
+            tasks,
+            "tasks must reference jenkins_clean_reset_confirmed for clean-reset opt-in",
+        )
         # must fail unless exactly true
         # accept patterns: jenkins_clean_reset_confirmed is not true, != true, not == true, etc
         has_fail = "fail" in tasks.lower()
@@ -163,10 +199,13 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
             or "jenkins_clean_reset_confirmed | bool" in tasks
             or "jenkins_clean_reset_confirmed == true" in tasks
             or "jenkins_clean_reset_confirmed | default(false)" in tasks
-            or "jenkins_clean_reset_confirmed" in tasks and "true" in tasks
+            or "jenkins_clean_reset_confirmed" in tasks
+            and "true" in tasks
         )
-        self.assertTrue(has_true_check,
-                        "tasks must assert jenkins_clean_reset_confirmed is exactly true")
+        self.assertTrue(
+            has_true_check,
+            "tasks must assert jenkins_clean_reset_confirmed is exactly true",
+        )
         # must use no_log where handling opt-in or uri
         # at least one no_log in the jenkins preflight area
         # Check that tasks around jenkins_clean_reset_confirmed have no_log
@@ -174,29 +213,45 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
         idx = tasks.find("jenkins_clean_reset_confirmed")
         self.assertNotEqual(idx, -1, "must find opt-in")
         # Look ahead 5000 chars for no_log
-        self.assertIn("no_log: true", tasks[idx: idx + 8000],
-                      "clean-reset preflight must use no_log: true")
+        self.assertIn(
+            "no_log: true",
+            tasks[idx : idx + 8000],
+            "clean-reset preflight must use no_log: true",
+        )
 
         for path in (LAB_EXAMPLE, PROD_EXAMPLE):
             content = read(path)
-            self.assertIn("jenkins_clean_reset_confirmed", content,
-                          f"{path} must contain jenkins_clean_reset_confirmed")
+            self.assertIn(
+                "jenkins_clean_reset_confirmed",
+                content,
+                f"{path} must contain jenkins_clean_reset_confirmed",
+            )
             # must be false in example
             # allow with or without quotes
-            self.assertRegex(content, r"jenkins_clean_reset_confirmed:\s*false",
-                             f"{path} example must keep jenkins_clean_reset_confirmed: false")
+            self.assertRegex(
+                content,
+                r"jenkins_clean_reset_confirmed:\s*false",
+                f"{path} example must keep jenkins_clean_reset_confirmed: false",
+            )
             # must explain operator changes only for clean baseline run
             lowered = content.lower()
             self.assertTrue(
-                "clean" in lowered and "baseline" in lowered or "clean reset" in lowered or "operator" in lowered,
-                f"{path} must explain operator changes it only for clean baseline run — content: {content[-500:]}"
+                "clean" in lowered
+                and "baseline" in lowered
+                or "clean reset" in lowered
+                or "operator" in lowered,
+                f"{path} must explain operator changes it only for clean baseline run — content: {content[-500:]}",
             )
 
         # query shape must be present
-        self.assertIn("jobs[name,builds[number]]", tasks,
-                      "tasks must query tree=jobs[name,builds[number]] for zero-state preflight")
-        self.assertIn("127.0.0.1", tasks,
-                      "tasks must query 127.0.0.1:18080 for preflight")
+        self.assertIn(
+            "jobs[name,builds[number]]",
+            tasks,
+            "tasks must query tree=jobs[name,builds[number]] for zero-state preflight",
+        )
+        self.assertIn(
+            "127.0.0.1", tasks, "tasks must query 127.0.0.1:18080 for preflight"
+        )
 
     def test_no_backup_restore_or_migration_path_exists(self):
         """Must not add backup/restore/migration/archive/JENKINS_HOME preservation logic; only exact dir removal after assertion."""
@@ -215,14 +270,18 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
                 for line in lines:
                     stripped = line.strip()
                     if not stripped.startswith("#"):
-                        self.fail(f"tasks must not contain {keyword} path — found: {line.strip()}")
+                        self.fail(
+                            f"tasks must not contain {keyword} path — found: {line.strip()}"
+                        )
 
         # archive is also forbidden unless it's part of 'unarchive' ansible module? Check for tar/archive words
         if "archive" in lowered:
             lines = [l for l in tasks.splitlines() if "archive" in l.lower()]
             for line in lines:
                 if not line.strip().startswith("#"):
-                    self.fail(f"tasks must not contain archive path — found: {line.strip()}")
+                    self.fail(
+                        f"tasks must not contain archive path — found: {line.strip()}"
+                    )
 
         # JENKINS_HOME preservation/copy logic forbidden — but jenkins_home volume is allowed as bind mount path
         # Check for copy of JENKINS_HOME or cp
@@ -239,31 +298,42 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
                 # allow the volume bind device: /srv/home-server/data/jenkins (that's not JENKINS_HOME env var)
                 # but disallow env var string JENKINS_HOME
                 if "JENKINS_HOME" in tasks and pat == r"JENKINS_HOME":
-                    self.fail(f"tasks must not contain JENKINS_HOME preservation logic — found pattern {pat}")
+                    self.fail(
+                        f"tasks must not contain JENKINS_HOME preservation logic — found pattern {pat}"
+                    )
 
         # Must contain exact path removal only after assertion, and recreate with correct mode
-        self.assertIn("/srv/home-server/data/jenkins", tasks,
-                      "tasks must reference exact Jenkins data dir /srv/home-server/data/jenkins for clean reset")
+        self.assertIn(
+            "/srv/home-server/data/jenkins",
+            tasks,
+            "tasks must reference exact Jenkins data dir /srv/home-server/data/jenkins for clean reset",
+        )
         # ensure removal is via file state: absent or rm -rf with exact path
         has_removal = (
-            'state: absent' in tasks and '/srv/home-server/data/jenkins' in tasks
-            or 'rm -rf' in tasks
-            or 'file:' in tasks
+            "state: absent" in tasks
+            and "/srv/home-server/data/jenkins" in tasks
+            or "rm -rf" in tasks
+            or "file:" in tasks
         )
         self.assertTrue(has_removal, "tasks must remove exact dir after assertion")
         # ensure recreate with 0750 and correct uid/gid
-        self.assertIn("0750", tasks,
-                      "tasks must recreate dir with mode 0750")
+        self.assertIn("0750", tasks, "tasks must recreate dir with mode 0750")
         # ensure no broad removal like /srv/home-server/data
         # check that rm -rf does not target parent without jenkins suffix
-        if "rm -rf /srv/home-server/data " in tasks or "rm -rf /srv/home-server/data\n" in tasks:
-            self.fail("tasks must not remove broad /srv/home-server/data, only /srv/home-server/data/jenkins")
+        if (
+            "rm -rf /srv/home-server/data " in tasks
+            or "rm -rf /srv/home-server/data\n" in tasks
+        ):
+            self.fail(
+                "tasks must not remove broad /srv/home-server/data, only /srv/home-server/data/jenkins"
+            )
 
         # also ensure the clean reset is fail-closed: if jobs/builds exist, do not remove
         # check for assertion about jobs empty and builds zero
         self.assertTrue(
-            "jobs" in lowered and ("empty" in lowered or "length" in lowered or "== 0" in tasks),
-            "tasks must assert job list is empty before removal"
+            "jobs" in lowered
+            and ("empty" in lowered or "length" in lowered or "== 0" in tasks),
+            "tasks must assert job list is empty before removal",
         )
 
     def test_no_example_jobs_or_agents_are_declared(self):
@@ -275,14 +345,21 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
         # Parse yaml if possible
         try:
             import yaml
+
             data = yaml.safe_load(compose)
             services = data.get("services", {}) if isinstance(data, dict) else {}
-            self.assertEqual(set(services.keys()), {"jenkins"},
-                             f"compose must declare only jenkins service, got {list(services.keys())}")
+            self.assertEqual(
+                set(services.keys()),
+                {"jenkins"},
+                f"compose must declare only jenkins service, got {list(services.keys())}",
+            )
         except Exception as e:
             # fallback to string checks
-            self.assertNotIn("inbound-agent", compose.lower(),
-                             f"compose must not declare inbound-agent: {e}")
+            self.assertNotIn(
+                "inbound-agent",
+                compose.lower(),
+                f"compose must not declare inbound-agent: {e}",
+            )
         # no agent port
         self.assertNotIn("50000", compose)
         self.assertNotIn("50000", tasks)
@@ -291,8 +368,9 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
             if keyword in tasks.lower() and "jenkins_clean" not in tasks.lower():
                 # allow but check
                 pass
-            self.assertNotIn("example job", tasks.lower(),
-                             "tasks must not create example jobs")
+            self.assertNotIn(
+                "example job", tasks.lower(), "tasks must not create example jobs"
+            )
         # Dockerfile must not install agent-related packages
         self.assertNotIn("inbound-agent", dockerfile.lower())
         # tasks must not contain a second docker container for agent
@@ -302,7 +380,12 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
         # Check no job xml or jobs directory creation outside clean reset
         # Allow init.groovy.d creation but not jobs population
         for line in tasks.splitlines():
-            if "jobs" in line.lower() and "api/json" not in line.lower() and "find" not in line.lower() and "/srv/home-server/data/jenkins/jobs" not in line:
+            if (
+                "jobs" in line.lower()
+                and "api/json" not in line.lower()
+                and "find" not in line.lower()
+                and "/srv/home-server/data/jenkins/jobs" not in line
+            ):
                 # allow the preflight inspection of jobs dir, but not creation of example jobs
                 if "example" in line.lower() or "seed" in line.lower():
                     self.fail(f"tasks must not declare example jobs: {line}")
@@ -321,59 +404,111 @@ class TestJenkinsCleanBaseline(unittest.TestCase):
         compose = read(COMPOSE)
 
         # groovy must create/bootstrap admin via JENKINS_ADMIN_ID/PASSWORD
-        self.assertIn("JENKINS_ADMIN_ID", groovy,
-                      "groovy must reference JENKINS_ADMIN_ID")
-        self.assertIn("JENKINS_ADMIN_PASSWORD", groovy,
-                      "groovy must reference JENKINS_ADMIN_PASSWORD")
-        self.assertIn("HudsonPrivateSecurityRealm", groovy,
-                      "groovy must use HudsonPrivateSecurityRealm for admin")
+        self.assertIn(
+            "JENKINS_ADMIN_ID", groovy, "groovy must reference JENKINS_ADMIN_ID"
+        )
+        self.assertIn(
+            "JENKINS_ADMIN_PASSWORD",
+            groovy,
+            "groovy must reference JENKINS_ADMIN_PASSWORD",
+        )
+        self.assertIn(
+            "HudsonPrivateSecurityRealm",
+            groovy,
+            "groovy must use HudsonPrivateSecurityRealm for admin",
+        )
+        # Vault is the source of truth: an existing admin must be refreshed on
+        # password rotation, not only created on first boot.
+        self.assertIn(
+            "HudsonPrivateSecurityRealm.Details.fromPlainPassword",
+            groovy,
+            "groovy must re-apply the Vault admin password to an existing account",
+        )
+        self.assertIn(
+            "addProperty",
+            groovy,
+            "groovy must replace the existing admin password property",
+        )
         # The phase-one Groovy stays admin-only: no provider users there.
-        for user in ("labmonitor-api", "labmonitor", "prometheus-scraper", "prometheus_scraper"):
-            self.assertNotIn(user, groovy.lower(),
-                             f"groovy must not create provider user {user} in the baseline")
+        for user in (
+            "labmonitor-api",
+            "labmonitor",
+            "prometheus-scraper",
+            "prometheus_scraper",
+        ):
+            self.assertNotIn(
+                user,
+                groovy.lower(),
+                f"groovy must not create provider user {user} in the baseline",
+            )
         # Tasks may reference provider users only in the phase-two segment
         # (at/after the phase-two render), never in the baseline portion.
         phase2_marker = "jenkins-provider-users.groovy.j2"
         phase2_idx = tasks.find(phase2_marker)
-        self.assertNotEqual(phase2_idx, -1,
-                            f"tasks must render {phase2_marker} (phase two)")
+        self.assertNotEqual(
+            phase2_idx, -1, f"tasks must render {phase2_marker} (phase two)"
+        )
         baseline_segment = tasks[:phase2_idx].lower()
         for user in ("labmonitor-api", "prometheus-scraper", "prometheus_scraper"):
-            self.assertNotIn(user, baseline_segment,
-                             f"tasks baseline segment must not create provider user {user} "
-                             "before the phase-two render")
+            self.assertNotIn(
+                user,
+                baseline_segment,
+                f"tasks baseline segment must not create provider user {user} "
+                "before the phase-two render",
+            )
         for user in ("labmonitor-api", "prometheus-scraper"):
-            self.assertIn(user, tasks.lower(),
-                          f"tasks phase-two segment must reconcile provider user {user}")
+            self.assertIn(
+                user,
+                tasks.lower(),
+                f"tasks phase-two segment must reconcile provider user {user}",
+            )
 
         # plugins.txt pins the prometheus + matrix-auth plugins, installed via
         # the image-provided installer; the baseline invariants stay: ARG-fed
         # base image, no hardcoded FROM ref, never `latest`.
         plugins = read(REPO / "compose/jenkins/plugins.txt")
         for plugin_keyword in ("prometheus:", "matrix-auth"):
-            self.assertIn(plugin_keyword, plugins.lower(),
-                          f"plugins.txt must pin plugin {plugin_keyword}")
-        self.assertIn("plugins.txt", dockerfile,
-                      "Dockerfile must reference plugins.txt")
-        self.assertIn("jenkins-plugin-cli", dockerfile,
-                      "Dockerfile must run the image-provided plugin installer")
-        self.assertNotIn("latest", dockerfile.lower(),
-                         "Dockerfile must never use 'latest'")
+            self.assertIn(
+                plugin_keyword,
+                plugins.lower(),
+                f"plugins.txt must pin plugin {plugin_keyword}",
+            )
+        self.assertIn(
+            "plugins.txt", dockerfile, "Dockerfile must reference plugins.txt"
+        )
+        self.assertIn(
+            "jenkins-plugin-cli",
+            dockerfile,
+            "Dockerfile must run the image-provided plugin installer",
+        )
+        self.assertNotIn(
+            "latest", dockerfile.lower(), "Dockerfile must never use 'latest'"
+        )
 
         # compose .env.example carries provider placeholders only — changeme
         # values, never Vault interpolation or real secrets.
         if ENV_EXAMPLE.is_file():
             env_ex = read(ENV_EXAMPLE)
-            self.assertIn("JENKINS_LABMONITOR_USER=labmonitor-api", env_ex,
-                          ".env.example must document the labmonitor provider placeholder")
-            self.assertIn("JENKINS_PROMETHEUS_USER=prometheus-scraper", env_ex,
-                          ".env.example must document the prometheus provider placeholder")
-            self.assertNotIn("{{", env_ex,
-                             ".env.example must not interpolate Vault values")
+            self.assertIn(
+                "JENKINS_LABMONITOR_USER=labmonitor-api",
+                env_ex,
+                ".env.example must document the labmonitor provider placeholder",
+            )
+            self.assertIn(
+                "JENKINS_PROMETHEUS_USER=prometheus-scraper",
+                env_ex,
+                ".env.example must document the prometheus provider placeholder",
+            )
+            self.assertNotIn(
+                "{{", env_ex, ".env.example must not interpolate Vault values"
+            )
             for line in env_ex.splitlines():
                 if "PASSWORD" in line or "TOKEN" in line:
-                    self.assertIn("changeme", line.lower(),
-                                  f".env.example secret placeholder must use changeme — got {line!r}")
+                    self.assertIn(
+                        "changeme",
+                        line.lower(),
+                        f".env.example secret placeholder must use changeme — got {line!r}",
+                    )
 
         # The Groovy must stay admin-only: allow the legacy FullControlOnceLoggedIn
         # strategy or the fine-grained matrix strategy, but no provider grants.

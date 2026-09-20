@@ -97,12 +97,16 @@ Edite `hosts.yml` e defina `ansible_host` como o IP LAN real do destino. Depois 
 - Revise portas, retenção, tamanhos de armazenamento e NodePorts antes do deploy.
 - `jenkins_bluefin_enabled` é `false` por padrão. Defina como `true` para provisionar
   os dois jobs do pipeline Bluefin e suas credenciais (exige os valores extras do
-  Vault listados abaixo); mantendo `false`, o Jenkins é implantado sem alterações.
+  Vault listados abaixo); mantendo `false`, o Jenkins é implantado sem alterações e
+  sem o socket Docker RW do host. É a ativação da flag que adiciona o overlay
+  `compose.bluefin.yaml`, responsável por montar `/var/run/docker.sock`.
 - Mantenha `jenkins_clean_reset_confirmed: false` a menos que você autorize explicitamente
   a linha de base limpa destrutiva do Jenkins. Esta é uma operação única: ela
   é executada somente enquanto `/srv/home-server/data/jenkins/.clean-baseline-complete` estiver
   ausente. Para executá-la novamente, remova esse marcador e defina explicitamente a variável
   como `true`; defina-a novamente como `false` imediatamente após a execução aprovada.
+  Quando o preflight já está limpo, o marcador é registrado sem reset destrutivo, de modo
+  que reruns (incluindo os jobs Bluefin gerenciados) permaneçam idempotentes.
 
 Os exemplos rastreados usam somente IPs de documentação. Não faça commit de `hosts.yml`,
 `group_vars/all/vars.yml`, `vault.yml` ou arquivos `.env` gerados no host.
@@ -335,8 +339,11 @@ curl --connect-timeout 5 "http://<server LAN IP>:12375/version"
   Metabase.
 - O monitoramento do Docker usa o proxy somente leitura na porta `12375`; o exportador de métricas
   não deve montar `/var/run/docker.sock`.
-- O Portainer Docker Agent é a única exceção administrativa de socket Docker com leitura e escrita
-  e permanece isolado na porta `9001`.
+- O Portainer Docker Agent é a exceção administrativa permanente de socket Docker com leitura e escrita
+  e permanece isolado na porta `9001`. O Jenkins só recebe o socket Docker RW do host
+  quando `jenkins_bluefin_enabled: true`; com o padrão `false`, o projeto
+  `compose/jenkins/compose.yaml` não monta socket algum e o overlay opt-in
+  `compose.bluefin.yaml` não é aplicado.
 - Jenkins não participa da rede de banco de dados. n8n é o único serviço que participa
   tanto das redes de automação quanto de dados. `automation_writer` é proprietário do banco de
   dados compartilhado; `automation_reader` não tem privilégio de escrita nem de `CREATE`.

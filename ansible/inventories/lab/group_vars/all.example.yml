@@ -47,6 +47,9 @@ docker_metrics_exporter_port: 9797
 # with a registry digest, e.g.:
 # docker_metrics_exporter_mode: built
 # docker_metrics_exporter_image: "registry.home.arpa/labmonitor-docker-exporter:1.0.0@sha256:<64-hex-digest>"
+# docker_metrics_exporter_local_build: false
+# A registry-qualified or digest-pinned image is pull-only; only a bare local
+# tag is built on the host and imported into k3s containerd.
 monitoring_chart_version: "88.6.1"
 monitoring_prometheus_service_name: prometheus
 monitoring_prometheus_service_port: 9090

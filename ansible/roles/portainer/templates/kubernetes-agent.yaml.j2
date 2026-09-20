@@ -101,6 +101,10 @@ spec:
     metadata:
       labels:
         app: "{{ portainer_k8s_agent_service_name }}"
+      # Rolls the Kubernetes Agent whenever the shared agent Secret changes, so
+      # a later independent pod restart cannot split it from the rotated Server.
+      annotations:
+        checksum/agent-secret: "{{ portainer_agent_secret_checksum }}"
     spec:
       serviceAccountName: "{{ portainer_k8s_agent_service_name }}"
       containers:

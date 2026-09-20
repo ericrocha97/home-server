@@ -24,8 +24,18 @@ while "$iptables_bin" -C DOCKER-USER -j "$docker_user_chain" 2>/dev/null; do
 done
 "$iptables_bin" -I DOCKER-USER 1 -j "$docker_user_chain"
 
-# DOCKER-USER runs after Docker DNAT. --ctorigdst/--ctorigdstport retain the
-# original host address and published port instead of the container address.
+# This chain is the managed FORWARD policy for every DNAT'd host ingress:
+# Docker published ports and Kubernetes NodePorts (kube-proxy DNATs both before
+# the FORWARD hook, so UFW INPUT rules never see them). DOCKER-USER runs after
+# Docker DNAT; --ctorigdst/--ctorigdstport retain the original host address and
+# published port instead of the container/pod address.
+#
+# ALLOW rules keep only the documented exceptions (trusted LAN/VPN CIDRs and
+# the k3s pod CIDR backhaul). DROP rules match the original destination PORT on
+# ANY original destination address, because a multi-homed Compose mapping or a
+# NodePort is published on every host interface: scoping the deny to
+# server_lan_ip would let VPN/WAN addresses miss both the allow and the drop and
+# reach the final RETURN.
 {% for source in resolved_firewall_trusted_cidrs + [k3s_pod_cidr] %}
 {% for item in firewall_compose_direct_tcp_ports %}
 "$iptables_bin" -A "$docker_user_chain" -s "{{ source }}" -p tcp \
@@ -44,18 +54,38 @@ done
 {% endfor %}
 {% endif %}
 
+# Kubernetes NodePorts are DNAT'd by kube-proxy to a pod address before FORWARD,
+# so the UFW INPUT allowlist in tasks/main.yml is ineffective for them. Enforce
+# the same trusted-CIDR allowlist here by original destination port; the deny
+# block below closes every other source and every host interface.
+{% for source in resolved_firewall_trusted_cidrs %}
+{% for item in firewall_nodeport_allowlist %}
+"$iptables_bin" -A "$docker_user_chain" -s "{{ source }}" -p tcp \
+  -m conntrack --ctstate NEW --ctorigdstport "{{ item.port }}" -m comment \
+  --comment "Allow {{ source }} to {{ item.comment }} (NodePort)" -j RETURN
+{% endfor %}
+{% endfor %}
+
 {% for item in firewall_compose_direct_tcp_ports %}
 "$iptables_bin" -A "$docker_user_chain" -p tcp \
-  -m conntrack --ctstate NEW --ctorigdst "{{ server_lan_ip }}" \
-  --ctorigdstport "{{ item.port }}" -m comment \
-  --comment "Drop non-trusted to {{ item.comment }}" -j DROP
+  -m conntrack --ctstate NEW --ctorigdstport "{{ item.port }}" -m comment \
+  --comment "Drop non-trusted to {{ item.comment }} on any host address" -j DROP
 {% endfor %}
-{% if not firewall_postgres_direct_enable %}
+# PostgreSQL stays behind this drop even when temporary admin access is enabled:
+# the trusted allow above is matched first (server_lan_ip), so enabling it never
+# re-exposes the other host interfaces.
 "$iptables_bin" -A "$docker_user_chain" -p tcp \
-  -m conntrack --ctstate NEW --ctorigdst "{{ server_lan_ip }}" \
-  --ctorigdstport "{{ firewall_postgres_port }}" -m comment \
-  --comment "Drop direct PostgreSQL by default" -j DROP
-{% endif %}
+  -m conntrack --ctstate NEW --ctorigdstport "{{ firewall_postgres_port }}" -m comment \
+  --comment "Drop direct PostgreSQL beyond the trusted allow on any host address" -j DROP
+
+# Explicit fallback deny for the human NodePorts: any source outside the
+# trusted LAN/VPN allowlist is dropped even though DEFAULT_FORWARD_POLICY is
+# ACCEPT for k3s.
+{% for item in firewall_nodeport_allowlist %}
+"$iptables_bin" -A "$docker_user_chain" -p tcp \
+  -m conntrack --ctstate NEW --ctorigdstport "{{ item.port }}" -m comment \
+  --comment "Drop non-trusted to {{ item.comment }} (NodePort) on any host address" -j DROP
+{% endfor %}
 
 # Read-only Docker provider boundary: only k3s pods reach server_lan_ip:12375.
 # First-match ALLOW before the final DROP; 12375 is never in the LAN/VPN loop.
@@ -68,9 +98,8 @@ done
 
 {% for item in firewall_provider_backhaul_ports %}
 "$iptables_bin" -A "$docker_user_chain" -p tcp \
-  -m conntrack --ctstate NEW --ctorigdst "{{ server_lan_ip }}" \
-  --ctorigdstport "{{ item.port }}" -m comment \
-  --comment "Drop non-k3s to {{ item.comment }}" -j DROP
+  -m conntrack --ctstate NEW --ctorigdstport "{{ item.port }}" -m comment \
+  --comment "Drop non-k3s to {{ item.comment }} on any host address" -j DROP
 {% endfor %}
 
 # Portainer Docker Agent boundary: only k3s pods reach server_lan_ip:9001.
@@ -87,9 +116,8 @@ done
 
 {% for item in firewall_portainer_agent_backhaul_ports %}
 "$iptables_bin" -A "$docker_user_chain" -p tcp \
-  -m conntrack --ctstate NEW --ctorigdst "{{ server_lan_ip }}" \
-  --ctorigdstport "{{ item.port }}" -m comment \
-  --comment "Drop non-k3s to {{ item.comment }}" -j DROP
+  -m conntrack --ctstate NEW --ctorigdstport "{{ item.port }}" -m comment \
+  --comment "Drop non-k3s to {{ item.comment }} on any host address" -j DROP
 {% endfor %}
 
 # Other forwarded traffic remains under Docker/k3s policy.

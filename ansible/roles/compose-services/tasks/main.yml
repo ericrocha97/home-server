@@ -142,7 +142,7 @@
     mode: '0644'
   loop: [postgres, jenkins, n8n, metabase]
 
-- name: Copiar Dockerfile, plugins.txt e entrypoint custom do Jenkins para o host
+- name: Copiar Dockerfile, plugins.txt, entrypoint custom e overlay opt-in do Jenkins para o host
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../compose/jenkins/{{ item }}"
     dest: "{{ compose_projects_root }}/jenkins/{{ item }}"
@@ -153,12 +153,20 @@
     - Dockerfile
     - plugins.txt
     - docker-entrypoint-group-fix.sh
+    - compose.bluefin.yaml
 
 # Jenkins clean baseline — one-shot destructive reset with steady-state no-op.
-# Reruns are no-ops when the marker exists (already clean); to re-run the
-# one-shot, remove the marker file below AND set jenkins_clean_reset_confirmed: true
-# in the real (ignored) inventory. Never remove any other path: the exact-path
-# assert stays fail-closed. No backup/restore/migration is performed anywhere.
+# Outcomes, all gated on the one-shot marker:
+#   * dirty preflight + confirmed -> destructive one-shot reset;
+#   * clean preflight + unconfirmed -> record the already-clean baseline marker
+#     (no wipe) so later reruns, including the Bluefin jobs provisioned in this
+#     same run, stay idempotent instead of aborting;
+#   * marker present -> steady-state no-op: never wipe again.
+# Any deletion requires jenkins_clean_reset_confirmed: true AND the marker to be
+# absent. To re-run the one-shot, remove the marker file below AND set
+# jenkins_clean_reset_confirmed: true in the real (ignored) inventory. Never
+# remove any other path: the exact-path assert stays fail-closed. No
+# backup/restore/migration is performed anywhere.
 - name: Validar que diretório Jenkins alvo é exatamente /srv/home-server/data/jenkins
   ansible.builtin.assert:
     that:
@@ -281,7 +289,7 @@
 
 - name: Avisar reset pulado — preflight limpo sem confirmação (sem wipe)
   ansible.builtin.debug:
-    msg: "Jenkins preflight already clean and jenkins_clean_reset_confirmed != true — skipping destructive reset with warning (fail-closed only when dirty)."
+    msg: "Jenkins preflight already clean and jenkins_clean_reset_confirmed != true — skipping destructive reset; recording the already-clean baseline marker so reruns, including managed Bluefin jobs, stay idempotent (fail-closed only when dirty)."
   when:
     - not jenkins_baseline_marker.stat.exists
     - jenkins_preflight_clean
@@ -322,7 +330,7 @@
     group: "{{ compose_jenkins_gid }}"
     mode: '0750'
 
-- name: Registrar marcador one-shot do baseline limpo Jenkins (após wipe confirmado)
+- name: Registrar marcador do baseline limpo Jenkins
   ansible.builtin.copy:
     dest: "{{ compose_jenkins_data_dir }}/.clean-baseline-complete"
     content: "clean-baseline-complete\n"
@@ -331,7 +339,7 @@
     mode: '0644'
   when:
     - not jenkins_baseline_marker.stat.exists
-    - jenkins_clean_reset_confirmed is sameas true
+    - jenkins_clean_reset_confirmed is sameas true or jenkins_preflight_clean
 
 - name: Criar diretório init.groovy.d para bootstrap de segurança Jenkins antes de qualquer up
   ansible.builtin.file:
@@ -600,6 +608,7 @@
 - name: Subir Jenkins fase um por último (requer init.groovy.d + imagem custom já buildada)
   community.docker.docker_compose_v2:
     project_src: "{{ compose_projects_root }}/jenkins"
+    files: "{{ compose_jenkins_bluefin_compose_files if (jenkins_bluefin_enabled | default(false)) else compose_jenkins_base_compose_files }}"
     state: present
     pull: missing
 
@@ -674,6 +683,7 @@
 - name: Recriar Jenkins fase dois para reconciliar labmonitor-api e prometheus-scraper
   community.docker.docker_compose_v2:
     project_src: "{{ compose_projects_root }}/jenkins"
+    files: "{{ compose_jenkins_bluefin_compose_files if (jenkins_bluefin_enabled | default(false)) else compose_jenkins_base_compose_files }}"
     state: present
     pull: missing
     recreate: always
@@ -742,27 +752,30 @@
   changed_when: false
   failed_when: jenkins_anon_final.stdout is match('^2..')
 
-- name: Verificar que socket Docker está montado RW e grupo dockersock aplicado no PID 1
-  ansible.builtin.shell: |
-    set -euo pipefail
-    docker exec jenkins test -S /var/run/docker.sock
-    docker exec jenkins sh -c 'id jenkins | grep -q dockersock'
-    docker exec jenkins docker ps >/dev/null 2>&1 || docker exec jenkins sh -c 'docker ps >/dev/null'
-  args:
-    executable: /bin/bash
-  changed_when: false
-
-- name: Verificar CLIs e Docker daemon no agente Jenkins (read-only)
+- name: Verificar CLIs do agente Jenkins (read-only)
   ansible.builtin.shell: |
     set -euo pipefail
     for cmd in bash git docker gh curl awk grep sed sort paste date; do
       docker exec jenkins sh -lc "command -v $cmd >/dev/null" || { echo "missing: $cmd"; exit 1; }
     done
-    docker exec jenkins sh -lc 'docker info >/dev/null'
     docker exec jenkins gh --version >/dev/null
   args:
     executable: /bin/bash
   changed_when: false
+
+# Só há socket para verificar quando a integração Bluefin (opt-in) está ativa:
+# com jenkins_bluefin_enabled=false o socket RW não é montado de propósito.
+- name: Verificar socket Docker RW, grupo dockersock e daemon no agente Jenkins (opt-in Bluefin)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    docker exec jenkins test -S /var/run/docker.sock
+    docker exec jenkins sh -c 'id jenkins | grep -q dockersock'
+    docker exec jenkins docker ps >/dev/null 2>&1 || docker exec jenkins sh -c 'docker ps >/dev/null'
+    docker exec jenkins sh -lc 'docker info >/dev/null'
+  args:
+    executable: /bin/bash
+  changed_when: false
+  when: jenkins_bluefin_enabled | default(false)
 
 - name: Verificar jobs Bluefin via API (read-only)
   ansible.builtin.uri:

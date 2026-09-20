@@ -53,6 +53,12 @@ docker_metrics_exporter_mode: built
 docker_metrics_exporter_image: "labmonitor-docker-exporter:1.0.0"
 docker_metrics_exporter_app_version: "1.0.0"
 docker_metrics_exporter_build_dir: /srv/home-server/images/docker-metrics-exporter
+# Local build+import path. `built` mode no longer implies building on the host:
+# only a bare local tag (no registry host, no digest) is built and imported into
+# k3s containerd. A registry-qualified or digest-qualified deploy reference is
+# always pull-only, so its digest is never used as a `docker build` tag. Set
+# false to force pull-only even for a bare tag.
+docker_metrics_exporter_local_build: true
 # Prod story — required override path (lab keeps the local build+import flow above).
 # Lab builds labmonitor-docker-exporter:1.0.0 on the host and imports it into
 # k3s containerd (see monitoring/tasks/main.yml `docker save | k3s ctr images import`).
@@ -60,7 +66,10 @@ docker_metrics_exporter_build_dir: /srv/home-server/images/docker-metrics-export
 # never committed) with a registry digest-pinned ref, e.g.:
 # docker_metrics_exporter_mode: built
 # docker_metrics_exporter_image: "registry.home.arpa/labmonitor-docker-exporter:1.0.0@sha256:<64-hex-digest>"
+# docker_metrics_exporter_local_build: false
 # Keep mode `built` unless a future upstream gate passes; never use `latest`.
+# A registry-qualified or digest-pinned image is served pull-only by the
+# deployment and is never tagged locally.
 # Component images pinned to immutable versions matching the chart era.
 # Every Docker-style reference must be name:tag@sha256:<64-hex> or an exact
 # immutable version tag; never use `latest`. Digests are recorded where the

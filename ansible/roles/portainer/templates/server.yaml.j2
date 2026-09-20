@@ -54,6 +54,10 @@ spec:
     metadata:
       labels:
         app: "{{ portainer_service_name }}"
+      # Rolls the Server whenever the shared agent Secret changes, keeping it in
+      # lockstep with the recreated host Docker Agent.
+      annotations:
+        checksum/agent-secret: "{{ portainer_agent_secret_checksum }}"
     spec:
       serviceAccountName: "{{ portainer_service_name }}"
       containers:

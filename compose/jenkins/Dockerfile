@@ -8,9 +8,11 @@ LABEL org.opencontainers.image.base.name="${JENKINS_BASE_IMAGE}"
 USER root
 
 # NOTE: Debian trixie split the CLI into the separate docker-cli binary
-# package; docker.io is the daemon only (now Recommends: docker-cli). Jenkins
-# talks to the host daemon through the mounted /var/run/docker.sock, so only
-# the client is needed — the daemon (containerd/runc/iptables) is unused here.
+# package; docker.io is the daemon only (now Recommends: docker-cli). For the
+# opt-in Bluefin pipeline Jenkins talks to the host daemon through the
+# /var/run/docker.sock mounted by compose.bluefin.yaml, so only the client is
+# needed — the daemon (containerd/runc/iptables) is unused here and the socket
+# is never mounted when jenkins_bluefin_enabled=false.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       docker-cli curl gpg ca-certificates gosu tini \
       bash git gawk grep sed coreutils findutils \

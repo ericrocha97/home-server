@@ -78,6 +78,13 @@ jenkins_labmonitor_user: labmonitor-api
 jenkins_prometheus_user: prometheus-scraper
 
 # --- Jenkins Bluefin pipeline (opt-in; keep false in examples) ---
+# O socket Docker RW do host não está no compose base: ele vive no overlay
+# compose.bluefin.yaml e a role só o passa quando o opt-in está ativo.
+compose_jenkins_base_compose_files:
+  - compose.yaml
+compose_jenkins_bluefin_compose_files:
+  - compose.yaml
+  - compose.bluefin.yaml
 jenkins_bluefin_enabled: false
 jenkins_bluefin_repo_url: "https://github.com/ericrocha97/bluefin.git"
 jenkins_bluefin_branch: "*/main"

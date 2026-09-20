@@ -6,6 +6,7 @@ ports/defaults. Stdlib only (no PyYAML) so the suite runs on any Python 3.
 
 The suite also asserts the active tree carries no legacy-reference concepts.
 """
+
 import pathlib
 import re
 import unittest
@@ -100,8 +101,17 @@ PROVIDER_DISABLED_ENV = {
 # Mutating capabilities that must never be granted (PUT/PATCH/DELETE/PULL have
 # no dedicated env flags; POST=0 blocks those methods globally).
 PROVIDER_FORBIDDEN_CAPS = {
-    "POST", "PUT", "PATCH", "DELETE", "EXEC", "BUILD",
-    "PULL", "VOLUMES", "SECRETS", "CONFIGS", "SWARM",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "EXEC",
+    "BUILD",
+    "PULL",
+    "VOLUMES",
+    "SECRETS",
+    "CONFIGS",
+    "SWARM",
 }
 
 
@@ -149,12 +159,18 @@ class TestPlatformContract(unittest.TestCase):
                 f"{SITE} role {role} must carry tags: [{role}]",
             )
         # k8s-platform stays last and owns the final Traefik configuration.
-        self.assertEqual(roles[-1], "k8s-platform",
-                         f"{SITE} last role must be k8s-platform — got {roles[-1]}")
+        self.assertEqual(
+            roles[-1],
+            "k8s-platform",
+            f"{SITE} last role must be k8s-platform — got {roles[-1]}",
+        )
         # Host roles stay before compose-services.
         for early in ("base", "docker", "cockpit", "k3s"):
-            self.assertLess(roles.index(early), roles.index("compose-services"),
-                            f"{SITE}: {early} must precede compose-services — got {roles}")
+            self.assertLess(
+                roles.index(early),
+                roles.index("compose-services"),
+                f"{SITE}: {early} must precede compose-services — got {roles}",
+            )
 
     def test_example_inventories_have_no_secret_values(self):
         """Both example inventories carry the exact non-secret platform values and no secrets."""
@@ -187,40 +203,75 @@ class TestPlatformContract(unittest.TestCase):
 
     def test_platform_defaults_have_stable_ports(self):
         """Role defaults pin stable ports/NodePorts/retention/storage and immutable image refs."""
-        for path in (COMPOSE_DEFAULTS, DOCKER_DEFAULTS, MONITORING_DEFAULTS,
-                     PORTAINER_DEFAULTS, LABMONITOR_DEFAULTS):
+        for path in (
+            COMPOSE_DEFAULTS,
+            DOCKER_DEFAULTS,
+            MONITORING_DEFAULTS,
+            PORTAINER_DEFAULTS,
+            LABMONITOR_DEFAULTS,
+        ):
             self.assertTrue(path.is_file(), f"missing {path}")
         merged: dict = {}
         file_of: dict = {}
-        for path in (COMPOSE_DEFAULTS, DOCKER_DEFAULTS, MONITORING_DEFAULTS,
-                     PORTAINER_DEFAULTS, LABMONITOR_DEFAULTS):
+        for path in (
+            COMPOSE_DEFAULTS,
+            DOCKER_DEFAULTS,
+            MONITORING_DEFAULTS,
+            PORTAINER_DEFAULTS,
+            LABMONITOR_DEFAULTS,
+        ):
             for key, val in parse_simple_vars(path).items():
                 merged.setdefault(key, val)
                 file_of.setdefault(key, str(path))
         for key, expected in EXPECTED_VARS.items():
-            self.assertIn(key, merged,
-                          f"role defaults must define {key}={expected} (checked {file_of})")
-            self.assertEqual(str(merged[key]), expected,
-                             f"{file_of.get(key)} {key} must be {expected} — got {merged[key]}")
+            self.assertIn(
+                key,
+                merged,
+                f"role defaults must define {key}={expected} (checked {file_of})",
+            )
+            self.assertEqual(
+                str(merged[key]),
+                expected,
+                f"{file_of.get(key)} {key} must be {expected} — got {merged[key]}",
+            )
         # Per-role spot checks tie each variable to its owning file.
-        self.assertEqual(parse_simple_vars(DOCKER_DEFAULTS).get("docker_socket_proxy_port"),
-                         "12375",
-                         f"{DOCKER_DEFAULTS} docker_socket_proxy_port must be 12375")
-        mon = parse_simple_vars(MONITORING_DEFAULTS)
-        self.assertEqual(mon.get("monitoring_chart_version"), "88.6.1",
-                         f"{MONITORING_DEFAULTS} monitoring_chart_version must be 88.6.1")
-        self.assertEqual(mon.get("prometheus_nodeport"), "30909",
-                         f"{MONITORING_DEFAULTS} prometheus_nodeport must be 30909")
-        self.assertEqual(mon.get("grafana_nodeport"), "30300",
-                         f"{MONITORING_DEFAULTS} grafana_nodeport must be 30300")
         self.assertEqual(
-            parse_simple_vars(PORTAINER_DEFAULTS).get("portainer_nodeport"), "30900",
-            f"{PORTAINER_DEFAULTS} portainer_nodeport must be 30900")
+            parse_simple_vars(DOCKER_DEFAULTS).get("docker_socket_proxy_port"),
+            "12375",
+            f"{DOCKER_DEFAULTS} docker_socket_proxy_port must be 12375",
+        )
+        mon = parse_simple_vars(MONITORING_DEFAULTS)
+        self.assertEqual(
+            mon.get("monitoring_chart_version"),
+            "88.6.1",
+            f"{MONITORING_DEFAULTS} monitoring_chart_version must be 88.6.1",
+        )
+        self.assertEqual(
+            mon.get("prometheus_nodeport"),
+            "30909",
+            f"{MONITORING_DEFAULTS} prometheus_nodeport must be 30909",
+        )
+        self.assertEqual(
+            mon.get("grafana_nodeport"),
+            "30300",
+            f"{MONITORING_DEFAULTS} grafana_nodeport must be 30300",
+        )
+        self.assertEqual(
+            parse_simple_vars(PORTAINER_DEFAULTS).get("portainer_nodeport"),
+            "30900",
+            f"{PORTAINER_DEFAULTS} portainer_nodeport must be 30900",
+        )
         lab = parse_simple_vars(LABMONITOR_DEFAULTS)
-        self.assertEqual(lab.get("labmonitor_namespace"), "labmonitor",
-                         f"{LABMONITOR_DEFAULTS} labmonitor_namespace must be labmonitor")
-        self.assertEqual(lab.get("labmonitor_service_account"), "labmonitor-api",
-                         f"{LABMONITOR_DEFAULTS} labmonitor_service_account must be labmonitor-api")
+        self.assertEqual(
+            lab.get("labmonitor_namespace"),
+            "labmonitor",
+            f"{LABMONITOR_DEFAULTS} labmonitor_namespace must be labmonitor",
+        )
+        self.assertEqual(
+            lab.get("labmonitor_service_account"),
+            "labmonitor-api",
+            f"{LABMONITOR_DEFAULTS} labmonitor_service_account must be labmonitor-api",
+        )
         # Preflight assertions must exist in each new role entrypoint.
         for tasks_path, snippet in (
             (DOCKER_TASKS, "docker_socket_proxy_port == 12375"),
@@ -229,38 +280,61 @@ class TestPlatformContract(unittest.TestCase):
             (LABMONITOR_TASKS, "labmonitor_namespace == 'labmonitor'"),
         ):
             self.assertTrue(tasks_path.is_file(), f"missing {tasks_path}")
-            self.assertIn(snippet, read(tasks_path),
-                          f"{tasks_path} must contain preflight assert '{snippet}'")
+            self.assertIn(
+                snippet,
+                read(tasks_path),
+                f"{tasks_path} must contain preflight assert '{snippet}'",
+            )
         # Image refs: never `latest`; digest refs must match ^.+@sha256:[0-9a-f]{64}$.
-        for path in (COMPOSE_DEFAULTS, DOCKER_DEFAULTS, MONITORING_DEFAULTS,
-                     PORTAINER_DEFAULTS):
+        for path in (
+            COMPOSE_DEFAULTS,
+            DOCKER_DEFAULTS,
+            MONITORING_DEFAULTS,
+            PORTAINER_DEFAULTS,
+        ):
             for key, val in parse_simple_vars(path).items():
                 if not key.endswith("_image"):
                     continue
-                self.assertNotIn("latest", val.lower(),
-                                 f"{path} {key} must not use 'latest' — got {val}")
+                self.assertNotIn(
+                    "latest",
+                    val.lower(),
+                    f"{path} {key} must not use 'latest' — got {val}",
+                )
                 if "@sha256:" in val:
-                    self.assertRegex(val, DIGEST_RE,
-                                     f"{path} {key} digest must match ^.+@sha256:[0-9a-f]{{64}}$ — got {val}")
+                    self.assertRegex(
+                        val,
+                        DIGEST_RE,
+                        f"{path} {key} digest must match ^.+@sha256:[0-9a-f]{{64}}$ — got {val}",
+                    )
 
     def test_socket_proxy_is_the_only_read_only_docker_consumer(self):
         """compose/docker-provider/compose.yaml holds the only :ro socket mount, in docker-socket-proxy."""
         self.assertTrue(PROVIDER_COMPOSE.is_file(), f"missing {PROVIDER_COMPOSE}")
         services = parse_compose_services(PROVIDER_COMPOSE)
-        self.assertIn("docker-socket-proxy", services,
-                      f"{PROVIDER_COMPOSE} must define service docker-socket-proxy — got {sorted(services)}")
+        self.assertIn(
+            "docker-socket-proxy",
+            services,
+            f"{PROVIDER_COMPOSE} must define service docker-socket-proxy — got {sorted(services)}",
+        )
         mounts = {
             name: [v for v in svc["volumes"] if "/var/run/docker.sock" in v]
             for name, svc in services.items()
         }
         total = sum(len(v) for v in mounts.values())
-        self.assertEqual(total, 1,
-                         f"{PROVIDER_COMPOSE} must contain exactly one docker.sock mount — got {mounts}")
+        self.assertEqual(
+            total,
+            1,
+            f"{PROVIDER_COMPOSE} must contain exactly one docker.sock mount — got {mounts}",
+        )
         mount = mounts["docker-socket-proxy"][0]
-        self.assertTrue(mount.startswith("/var/run/docker.sock:/var/run/docker.sock"),
-                        f"{PROVIDER_COMPOSE} socket mount source must be /var/run/docker.sock — got {mount}")
-        self.assertTrue(mount.endswith(":ro"),
-                        f"{PROVIDER_COMPOSE} socket mount must be read-only (:ro) — got {mount}")
+        self.assertTrue(
+            mount.startswith("/var/run/docker.sock:/var/run/docker.sock"),
+            f"{PROVIDER_COMPOSE} socket mount source must be /var/run/docker.sock — got {mount}",
+        )
+        self.assertTrue(
+            mount.endswith(":ro"),
+            f"{PROVIDER_COMPOSE} socket mount must be read-only (:ro) — got {mount}",
+        )
         # Repo-wide: no other Compose project may mount the socket, except the
         # pre-existing Jenkins RW build exception (never read-only) and the
         # Portainer Docker Agent RW admin exception (never read-only).
@@ -268,32 +342,47 @@ class TestPlatformContract(unittest.TestCase):
             if project == PROVIDER_COMPOSE:
                 continue
             if "/var/run/docker.sock" in read(project):
-                self.assertIn(project.parent.name, ("jenkins", "portainer-agent"),
-                              f"{project} unexpectedly mounts the Docker socket — "
-                              "only jenkins (RW build exception), "
-                              "portainer-agent (RW admin exception), and "
-                              "docker-provider (read-only proxy) may do so")
+                self.assertIn(
+                    project.parent.name,
+                    ("jenkins", "portainer-agent"),
+                    f"{project} unexpectedly mounts the Docker socket — "
+                    "only jenkins (RW build exception), "
+                    "portainer-agent (RW admin exception), and "
+                    "docker-provider (read-only proxy) may do so",
+                )
 
     def test_socket_proxy_has_only_read_mount_and_no_mutating_flags(self):
         """Proxy service mounts only the :ro socket and grants read-only API sections."""
         self.assertTrue(PROVIDER_COMPOSE.is_file(), f"missing {PROVIDER_COMPOSE}")
         services = parse_compose_services(PROVIDER_COMPOSE)
         svc = services["docker-socket-proxy"]
-        self.assertEqual(svc["volumes"], ["/var/run/docker.sock:/var/run/docker.sock:ro"],
-                         f"{PROVIDER_COMPOSE} docker-socket-proxy must mount only the "
-                         f"read-only socket — got {svc['volumes']}")
+        self.assertEqual(
+            svc["volumes"],
+            ["/var/run/docker.sock:/var/run/docker.sock:ro"],
+            f"{PROVIDER_COMPOSE} docker-socket-proxy must mount only the "
+            f"read-only socket — got {svc['volumes']}",
+        )
         env = svc["environment"]
         for key, expected in PROVIDER_READ_ENV.items():
-            self.assertEqual(env.get(key), expected,
-                             f"{PROVIDER_COMPOSE} {key} must be {expected} — got {env.get(key)}")
+            self.assertEqual(
+                env.get(key),
+                expected,
+                f"{PROVIDER_COMPOSE} {key} must be {expected} — got {env.get(key)}",
+            )
         for key, expected in PROVIDER_DISABLED_ENV.items():
-            self.assertEqual(env.get(key), expected,
-                             f"{PROVIDER_COMPOSE} {key} must be {expected} — got {env.get(key)}")
+            self.assertEqual(
+                env.get(key),
+                expected,
+                f"{PROVIDER_COMPOSE} {key} must be {expected} — got {env.get(key)}",
+            )
         for cap in sorted(PROVIDER_FORBIDDEN_CAPS):
             if cap in env:
-                self.assertEqual(env[cap], "0",
-                                 f"{PROVIDER_COMPOSE} mutating capability {cap} must stay "
-                                 f"disabled — got {env[cap]}")
+                self.assertEqual(
+                    env[cap],
+                    "0",
+                    f"{PROVIDER_COMPOSE} mutating capability {cap} must stay "
+                    f"disabled — got {env[cap]}",
+                )
 
     def test_socket_proxy_publishes_only_port_12375(self):
         """docker-socket-proxy publishes exactly one host port: 12375 -> 2375."""
@@ -302,34 +391,54 @@ class TestPlatformContract(unittest.TestCase):
         for name, svc in services.items():
             if name == "docker-socket-proxy":
                 continue
-            self.assertEqual(svc["ports"], [],
-                             f"{PROVIDER_COMPOSE} service {name} must not publish ports — "
-                             f"got {svc['ports']}")
+            self.assertEqual(
+                svc["ports"],
+                [],
+                f"{PROVIDER_COMPOSE} service {name} must not publish ports — "
+                f"got {svc['ports']}",
+            )
         ports = services["docker-socket-proxy"]["ports"]
-        self.assertEqual(len(ports), 1,
-                         f"{PROVIDER_COMPOSE} docker-socket-proxy must publish exactly one "
-                         f"port — got {ports}")
+        self.assertEqual(
+            len(ports),
+            1,
+            f"{PROVIDER_COMPOSE} docker-socket-proxy must publish exactly one "
+            f"port — got {ports}",
+        )
         entry = ports[0]
         m = re.search(r":(\d+):(\d+)\s*$", entry)
-        self.assertIsNotNone(m,
-                             f"{PROVIDER_COMPOSE} port entry must be host:container — got {entry}")
+        self.assertIsNotNone(
+            m, f"{PROVIDER_COMPOSE} port entry must be host:container — got {entry}"
+        )
         host, container = m.groups() if m is not None else ("", "")
-        self.assertEqual(host, "12375",
-                         f"{PROVIDER_COMPOSE} host port must be 12375 — got {entry}")
-        self.assertEqual(container, "2375",
-                         f"{PROVIDER_COMPOSE} container port must be 2375 — got {entry}")
-        self.assertIn("DOCKER_SOCKET_PROXY_BIND_IP", entry,
-                      f"{PROVIDER_COMPOSE} port entry must bind via "
-                      f"DOCKER_SOCKET_PROXY_BIND_IP — got {entry}")
+        self.assertEqual(
+            host, "12375", f"{PROVIDER_COMPOSE} host port must be 12375 — got {entry}"
+        )
+        self.assertEqual(
+            container,
+            "2375",
+            f"{PROVIDER_COMPOSE} container port must be 2375 — got {entry}",
+        )
+        self.assertIn(
+            "DOCKER_SOCKET_PROXY_BIND_IP",
+            entry,
+            f"{PROVIDER_COMPOSE} port entry must bind via "
+            f"DOCKER_SOCKET_PROXY_BIND_IP — got {entry}",
+        )
 
 
 JENKINS_PLUGINS = REPO / "compose/jenkins/plugins.txt"
 JENKINS_DOCKERFILE = REPO / "compose/jenkins/Dockerfile"
 JENKINS_COMPOSE = REPO / "compose/jenkins/compose.yaml"
+JENKINS_BLUEFIN_OVERLAY = REPO / "compose/jenkins/compose.bluefin.yaml"
+JENKINS_ENTRYPOINT = REPO / "compose/jenkins/docker-entrypoint-group-fix.sh"
 JENKINS_ENV_EXAMPLE = REPO / "compose/jenkins/.env.example"
 JENKINS_ENV_TEMPLATE = REPO / "ansible/roles/compose-services/templates/jenkins.env.j2"
-PHASE1_GROOVY = REPO / "ansible/roles/compose-services/templates/jenkins-init-admin.groovy.j2"
-PHASE2_GROOVY = REPO / "ansible/roles/compose-services/templates/jenkins-provider-users.groovy.j2"
+PHASE1_GROOVY = (
+    REPO / "ansible/roles/compose-services/templates/jenkins-init-admin.groovy.j2"
+)
+PHASE2_GROOVY = (
+    REPO / "ansible/roles/compose-services/templates/jenkins-provider-users.groovy.j2"
+)
 JENKINS_BLUEFIN_GROOVY = (
     REPO / "ansible/roles/compose-services/templates/jenkins-bluefin.groovy.j2"
 )
@@ -360,7 +469,9 @@ METABASE_COMPOSE = REPO / "compose/metabase/compose.yaml"
 N8N_ENV_EXAMPLE = REPO / "compose/n8n/.env.example"
 METABASE_ENV_EXAMPLE = REPO / "compose/metabase/.env.example"
 N8N_ENV_TEMPLATE = REPO / "ansible/roles/compose-services/templates/n8n.env.j2"
-METABASE_ENV_TEMPLATE = REPO / "ansible/roles/compose-services/templates/metabase.env.j2"
+METABASE_ENV_TEMPLATE = (
+    REPO / "ansible/roles/compose-services/templates/metabase.env.j2"
+)
 POSTGRES_COMPOSE = REPO / "compose/postgres/compose.yaml"
 
 
@@ -370,75 +481,178 @@ class TestJenkinsProviders(unittest.TestCase):
         self.assertTrue(PHASE1_GROOVY.is_file(), f"missing {PHASE1_GROOVY}")
         self.assertTrue(PHASE2_GROOVY.is_file(), f"missing {PHASE2_GROOVY}")
         phase1 = read(PHASE1_GROOVY).lower()
-        for marker in ("labmonitor-api", "prometheus-scraper", "apitokenproperty",
-                       "jenkins_labmonitor", "jenkins_prometheus",
-                       "labmonitor_api_token", "prometheus_api_token"):
-            self.assertNotIn(marker, phase1,
-                             f"{PHASE1_GROOVY} must not reference provider marker '{marker}'")
+        for marker in (
+            "labmonitor-api",
+            "prometheus-scraper",
+            "apitokenproperty",
+            "jenkins_labmonitor",
+            "jenkins_prometheus",
+            "labmonitor_api_token",
+            "prometheus_api_token",
+        ):
+            self.assertNotIn(
+                marker,
+                phase1,
+                f"{PHASE1_GROOVY} must not reference provider marker '{marker}'",
+            )
         # Phase one still bootstraps the existing admin without logging secrets.
         original = read(PHASE1_GROOVY)
-        self.assertIn("JENKINS_ADMIN_ID", original,
-                      f"{PHASE1_GROOVY} must preserve the existing admin account")
-        self.assertIn("JENKINS_ADMIN_PASSWORD", original,
-                      f"{PHASE1_GROOVY} must validate the existing admin password")
-        self.assertIn("HudsonPrivateSecurityRealm", original,
-                      f"{PHASE1_GROOVY} must use HudsonPrivateSecurityRealm")
-        self.assertNotIn("println", original.replace("println(\"Created admin user", ""),
-                         f"{PHASE1_GROOVY} must not log passwords or tokens")
+        self.assertIn(
+            "JENKINS_ADMIN_ID",
+            original,
+            f"{PHASE1_GROOVY} must preserve the existing admin account",
+        )
+        self.assertIn(
+            "JENKINS_ADMIN_PASSWORD",
+            original,
+            f"{PHASE1_GROOVY} must validate the existing admin password",
+        )
+        self.assertIn(
+            "HudsonPrivateSecurityRealm",
+            original,
+            f"{PHASE1_GROOVY} must use HudsonPrivateSecurityRealm",
+        )
+        self.assertNotIn(
+            "println",
+            original.replace('println("Created admin user', ""),
+            f"{PHASE1_GROOVY} must not log passwords or tokens",
+        )
         # Ansible render of the phase-one script must hide secrets.
         tasks = read(COMPOSE_TASKS)
         idx = tasks.find("jenkins-init-admin.groovy.j2")
-        self.assertNotEqual(idx, -1, f"{COMPOSE_TASKS} must render jenkins-init-admin.groovy.j2")
-        window = tasks[idx:idx + 2000]
-        self.assertIn("no_log: true", window,
-                      f"{COMPOSE_TASKS} phase-one render must use no_log: true")
+        self.assertNotEqual(
+            idx, -1, f"{COMPOSE_TASKS} must render jenkins-init-admin.groovy.j2"
+        )
+        window = tasks[idx : idx + 2000]
+        self.assertIn(
+            "no_log: true",
+            window,
+            f"{COMPOSE_TASKS} phase-one render must use no_log: true",
+        )
+
+    def test_jenkins_phase_one_reasserts_rotated_admin_password(self):
+        """Phase one re-applies a rotated Vault password to the existing admin.
+
+        Vault is the source of truth. Creating the account only covers the first
+        boot; the existing account must receive the new JenkinsPrivateSecurityRealm
+        Details property so a jenkins_admin_password rotation takes effect.
+        """
+        self.assertTrue(PHASE1_GROOVY.is_file(), f"missing {PHASE1_GROOVY}")
+        content = read(PHASE1_GROOVY)
+        # First-initialization path stays intact.
+        self.assertIn(
+            "createAccount",
+            content,
+            f"{PHASE1_GROOVY} must still create the admin on first initialization",
+        )
+        # Existing-account path rebuilds the password Details property.
+        self.assertIn(
+            "HudsonPrivateSecurityRealm.Details.fromPlainPassword",
+            content,
+            f"{PHASE1_GROOVY} must rebuild the admin password when the account exists",
+        )
+        self.assertIn(
+            "addProperty",
+            content,
+            f"{PHASE1_GROOVY} must replace the existing admin password property",
+        )
+        self.assertIn(
+            "adminUser.save()",
+            content,
+            f"{PHASE1_GROOVY} must persist the rotated admin credential",
+        )
 
     def test_jenkins_uses_fine_grained_authorization(self):
         """Phase one migrates FullControlOnceLoggedIn to GlobalMatrixAuthorizationStrategy."""
         self.assertTrue(PHASE1_GROOVY.is_file(), f"missing {PHASE1_GROOVY}")
         content = read(PHASE1_GROOVY)
-        self.assertIn("GlobalMatrixAuthorizationStrategy", content,
-                      f"{PHASE1_GROOVY} must install GlobalMatrixAuthorizationStrategy")
+        self.assertIn(
+            "GlobalMatrixAuthorizationStrategy",
+            content,
+            f"{PHASE1_GROOVY} must install GlobalMatrixAuthorizationStrategy",
+        )
         # Every bare class referenced by the script must be imported; a missing
         # import aborts the script at boot (MissingPropertyException), leaving
         # Jenkins unsecured (anon 200) and the admin checkpoint failing.
-        self.assertIn("hudson.model.User", content,
-                      f"{PHASE1_GROOVY} uses User.getById and must import hudson.model.User")
-        self.assertIn("Jenkins.ADMINISTER", content,
-                      f"{PHASE1_GROOVY} must grant admin via Jenkins.ADMINISTER constant")
-        self.assertNotIn("FullControlOnceLoggedInAuthorizationStrategy", content,
-                         f"{PHASE1_GROOVY} must not retain FullControlOnceLoggedInAuthorizationStrategy")
-        self.assertIn("JenkinsLocationConfiguration", content,
-                      f"{PHASE1_GROOVY} must set the Jenkins URL from the generated .arpa value")
-        self.assertIn("JENKINS_URL", content,
-                      f"{PHASE1_GROOVY} must read JENKINS_URL for the .arpa hostname")
+        self.assertIn(
+            "hudson.model.User",
+            content,
+            f"{PHASE1_GROOVY} uses User.getById and must import hudson.model.User",
+        )
+        self.assertIn(
+            "Jenkins.ADMINISTER",
+            content,
+            f"{PHASE1_GROOVY} must grant admin via Jenkins.ADMINISTER constant",
+        )
+        self.assertNotIn(
+            "FullControlOnceLoggedInAuthorizationStrategy",
+            content,
+            f"{PHASE1_GROOVY} must not retain FullControlOnceLoggedInAuthorizationStrategy",
+        )
+        self.assertIn(
+            "JenkinsLocationConfiguration",
+            content,
+            f"{PHASE1_GROOVY} must set the Jenkins URL from the generated .arpa value",
+        )
+        self.assertIn(
+            "JENKINS_URL",
+            content,
+            f"{PHASE1_GROOVY} must read JENKINS_URL for the .arpa hostname",
+        )
         # Permission constants, not free-form strings, and no anonymous grant.
-        self.assertNotIn("setAllowAnonymousRead(true)", content,
-                         f"{PHASE1_GROOVY} must disable anonymous read access")
-        self.assertNotIn('"Overall/Administer"', content,
-                         f"{PHASE1_GROOVY} must use permission constants, not free-form strings")
-        self.assertNotIn("'Overall/Administer'", content,
-                         f"{PHASE1_GROOVY} must use permission constants, not free-form strings")
+        self.assertNotIn(
+            "setAllowAnonymousRead(true)",
+            content,
+            f"{PHASE1_GROOVY} must disable anonymous read access",
+        )
+        self.assertNotIn(
+            '"Overall/Administer"',
+            content,
+            f"{PHASE1_GROOVY} must use permission constants, not free-form strings",
+        )
+        self.assertNotIn(
+            "'Overall/Administer'",
+            content,
+            f"{PHASE1_GROOVY} must use permission constants, not free-form strings",
+        )
         # Phase two preserves the fine-grained strategy instead of replacing it.
         phase2 = read(PHASE2_GROOVY)
-        self.assertIn("GlobalMatrixAuthorizationStrategy", phase2,
-                      f"{PHASE2_GROOVY} must reconcile against GlobalMatrixAuthorizationStrategy")
+        self.assertIn(
+            "GlobalMatrixAuthorizationStrategy",
+            phase2,
+            f"{PHASE2_GROOVY} must reconcile against GlobalMatrixAuthorizationStrategy",
+        )
         # matrix-auth 3.x marks grants created with the legacy add(Permission, String)
         # API as ambiguous; explicit user entries plus a deterministic drop-by-sid
         # reconciliation keep the strategy unambiguous.
-        self.assertIn("PermissionEntry.user", content,
-                      f"{PHASE1_GROOVY} must grant the admin via an explicit user PermissionEntry")
-        self.assertIn("removeIf", content,
-                      f"{PHASE1_GROOVY} must drop legacy grants before re-adding")
-        self.assertIn("PermissionEntry.user", phase2,
-                      f"{PHASE2_GROOVY} must grant providers via explicit user PermissionEntry")
-        self.assertIn("removeIf", phase2,
-                      f"{PHASE2_GROOVY} must drop legacy grants before re-adding")
+        self.assertIn(
+            "PermissionEntry.user",
+            content,
+            f"{PHASE1_GROOVY} must grant the admin via an explicit user PermissionEntry",
+        )
+        self.assertIn(
+            "removeIf",
+            content,
+            f"{PHASE1_GROOVY} must drop legacy grants before re-adding",
+        )
+        self.assertIn(
+            "PermissionEntry.user",
+            phase2,
+            f"{PHASE2_GROOVY} must grant providers via explicit user PermissionEntry",
+        )
+        self.assertIn(
+            "removeIf",
+            phase2,
+            f"{PHASE2_GROOVY} must drop legacy grants before re-adding",
+        )
 
     def test_jenkins_verifies_no_legacy_ambiguous_permissions(self):
         """compose-services fails closed if a managed account keeps a legacy ambiguous grant."""
-        self.assertIn("ambiguous legacy permission", read(COMPOSE_TASKS),
-                      f"{COMPOSE_TASKS} must verify no legacy ambiguous permission remains")
+        self.assertIn(
+            "ambiguous legacy permission",
+            read(COMPOSE_TASKS),
+            f"{COMPOSE_TASKS} must verify no legacy ambiguous permission remains",
+        )
 
     def test_jenkins_admin_checkpoint_precedes_provider_user_render(self):
         """Admin checkpoint (login, anon non-2xx, health, strategy) precedes phase-two render."""
@@ -446,10 +660,17 @@ class TestJenkinsProviders(unittest.TestCase):
         tasks = read(COMPOSE_TASKS)
         phase1_idx = tasks.find("jenkins-init-admin.groovy.j2")
         phase2_idx = tasks.find("jenkins-provider-users.groovy.j2")
-        self.assertNotEqual(phase1_idx, -1, f"{COMPOSE_TASKS} must render phase-one script")
-        self.assertNotEqual(phase2_idx, -1, f"{COMPOSE_TASKS} must render phase-two script")
-        self.assertLess(phase1_idx, phase2_idx,
-                        f"{COMPOSE_TASKS} phase-one render must precede phase-two render")
+        self.assertNotEqual(
+            phase1_idx, -1, f"{COMPOSE_TASKS} must render phase-one script"
+        )
+        self.assertNotEqual(
+            phase2_idx, -1, f"{COMPOSE_TASKS} must render phase-two script"
+        )
+        self.assertLess(
+            phase1_idx,
+            phase2_idx,
+            f"{COMPOSE_TASKS} phase-one render must precede phase-two render",
+        )
         lower = tasks.lower()
         # Checkpoint markers: admin login, anonymous denial, health endpoint, strategy.
         admin_idx = lower.find("admin login")
@@ -460,82 +681,159 @@ class TestJenkinsProviders(unittest.TestCase):
         if health_idx == -1:
             health_idx = tasks.find("/login")
         strategy_idx = tasks.find("GlobalMatrixAuthorizationStrategy")
-        for name, idx in (("admin login checkpoint", admin_idx),
-                          ("anonymous non-2xx checkpoint", anon_idx),
-                          ("health endpoint checkpoint", health_idx),
-                          ("fine-grained strategy checkpoint", strategy_idx)):
+        for name, idx in (
+            ("admin login checkpoint", admin_idx),
+            ("anonymous non-2xx checkpoint", anon_idx),
+            ("health endpoint checkpoint", health_idx),
+            ("fine-grained strategy checkpoint", strategy_idx),
+        ):
             self.assertNotEqual(idx, -1, f"{COMPOSE_TASKS} must contain {name}")
-            self.assertLess(idx, phase2_idx,
-                            f"{COMPOSE_TASKS} {name} must precede phase-two render")
+            self.assertLess(
+                idx, phase2_idx, f"{COMPOSE_TASKS} {name} must precede phase-two render"
+            )
         # Negative checks require non-2xx, never one single status code.
-        self.assertIn("^2", tasks,
-                      f"{COMPOSE_TASKS} anonymous/forbidden checks must assert non-2xx (e.g. ^2xx)")
-        self.assertNotIn('stdout == "403"', tasks,
-                         f"{COMPOSE_TASKS} must not assert a single 403 code for Jenkins denial")
-        self.assertNotIn("status_code: [403]", tasks,
-                         f"{COMPOSE_TASKS} must not require one single HTTP error code")
+        self.assertIn(
+            "^2",
+            tasks,
+            f"{COMPOSE_TASKS} anonymous/forbidden checks must assert non-2xx (e.g. ^2xx)",
+        )
+        self.assertNotIn(
+            'stdout == "403"',
+            tasks,
+            f"{COMPOSE_TASKS} must not assert a single 403 code for Jenkins denial",
+        )
+        self.assertNotIn(
+            "status_code: [403]",
+            tasks,
+            f"{COMPOSE_TASKS} must not require one single HTTP error code",
+        )
         # Metrics scrape contract uses the trailing-slash endpoint with separate credential.
-        self.assertIn("/prometheus/", tasks,
-                      f"{COMPOSE_TASKS} must reference the /prometheus/ endpoint with trailing slash")
+        self.assertIn(
+            "/prometheus/",
+            tasks,
+            f"{COMPOSE_TASKS} must reference the /prometheus/ endpoint with trailing slash",
+        )
 
     def test_jenkins_provider_users_use_separate_credentials(self):
         """Phase two reconciles two least-privilege users with separate Vault credentials."""
         self.assertTrue(PHASE2_GROOVY.is_file(), f"missing {PHASE2_GROOVY}")
         groovy = read(PHASE2_GROOVY)
-        for marker in ("JENKINS_LABMONITOR_USER", "JENKINS_PROMETHEUS_USER",
-                       "JENKINS_LABMONITOR_PASSWORD", "JENKINS_PROMETHEUS_PASSWORD",
-                       "JENKINS_LABMONITOR_API_TOKEN", "JENKINS_PROMETHEUS_API_TOKEN"):
-            self.assertIn(marker, groovy,
-                          f"{PHASE2_GROOVY} must reference separate credential {marker}")
-        self.assertIn("hudson.model.User", groovy,
-                      f"{PHASE2_GROOVY} must use hudson.model.User")
-        self.assertIn("jenkins.security.ApiTokenProperty", groovy,
-                      f"{PHASE2_GROOVY} must apply tokens via ApiTokenProperty")
+        for marker in (
+            "JENKINS_LABMONITOR_USER",
+            "JENKINS_PROMETHEUS_USER",
+            "JENKINS_LABMONITOR_PASSWORD",
+            "JENKINS_PROMETHEUS_PASSWORD",
+            "JENKINS_LABMONITOR_API_TOKEN",
+            "JENKINS_PROMETHEUS_API_TOKEN",
+        ):
+            self.assertIn(
+                marker,
+                groovy,
+                f"{PHASE2_GROOVY} must reference separate credential {marker}",
+            )
+        self.assertIn(
+            "hudson.model.User", groovy, f"{PHASE2_GROOVY} must use hudson.model.User"
+        )
+        self.assertIn(
+            "jenkins.security.ApiTokenProperty",
+            groovy,
+            f"{PHASE2_GROOVY} must apply tokens via ApiTokenProperty",
+        )
         # Only the scripting-intended token API survives core upgrades: private
         # store fields (e.g. @apiTokenStore, removed in 2.568.x) abort the boot
         # script with MissingFieldException and leave users without tokens.
-        self.assertNotIn("@apiTokenStore", groovy,
-                         f"{PHASE2_GROOVY} must not access the removed private apiTokenStore field")
-        self.assertIn("addFixedNewToken", groovy,
-                      f"{PHASE2_GROOVY} must set Vault tokens via addFixedNewToken")
-        self.assertIn("IllegalStateException", groovy,
-                      f"{PHASE2_GROOVY} must fail when the pinned API cannot set a Vault token")
-        self.assertNotIn("JENKINS_ADMIN_PASSWORD", groovy,
-                         f"{PHASE2_GROOVY} must not alter the existing admin credential")
+        self.assertNotIn(
+            "@apiTokenStore",
+            groovy,
+            f"{PHASE2_GROOVY} must not access the removed private apiTokenStore field",
+        )
+        self.assertIn(
+            "addFixedNewToken",
+            groovy,
+            f"{PHASE2_GROOVY} must set Vault tokens via addFixedNewToken",
+        )
+        self.assertIn(
+            "IllegalStateException",
+            groovy,
+            f"{PHASE2_GROOVY} must fail when the pinned API cannot set a Vault token",
+        )
+        self.assertNotIn(
+            "JENKINS_ADMIN_PASSWORD",
+            groovy,
+            f"{PHASE2_GROOVY} must not alter the existing admin credential",
+        )
         # Least privilege: read-only constants only.
         for perm in ("Jenkins.READ", "Item.READ", "View.READ"):
-            self.assertIn(perm, groovy,
-                          f"{PHASE2_GROOVY} must grant least-privilege constant {perm}")
-        self.assertIn("Run.READ", groovy,
-                      f"{PHASE2_GROOVY} must grant run/build read via Run.READ")
-        for forbidden in ("Jenkins.ADMINISTER", "Item.BUILD", "Item.CONFIGURE", "Item.DELETE"):
-            self.assertNotIn(forbidden, groovy,
-                             f"{PHASE2_GROOVY} must not grant forbidden permission {forbidden}")
-        self.assertNotIn("println", groovy.replace("println(\"Reconciled provider user", ""),
-                         f"{PHASE2_GROOVY} must not print secrets")
+            self.assertIn(
+                perm,
+                groovy,
+                f"{PHASE2_GROOVY} must grant least-privilege constant {perm}",
+            )
+        self.assertIn(
+            "Run.READ",
+            groovy,
+            f"{PHASE2_GROOVY} must grant run/build read via Run.READ",
+        )
+        for forbidden in (
+            "Jenkins.ADMINISTER",
+            "Item.BUILD",
+            "Item.CONFIGURE",
+            "Item.DELETE",
+        ):
+            self.assertNotIn(
+                forbidden,
+                groovy,
+                f"{PHASE2_GROOVY} must not grant forbidden permission {forbidden}",
+            )
+        self.assertNotIn(
+            "println",
+            groovy.replace('println("Reconciled provider user', ""),
+            f"{PHASE2_GROOVY} must not print secrets",
+        )
         # Vault-backed environment carries four distinct secrets with no_log.
         env_template = read(JENKINS_ENV_TEMPLATE)
-        for var in ("jenkins_labmonitor_password", "jenkins_labmonitor_api_token",
-                    "jenkins_prometheus_password", "jenkins_prometheus_api_token"):
-            self.assertIn(var, env_template,
-                          f"{JENKINS_ENV_TEMPLATE} must map Vault secret {var}")
+        for var in (
+            "jenkins_labmonitor_password",
+            "jenkins_labmonitor_api_token",
+            "jenkins_prometheus_password",
+            "jenkins_prometheus_api_token",
+        ):
+            self.assertIn(
+                var, env_template, f"{JENKINS_ENV_TEMPLATE} must map Vault secret {var}"
+            )
         tasks = read(COMPOSE_TASKS)
-        for var in ("jenkins_labmonitor_password", "jenkins_prometheus_password",
-                    "jenkins_labmonitor_api_token", "jenkins_prometheus_api_token"):
-            self.assertIn(var, tasks,
-                          f"{COMPOSE_TASKS} must validate Vault secret {var}")
-        self.assertIn("no_log: true", tasks,
-                      f"{COMPOSE_TASKS} must never print provider secrets")
+        for var in (
+            "jenkins_labmonitor_password",
+            "jenkins_prometheus_password",
+            "jenkins_labmonitor_api_token",
+            "jenkins_prometheus_api_token",
+        ):
+            self.assertIn(
+                var, tasks, f"{COMPOSE_TASKS} must validate Vault secret {var}"
+            )
+        self.assertIn(
+            "no_log: true", tasks, f"{COMPOSE_TASKS} must never print provider secrets"
+        )
         # Examples carry placeholders, never Vault interpolation or real secrets.
         example = read(JENKINS_ENV_EXAMPLE)
-        self.assertIn("JENKINS_LABMONITOR_USER=labmonitor-api", example,
-                      f"{JENKINS_ENV_EXAMPLE} must document the labmonitor user")
-        self.assertIn("JENKINS_PROMETHEUS_USER=prometheus-scraper", example,
-                      f"{JENKINS_ENV_EXAMPLE} must document the prometheus user")
-        self.assertNotIn("{{", example,
-                         f"{JENKINS_ENV_EXAMPLE} must not interpolate Vault values")
-        self.assertNotIn("jenkins_labmonitor_password", example,
-                         f"{JENKINS_ENV_EXAMPLE} must not embed Vault variable names")
+        self.assertIn(
+            "JENKINS_LABMONITOR_USER=labmonitor-api",
+            example,
+            f"{JENKINS_ENV_EXAMPLE} must document the labmonitor user",
+        )
+        self.assertIn(
+            "JENKINS_PROMETHEUS_USER=prometheus-scraper",
+            example,
+            f"{JENKINS_ENV_EXAMPLE} must document the prometheus user",
+        )
+        self.assertNotIn(
+            "{{", example, f"{JENKINS_ENV_EXAMPLE} must not interpolate Vault values"
+        )
+        self.assertNotIn(
+            "jenkins_labmonitor_password",
+            example,
+            f"{JENKINS_ENV_EXAMPLE} must not embed Vault variable names",
+        )
 
     def test_jenkins_api_tokens_use_jenkins_fixed_format(self):
         """Vault API tokens must match Jenkins addFixedNewToken format (11 + 32 lowercase hex).
@@ -545,8 +843,11 @@ class TestJenkinsProviders(unittest.TestCase):
         """
         tasks = read(COMPOSE_TASKS)
         for var in ("jenkins_labmonitor_api_token", "jenkins_prometheus_api_token"):
-            self.assertIn(f"{var} is match('^11[a-f0-9]{{32}}$')", tasks,
-                          f"{COMPOSE_TASKS} must validate {var} against the Jenkins fixed-token format")
+            self.assertIn(
+                f"{var} is match('^11[a-f0-9]{{32}}$')",
+                tasks,
+                f"{COMPOSE_TASKS} must validate {var} against the Jenkins fixed-token format",
+            )
 
     def test_compose_apps_have_environment_derived_labmonitor_labels(self):
         """Jenkins/n8n/Metabase expose the six labmonitor.* labels via environment interpolation."""
@@ -562,40 +863,70 @@ class TestJenkinsProviders(unittest.TestCase):
             self.assertTrue(path.is_file(), f"missing {path}")
             content = read(path)
             for label in required_labels:
-                self.assertIn(label, content,
-                              f"{path} must contain label {label}")
+                self.assertIn(label, content, f"{path} must contain label {label}")
         # Each Ansible .env template renders exactly one environment-specific URL from base_domain.
         for template in (JENKINS_ENV_TEMPLATE, N8N_ENV_TEMPLATE, METABASE_ENV_TEMPLATE):
             self.assertTrue(template.is_file(), f"missing {template}")
             content = read(template)
-            self.assertIn("LABMONITOR_OPEN_URL", content,
-                          f"{template} must render LABMONITOR_OPEN_URL")
-            self.assertIn("base_domain", content,
-                          f"{template} must derive the URL from base_domain")
-            self.assertEqual(content.count("LABMONITOR_OPEN_URL"), 1,
-                             f"{template} must render exactly one LABMONITOR_OPEN_URL")
-            for var in ("LABMONITOR_ENABLED", "LABMONITOR_ID", "LABMONITOR_NAME",
-                        "LABMONITOR_CATEGORY", "LABMONITOR_ICON"):
-                self.assertIn(var, content,
-                              f"{template} must render {var}")
+            self.assertIn(
+                "LABMONITOR_OPEN_URL",
+                content,
+                f"{template} must render LABMONITOR_OPEN_URL",
+            )
+            self.assertIn(
+                "base_domain",
+                content,
+                f"{template} must derive the URL from base_domain",
+            )
+            self.assertEqual(
+                content.count("LABMONITOR_OPEN_URL"),
+                1,
+                f"{template} must render exactly one LABMONITOR_OPEN_URL",
+            )
+            for var in (
+                "LABMONITOR_ENABLED",
+                "LABMONITOR_ID",
+                "LABMONITOR_NAME",
+                "LABMONITOR_CATEGORY",
+                "LABMONITOR_ICON",
+            ):
+                self.assertIn(var, content, f"{template} must render {var}")
 
     def test_compose_apps_have_stable_labmonitor_ids(self):
         """labmonitor.id values are stable literals, never computed from runtime names."""
         defaults = parse_simple_vars(COMPOSE_DEFAULTS)
-        self.assertEqual(defaults.get("compose_jenkins_labmonitor_id"), "jenkins",
-                         f"{COMPOSE_DEFAULTS} jenkins id must be stable 'jenkins'")
-        self.assertEqual(defaults.get("compose_n8n_labmonitor_id"), "n8n",
-                         f"{COMPOSE_DEFAULTS} n8n id must be stable 'n8n'")
-        self.assertEqual(defaults.get("compose_metabase_labmonitor_id"), "metabase",
-                         f"{COMPOSE_DEFAULTS} metabase id must be stable 'metabase'")
+        self.assertEqual(
+            defaults.get("compose_jenkins_labmonitor_id"),
+            "jenkins",
+            f"{COMPOSE_DEFAULTS} jenkins id must be stable 'jenkins'",
+        )
+        self.assertEqual(
+            defaults.get("compose_n8n_labmonitor_id"),
+            "n8n",
+            f"{COMPOSE_DEFAULTS} n8n id must be stable 'n8n'",
+        )
+        self.assertEqual(
+            defaults.get("compose_metabase_labmonitor_id"),
+            "metabase",
+            f"{COMPOSE_DEFAULTS} metabase id must be stable 'metabase'",
+        )
         for path in (JENKINS_COMPOSE, N8N_COMPOSE, METABASE_COMPOSE):
             content = read(path)
-            self.assertIn('labmonitor.id: "${LABMONITOR_ID:?required}"', content,
-                          f"{path} labmonitor.id must use LABMONITOR_ID interpolation")
-            self.assertNotIn("COMPOSE_PROJECT", content,
-                             f"{path} labmonitor.id must not derive from the Compose project name")
-            self.assertNotIn("container_name", content.split("labmonitor.id")[1].splitlines()[0],
-                             f"{path} labmonitor.id must not derive from container_name")
+            self.assertIn(
+                'labmonitor.id: "${LABMONITOR_ID:?required}"',
+                content,
+                f"{path} labmonitor.id must use LABMONITOR_ID interpolation",
+            )
+            self.assertNotIn(
+                "COMPOSE_PROJECT",
+                content,
+                f"{path} labmonitor.id must not derive from the Compose project name",
+            )
+            self.assertNotIn(
+                "container_name",
+                content.split("labmonitor.id")[1].splitlines()[0],
+                f"{path} labmonitor.id must not derive from container_name",
+            )
         examples = {
             JENKINS_ENV_EXAMPLE: "LABMONITOR_ID=jenkins",
             N8N_ENV_EXAMPLE: "LABMONITOR_ID=n8n",
@@ -603,192 +934,471 @@ class TestJenkinsProviders(unittest.TestCase):
         }
         for path, expected in examples.items():
             self.assertTrue(path.is_file(), f"missing {path}")
-            self.assertIn(expected, read(path),
-                          f"{path} must pin stable {expected}")
+            self.assertIn(expected, read(path), f"{path} must pin stable {expected}")
 
     def test_postgres_and_provider_projects_have_no_navigable_labmonitor_url(self):
         """PostgreSQL, the socket proxy, and the exporter are providers, not app cards."""
         for path in (POSTGRES_COMPOSE, PROVIDER_COMPOSE):
             self.assertTrue(path.is_file(), f"missing {path}")
             content = read(path)
-            self.assertNotIn("labmonitor.open.url", content,
-                             f"{path} must not expose a navigable labmonitor URL")
-            self.assertNotIn("LABMONITOR_OPEN_URL", content,
-                             f"{path} must not interpolate a navigable labmonitor URL")
+            self.assertNotIn(
+                "labmonitor.open.url",
+                content,
+                f"{path} must not expose a navigable labmonitor URL",
+            )
+            self.assertNotIn(
+                "LABMONITOR_OPEN_URL",
+                content,
+                f"{path} must not interpolate a navigable labmonitor URL",
+            )
         # Positive control: the three Compose applications do expose exactly one URL each.
         for path in (JENKINS_COMPOSE, N8N_COMPOSE, METABASE_COMPOSE):
-            self.assertIn("labmonitor.open.url", read(path),
-                          f"{path} must expose one navigable labmonitor URL")
+            self.assertIn(
+                "labmonitor.open.url",
+                read(path),
+                f"{path} must expose one navigable labmonitor URL",
+            )
 
     def test_jenkins_plugin_file_has_exact_versions(self):
         """plugins.txt pins exactly the 7 required top-level plugins; no forbidden extras."""
         self.assertTrue(JENKINS_PLUGINS.is_file(), f"missing {JENKINS_PLUGINS}")
-        lines = [ln.strip() for ln in read(JENKINS_PLUGINS).splitlines()
-                 if ln.strip() and not ln.strip().startswith("#")]
-        self.assertEqual(sorted(lines), sorted(EXPECTED_JENKINS_PLUGINS),
-                         f"{JENKINS_PLUGINS} must pin exactly {EXPECTED_JENKINS_PLUGINS} — got {lines}")
-        self.assertEqual(len(lines), len(EXPECTED_JENKINS_PLUGINS),
-                         f"{JENKINS_PLUGINS} must contain exactly {len(EXPECTED_JENKINS_PLUGINS)} pins — got {lines}")
+        lines = [
+            ln.strip()
+            for ln in read(JENKINS_PLUGINS).splitlines()
+            if ln.strip() and not ln.strip().startswith("#")
+        ]
+        self.assertEqual(
+            sorted(lines),
+            sorted(EXPECTED_JENKINS_PLUGINS),
+            f"{JENKINS_PLUGINS} must pin exactly {EXPECTED_JENKINS_PLUGINS} — got {lines}",
+        )
+        self.assertEqual(
+            len(lines),
+            len(EXPECTED_JENKINS_PLUGINS),
+            f"{JENKINS_PLUGINS} must contain exactly {len(EXPECTED_JENKINS_PLUGINS)} pins — got {lines}",
+        )
         for line in lines:
-            self.assertNotIn("latest", line.lower(),
-                             f"{JENKINS_PLUGINS} must never use 'latest' — got {line}")
-            self.assertRegex(line, r"^[a-z0-9-]+:[0-9]",
-                             f"{JENKINS_PLUGINS} entries must be name:version — got {line}")
+            self.assertNotIn(
+                "latest",
+                line.lower(),
+                f"{JENKINS_PLUGINS} must never use 'latest' — got {line}",
+            )
+            self.assertRegex(
+                line,
+                r"^[a-z0-9-]+:[0-9]",
+                f"{JENKINS_PLUGINS} entries must be name:version — got {line}",
+            )
         joined = read(JENKINS_PLUGINS)
         for forbidden in FORBIDDEN_JENKINS_PLUGINS:
-            self.assertNotIn(forbidden, joined,
-                             f"{JENKINS_PLUGINS} must not contain {forbidden}")
+            self.assertNotIn(
+                forbidden, joined, f"{JENKINS_PLUGINS} must not contain {forbidden}"
+            )
         dockerfile = read(JENKINS_DOCKERFILE)
-        self.assertIn("ARG JENKINS_BASE_IMAGE", dockerfile,
-                      f"{JENKINS_DOCKERFILE} must keep the base image in a required build arg")
-        self.assertIn("FROM ${JENKINS_BASE_IMAGE}", dockerfile,
-                      f"{JENKINS_DOCKERFILE} must build FROM ${{JENKINS_BASE_IMAGE}}")
-        self.assertNotIn("FROM jenkins/jenkins:", dockerfile,
-                         f"{JENKINS_DOCKERFILE} must not hardcode the base image reference")
-        self.assertIn("docker-cli", dockerfile,
-                      f"{JENKINS_DOCKERFILE} must install docker-cli explicitly for the dockersock check")
-        self.assertIn("plugins.txt", dockerfile,
-                      f"{JENKINS_DOCKERFILE} must copy plugins.txt")
-        self.assertIn("jenkins-plugin-cli", dockerfile,
-                      f"{JENKINS_DOCKERFILE} must run the image-provided plugin installer")
+        self.assertIn(
+            "ARG JENKINS_BASE_IMAGE",
+            dockerfile,
+            f"{JENKINS_DOCKERFILE} must keep the base image in a required build arg",
+        )
+        self.assertIn(
+            "FROM ${JENKINS_BASE_IMAGE}",
+            dockerfile,
+            f"{JENKINS_DOCKERFILE} must build FROM ${{JENKINS_BASE_IMAGE}}",
+        )
+        self.assertNotIn(
+            "FROM jenkins/jenkins:",
+            dockerfile,
+            f"{JENKINS_DOCKERFILE} must not hardcode the base image reference",
+        )
+        self.assertIn(
+            "docker-cli",
+            dockerfile,
+            f"{JENKINS_DOCKERFILE} must install docker-cli explicitly for the dockersock check",
+        )
+        self.assertIn(
+            "plugins.txt", dockerfile, f"{JENKINS_DOCKERFILE} must copy plugins.txt"
+        )
+        self.assertIn(
+            "jenkins-plugin-cli",
+            dockerfile,
+            f"{JENKINS_DOCKERFILE} must run the image-provided plugin installer",
+        )
         tasks = read(COMPOSE_TASKS)
-        self.assertIn("plugins.txt", tasks,
-                      f"{COMPOSE_TASKS} must ship plugins.txt to the host and fingerprint it")
+        self.assertIn(
+            "plugins.txt",
+            tasks,
+            f"{COMPOSE_TASKS} must ship plugins.txt to the host and fingerprint it",
+        )
 
     def test_jenkins_dockerfile_has_pipeline_cli_tooling(self):
         """The agent image carries the Unix/CLI tooling the Jenkinsfiles shell out to."""
         self.assertTrue(JENKINS_DOCKERFILE.is_file(), f"missing {JENKINS_DOCKERFILE}")
         dockerfile = read(JENKINS_DOCKERFILE)
         for pkg in ("gawk", "grep", "sed", "coreutils", "findutils", "bash"):
-            self.assertRegex(dockerfile, rf"\b{re.escape(pkg)}\b",
-                             f"{JENKINS_DOCKERFILE} must install {pkg}")
-        self.assertRegex(dockerfile, r"\bgit\b",
-                         f"{JENKINS_DOCKERFILE} must install git")
-        self.assertNotIn("dockerd", dockerfile,
-                         f"{JENKINS_DOCKERFILE} must not run a daemon (no DinD)")
-        self.assertNotIn("docker:dind", dockerfile,
-                         f"{JENKINS_DOCKERFILE} must not use docker:dind")
+            self.assertRegex(
+                dockerfile,
+                rf"\b{re.escape(pkg)}\b",
+                f"{JENKINS_DOCKERFILE} must install {pkg}",
+            )
+        self.assertRegex(
+            dockerfile, r"\bgit\b", f"{JENKINS_DOCKERFILE} must install git"
+        )
+        self.assertNotIn(
+            "dockerd",
+            dockerfile,
+            f"{JENKINS_DOCKERFILE} must not run a daemon (no DinD)",
+        )
+        self.assertNotIn(
+            "docker:dind", dockerfile, f"{JENKINS_DOCKERFILE} must not use docker:dind"
+        )
 
     def test_jenkins_bluefin_enablement_is_opt_in_and_fail_closed(self):
         """Flag defaults false in defaults and both examples; validation is fail-closed when true."""
         defaults = parse_simple_vars(COMPOSE_DEFAULTS)
-        self.assertEqual(defaults.get("jenkins_bluefin_enabled"), "false",
-                         f"{COMPOSE_DEFAULTS} must default jenkins_bluefin_enabled to false")
-        self.assertEqual(defaults.get("jenkins_bluefin_repo_url"),
-                         "https://github.com/ericrocha97/bluefin.git",
-                         f"{COMPOSE_DEFAULTS} must pin the Bluefin repo URL")
-        self.assertEqual(defaults.get("jenkins_bluefin_branch"), "*/main",
-                         f"{COMPOSE_DEFAULTS} must pin the Bluefin branch spec")
+        self.assertEqual(
+            defaults.get("jenkins_bluefin_enabled"),
+            "false",
+            f"{COMPOSE_DEFAULTS} must default jenkins_bluefin_enabled to false",
+        )
+        self.assertEqual(
+            defaults.get("jenkins_bluefin_repo_url"),
+            "https://github.com/ericrocha97/bluefin.git",
+            f"{COMPOSE_DEFAULTS} must pin the Bluefin repo URL",
+        )
+        self.assertEqual(
+            defaults.get("jenkins_bluefin_branch"),
+            "*/main",
+            f"{COMPOSE_DEFAULTS} must pin the Bluefin branch spec",
+        )
         for path in (LAB_EXAMPLE, PROD_EXAMPLE):
-            self.assertEqual(parse_simple_vars(path).get("jenkins_bluefin_enabled"), "false",
-                             f"{path} must keep jenkins_bluefin_enabled false")
+            self.assertEqual(
+                parse_simple_vars(path).get("jenkins_bluefin_enabled"),
+                "false",
+                f"{path} must keep jenkins_bluefin_enabled false",
+            )
         tasks = read(COMPOSE_TASKS)
-        self.assertIn("when: jenkins_bluefin_enabled | default(false)", tasks,
-                      f"{COMPOSE_TASKS} must gate Bluefin work on the flag")
-        for var in ("jenkins_github_token", "jenkins_ghcr_username", "jenkins_ghcr_token",
-                    "jenkins_n8n_webhook_url", "jenkins_n8n_webhook_token"):
-            self.assertIn(var, tasks,
-                          f"{COMPOSE_TASKS} must validate {var} when enabled")
-        self.assertIn("match('^https?://')", tasks,
-                      f"{COMPOSE_TASKS} must require an http(s) webhook URL")
+        self.assertIn(
+            "when: jenkins_bluefin_enabled | default(false)",
+            tasks,
+            f"{COMPOSE_TASKS} must gate Bluefin work on the flag",
+        )
+        for var in (
+            "jenkins_github_token",
+            "jenkins_ghcr_username",
+            "jenkins_ghcr_token",
+            "jenkins_n8n_webhook_url",
+            "jenkins_n8n_webhook_token",
+        ):
+            self.assertIn(
+                var, tasks, f"{COMPOSE_TASKS} must validate {var} when enabled"
+            )
+        self.assertIn(
+            "match('^https?://')",
+            tasks,
+            f"{COMPOSE_TASKS} must require an http(s) webhook URL",
+        )
+
+    def test_jenkins_docker_socket_is_gated_behind_the_bluefin_opt_in(self):
+        """The Jenkins RW socket lives only in the opt-in overlay; default mounts nothing.
+
+        With jenkins_bluefin_enabled=false, Jenkins must not receive the
+        read-write host Docker socket; the entrypoint must start without it. The
+        socket is added solely by compose.bluefin.yaml, which compose-services
+        passes only when the flag is true.
+        """
+        base = parse_compose_services(JENKINS_COMPOSE)
+        self.assertIn(
+            "jenkins",
+            base,
+            f"{JENKINS_COMPOSE} must define the jenkins service",
+        )
+        base_mounts = [
+            v for v in base["jenkins"]["volumes"] if "/var/run/docker.sock" in v
+        ]
+        self.assertEqual(
+            base_mounts,
+            [],
+            f"{JENKINS_COMPOSE} must never mount the Docker socket by default "
+            f"— got {base['jenkins']['volumes']}",
+        )
+        self.assertEqual(
+            base["jenkins"]["environment"].get("JENKINS_BLUEFIN_ENABLED"),
+            "${JENKINS_BLUEFIN_ENABLED:-false}",
+            f"{JENKINS_COMPOSE} must forward JENKINS_BLUEFIN_ENABLED to the "
+            f"entrypoint — got {base['jenkins']['environment']}",
+        )
+
+        # The overlay carries the RW mount and is never read-only.
+        self.assertTrue(
+            JENKINS_BLUEFIN_OVERLAY.is_file(),
+            f"missing {JENKINS_BLUEFIN_OVERLAY}",
+        )
+        overlay = parse_compose_services(JENKINS_BLUEFIN_OVERLAY)
+        overlay_mounts = [
+            v for v in overlay["jenkins"]["volumes"] if "/var/run/docker.sock" in v
+        ]
+        self.assertEqual(
+            len(overlay_mounts),
+            1,
+            f"{JENKINS_BLUEFIN_OVERLAY} must mount the socket exactly once "
+            f"— got {overlay['jenkins']['volumes']}",
+        )
+        self.assertFalse(
+            overlay_mounts[0].endswith(":ro"),
+            f"{JENKINS_BLUEFIN_OVERLAY} is the opt-in RW build exception: "
+            f"never :ro — got {overlay_mounts[0]}",
+        )
+        self.assertNotIn(
+            "compose.override",
+            JENKINS_BLUEFIN_OVERLAY.name,
+            "the Bluefin overlay must not be auto-loaded by Compose",
+        )
+
+        # The entrypoint requires the socket only when the flag is true.
+        entrypoint = read(JENKINS_ENTRYPOINT)
+        self.assertIn(
+            "JENKINS_BLUEFIN_ENABLED:-false",
+            entrypoint,
+            f"{JENKINS_ENTRYPOINT} must gate the socket requirement on the flag",
+        )
+        self.assertIn(
+            'JENKINS_BLUEFIN_ENABLED:-false}" == "true"',
+            entrypoint,
+            f"{JENKINS_ENTRYPOINT} must require the socket only when enabled",
+        )
+
+        # The env template and example carry the flag.
+        self.assertIn(
+            "JENKINS_BLUEFIN_ENABLED",
+            read(JENKINS_ENV_TEMPLATE),
+            f"{JENKINS_ENV_TEMPLATE} must render JENKINS_BLUEFIN_ENABLED",
+        )
+        self.assertIn(
+            "JENKINS_BLUEFIN_ENABLED=false",
+            read(JENKINS_ENV_EXAMPLE),
+            f"{JENKINS_ENV_EXAMPLE} must keep the static lint render disabled",
+        )
+
+        # Defaults own both file lists; tasks pass the overlay only when enabled.
+        defaults_text = read(COMPOSE_DEFAULTS)
+        self.assertIn(
+            "compose_jenkins_base_compose_files:",
+            defaults_text,
+            f"{COMPOSE_DEFAULTS} must define compose_jenkins_base_compose_files",
+        )
+        self.assertIn(
+            "compose_jenkins_bluefin_compose_files:",
+            defaults_text,
+            f"{COMPOSE_DEFAULTS} must define compose_jenkins_bluefin_compose_files",
+        )
+        tasks = read(COMPOSE_TASKS)
+        self.assertIn(
+            "compose_jenkins_bluefin_compose_files",
+            tasks,
+            f"{COMPOSE_TASKS} must pass the Bluefin overlay when enabled",
+        )
+        self.assertIn(
+            "compose.bluefin.yaml",
+            tasks,
+            f"{COMPOSE_TASKS} must ship compose.bluefin.yaml to the host",
+        )
+        # The socket/dockersock live check only runs for the opt-in.
+        socket_check = tasks.index("test -S /var/run/docker.sock")
+        block_end = tasks.find("\n- name:", socket_check)
+        block = tasks[socket_check : block_end if block_end != -1 else len(tasks)]
+        self.assertIn(
+            "when: jenkins_bluefin_enabled | default(false)",
+            block,
+            f"{COMPOSE_TASKS} socket dockersock check must be gated on the flag",
+        )
 
     def test_jenkins_env_forwards_bluefin_secrets(self):
         """The env template, Compose file, and example all carry the 5 Bluefin env vars."""
-        env_vars = ("JENKINS_GH_TOKEN", "JENKINS_GHCR_USERNAME", "JENKINS_GHCR_TOKEN",
-                    "JENKINS_N8N_WEBHOOK_URL", "JENKINS_N8N_WEBHOOK_TOKEN")
+        env_vars = (
+            "JENKINS_GH_TOKEN",
+            "JENKINS_GHCR_USERNAME",
+            "JENKINS_GHCR_TOKEN",
+            "JENKINS_N8N_WEBHOOK_URL",
+            "JENKINS_N8N_WEBHOOK_TOKEN",
+        )
         template = read(JENKINS_ENV_TEMPLATE)
-        self.assertIn("{% if jenkins_bluefin_enabled", template,
-                      f"{JENKINS_ENV_TEMPLATE} must gate Bluefin env vars on the flag")
+        self.assertIn(
+            "{% if jenkins_bluefin_enabled",
+            template,
+            f"{JENKINS_ENV_TEMPLATE} must gate Bluefin env vars on the flag",
+        )
         for var in env_vars:
             self.assertIn(var, template, f"{JENKINS_ENV_TEMPLATE} must emit {var}")
-            self.assertIn(var, read(JENKINS_COMPOSE),
-                          f"{JENKINS_COMPOSE} must pass {var}")
-            self.assertIn(var, read(JENKINS_ENV_EXAMPLE),
-                          f"{JENKINS_ENV_EXAMPLE} must placeholder {var}")
+            self.assertIn(
+                var, read(JENKINS_COMPOSE), f"{JENKINS_COMPOSE} must pass {var}"
+            )
+            self.assertIn(
+                var,
+                read(JENKINS_ENV_EXAMPLE),
+                f"{JENKINS_ENV_EXAMPLE} must placeholder {var}",
+            )
         example = read(JENKINS_ENV_EXAMPLE)
-        self.assertNotRegex(example, r"ghp_|github_pat_",
-                            f"{JENKINS_ENV_EXAMPLE} must not contain a real token")
+        self.assertNotRegex(
+            example,
+            r"ghp_|github_pat_",
+            f"{JENKINS_ENV_EXAMPLE} must not contain a real token",
+        )
         start = template.index("{% if jenkins_bluefin_enabled")
         end = template.index("{% endif %}", start)
         block = template[start:end]
         for var in env_vars:
-            self.assertIn(var, block,
-                          f"{JENKINS_ENV_TEMPLATE} must emit {var} inside the Bluefin conditional")
+            self.assertIn(
+                var,
+                block,
+                f"{JENKINS_ENV_TEMPLATE} must emit {var} inside the Bluefin conditional",
+            )
 
     def test_jenkins_bluefin_job_mapping_is_explicit(self):
         """Defaults map each job name to its Jenkinsfile path."""
         defaults = read(COMPOSE_DEFAULTS)
-        self.assertIn("name: bluefin-cosmic-dx", defaults,
-                      f"{COMPOSE_DEFAULTS} must define the stable job")
-        self.assertIn("jenkinsfile: ci/jenkins/Jenkinsfile.stable", defaults,
-                      f"{COMPOSE_DEFAULTS} must map the stable Jenkinsfile")
-        self.assertIn("name: bluefin-cosmic-dx-nvidia", defaults,
-                      f"{COMPOSE_DEFAULTS} must define the nvidia job")
-        self.assertIn("jenkinsfile: ci/jenkins/Jenkinsfile.nvidia", defaults,
-                      f"{COMPOSE_DEFAULTS} must map the nvidia Jenkinsfile")
+        self.assertIn(
+            "name: bluefin-cosmic-dx",
+            defaults,
+            f"{COMPOSE_DEFAULTS} must define the stable job",
+        )
+        self.assertIn(
+            "jenkinsfile: ci/jenkins/Jenkinsfile.stable",
+            defaults,
+            f"{COMPOSE_DEFAULTS} must map the stable Jenkinsfile",
+        )
+        self.assertIn(
+            "name: bluefin-cosmic-dx-nvidia",
+            defaults,
+            f"{COMPOSE_DEFAULTS} must define the nvidia job",
+        )
+        self.assertIn(
+            "jenkinsfile: ci/jenkins/Jenkinsfile.nvidia",
+            defaults,
+            f"{COMPOSE_DEFAULTS} must map the nvidia Jenkinsfile",
+        )
 
     def test_jenkins_bluefin_groovy_provisions_credentials_and_jobs(self):
         """The Groovy script reads secrets from env and upserts credentials and jobs."""
-        self.assertTrue(JENKINS_BLUEFIN_GROOVY.is_file(), f"missing {JENKINS_BLUEFIN_GROOVY}")
+        self.assertTrue(
+            JENKINS_BLUEFIN_GROOVY.is_file(), f"missing {JENKINS_BLUEFIN_GROOVY}"
+        )
         groovy = read(JENKINS_BLUEFIN_GROOVY)
-        for cred in ("github-token", "ghcr-creds", "n8n-webhook-url", "n8n-webhook-token"):
-            self.assertIn(cred, groovy, f"{JENKINS_BLUEFIN_GROOVY} must reference credential {cred}")
-        for symbol in ("SystemCredentialsProvider", "addCredentials", "updateCredentials",
-                       "new WorkflowJob", "CpsScmFlowDefinition", "setLightweight(true)",
-                       "System.getenv", "ericrocha97/bluefin",
-                       "ci/jenkins/Jenkinsfile.stable", "ci/jenkins/Jenkinsfile.nvidia"):
-            self.assertIn(symbol, groovy, f"{JENKINS_BLUEFIN_GROOVY} must contain {symbol}")
-        self.assertNotRegex(groovy, r"ghp_|github_pat_",
-                            f"{JENKINS_BLUEFIN_GROOVY} must contain no real token")
-        self.assertNotIn("JENKINS_GH_TOKEN=", groovy,
-                         f"{JENKINS_BLUEFIN_GROOVY} must not embed a secret literal")
+        for cred in (
+            "github-token",
+            "ghcr-creds",
+            "n8n-webhook-url",
+            "n8n-webhook-token",
+        ):
+            self.assertIn(
+                cred,
+                groovy,
+                f"{JENKINS_BLUEFIN_GROOVY} must reference credential {cred}",
+            )
+        for symbol in (
+            "SystemCredentialsProvider",
+            "addCredentials",
+            "updateCredentials",
+            "new WorkflowJob",
+            "CpsScmFlowDefinition",
+            "setLightweight(true)",
+            "System.getenv",
+            "ericrocha97/bluefin",
+            "ci/jenkins/Jenkinsfile.stable",
+            "ci/jenkins/Jenkinsfile.nvidia",
+        ):
+            self.assertIn(
+                symbol, groovy, f"{JENKINS_BLUEFIN_GROOVY} must contain {symbol}"
+            )
+        self.assertNotRegex(
+            groovy,
+            r"ghp_|github_pat_",
+            f"{JENKINS_BLUEFIN_GROOVY} must contain no real token",
+        )
+        self.assertNotIn(
+            "JENKINS_GH_TOKEN=",
+            groovy,
+            f"{JENKINS_BLUEFIN_GROOVY} must not embed a secret literal",
+        )
         # Atomic validation: all env vars are checked before any credential write.
-        self.assertLess(groovy.index("requiredEnv.each"),
-                        groovy.index("addCredentials"),
-                        f"{JENKINS_BLUEFIN_GROOVY} must validate all env vars before writing")
+        self.assertLess(
+            groovy.index("requiredEnv.each"),
+            groovy.index("addCredentials"),
+            f"{JENKINS_BLUEFIN_GROOVY} must validate all env vars before writing",
+        )
 
     def test_jenkins_bluefin_groovy_staging_is_non_destructive(self):
         """The script is staged only when enabled and removed when disabled; nothing else is deleted."""
         tasks = read(COMPOSE_TASKS)
-        self.assertIn("03-bluefin.groovy", tasks,
-                      f"{COMPOSE_TASKS} must stage 03-bluefin.groovy")
+        self.assertIn(
+            "03-bluefin.groovy", tasks, f"{COMPOSE_TASKS} must stage 03-bluefin.groovy"
+        )
         self.assertIsNotNone(
             re.search(r"03-bluefin\.groovy.*?state: absent", tasks, re.S),
-            f"{COMPOSE_TASKS} must remove the staged script when disabled")
+            f"{COMPOSE_TASKS} must remove the staged script when disabled",
+        )
         # No JENKINS_HOME job/credential/build state is ever deleted by this feature.
-        self.assertNotIn("credentials.xml", tasks,
-                         f"{COMPOSE_TASKS} must not delete the credentials store")
+        self.assertNotIn(
+            "credentials.xml",
+            tasks,
+            f"{COMPOSE_TASKS} must not delete the credentials store",
+        )
         # No `state: absent` removal may target the jobs directory (read-only
         # references to it elsewhere are fine).
         for match in re.finditer(r"state:\s*absent", tasks):
-            window = tasks[max(0, match.start() - 400):match.start() + 100]
-            self.assertNotIn("/jobs", window,
-                             f"{COMPOSE_TASKS} must not remove a jobs path via state: absent")
+            window = tasks[max(0, match.start() - 400) : match.start() + 100]
+            self.assertNotIn(
+                "/jobs",
+                window,
+                f"{COMPOSE_TASKS} must not remove a jobs path via state: absent",
+            )
 
     def test_jenkins_bluefin_verification_is_read_only(self):
         """Live checks probe CLIs/daemon and verify jobs/credentials read-only, never building."""
         tasks = read(COMPOSE_TASKS)
         for probe in ("command -v $cmd", "docker info", "gh --version"):
-            self.assertIn(probe, tasks,
-                          f"{COMPOSE_TASKS} must contain read-only probe '{probe}'")
-        for cred in ("github-token", "ghcr-creds", "n8n-webhook-url", "n8n-webhook-token"):
-            self.assertIn(cred, tasks,
-                          f"{COMPOSE_TASKS} must verify credential {cred}")
-        self.assertIn("jenkins_bluefin_enabled | default(false)", tasks,
-                      f"{COMPOSE_TASKS} must gate Bluefin verification on the flag")
+            self.assertIn(
+                probe, tasks, f"{COMPOSE_TASKS} must contain read-only probe '{probe}'"
+            )
+        for cred in (
+            "github-token",
+            "ghcr-creds",
+            "n8n-webhook-url",
+            "n8n-webhook-token",
+        ):
+            self.assertIn(cred, tasks, f"{COMPOSE_TASKS} must verify credential {cred}")
+        self.assertIn(
+            "jenkins_bluefin_enabled | default(false)",
+            tasks,
+            f"{COMPOSE_TASKS} must gate Bluefin verification on the flag",
+        )
         self.assertGreaterEqual(
-            tasks.count("when: jenkins_bluefin_enabled | default(false)"), 4,
-            f"{COMPOSE_TASKS} must gate each Bluefin job/credential verification task")
-        self.assertNotIn("/job/{{ item.name }}/build", tasks,
-                         f"{COMPOSE_TASKS} must never trigger a Bluefin build")
-        self.assertNotIn("buildWithParameters", tasks,
-                         f"{COMPOSE_TASKS} must never trigger a parameterized build")
+            tasks.count("when: jenkins_bluefin_enabled | default(false)"),
+            4,
+            f"{COMPOSE_TASKS} must gate each Bluefin job/credential verification task",
+        )
+        self.assertNotIn(
+            "/job/{{ item.name }}/build",
+            tasks,
+            f"{COMPOSE_TASKS} must never trigger a Bluefin build",
+        )
+        self.assertNotIn(
+            "buildWithParameters",
+            tasks,
+            f"{COMPOSE_TASKS} must never trigger a parameterized build",
+        )
 
 
-EXPORTER_DEPLOYMENT = REPO / "ansible/roles/monitoring/templates/docker-exporter-deployment.yaml.j2"
-EXPORTER_SERVICE = REPO / "ansible/roles/monitoring/templates/docker-exporter-service.yaml.j2"
-EXPORTER_SERVICEMONITOR = REPO / "ansible/roles/monitoring/templates/docker-exporter-servicemonitor.yaml.j2"
-EXPORTER_RECORDING_RULES = REPO / "ansible/roles/monitoring/templates/docker-exporter-recording-rules.yaml.j2"
+EXPORTER_DEPLOYMENT = (
+    REPO / "ansible/roles/monitoring/templates/docker-exporter-deployment.yaml.j2"
+)
+EXPORTER_SERVICE = (
+    REPO / "ansible/roles/monitoring/templates/docker-exporter-service.yaml.j2"
+)
+EXPORTER_SERVICEMONITOR = (
+    REPO / "ansible/roles/monitoring/templates/docker-exporter-servicemonitor.yaml.j2"
+)
+EXPORTER_RECORDING_RULES = (
+    REPO / "ansible/roles/monitoring/templates/docker-exporter-recording-rules.yaml.j2"
+)
 EXPORTER_APP = REPO / "k8s/monitoring/docker-metrics-exporter/app.py"
 EXPORTER_TEST = REPO / "k8s/monitoring/docker-metrics-exporter/test_app.py"
 EXPORTER_REQUIREMENTS = REPO / "k8s/monitoring/docker-metrics-exporter/requirements.txt"
@@ -812,133 +1422,261 @@ class TestDockerExporter(unittest.TestCase):
     def test_exporter_mode_is_built_with_immutable_image(self):
         """Gate result is recorded as built with a pinned local image."""
         mon = parse_simple_vars(MONITORING_DEFAULTS)
-        self.assertEqual(mon.get("docker_metrics_exporter_mode"), "built",
-                         f"{MONITORING_DEFAULTS} mode must be built after the failed gate")
+        self.assertEqual(
+            mon.get("docker_metrics_exporter_mode"),
+            "built",
+            f"{MONITORING_DEFAULTS} mode must be built after the failed gate",
+        )
         image = mon.get("docker_metrics_exporter_image", "")
-        self.assertTrue(image.startswith("labmonitor-docker-exporter:"),
-                        f"{MONITORING_DEFAULTS} built image must be the local fallback — got {image}")
-        self.assertNotIn("latest", image.lower(),
-                         f"{MONITORING_DEFAULTS} exporter image must not use latest — got {image}")
-        self.assertEqual(mon.get("docker_metrics_exporter_port"), "9797",
-                         f"{MONITORING_DEFAULTS} docker_metrics_exporter_port must be 9797")
+        self.assertTrue(
+            image.startswith("labmonitor-docker-exporter:"),
+            f"{MONITORING_DEFAULTS} built image must be the local fallback — got {image}",
+        )
+        self.assertNotIn(
+            "latest",
+            image.lower(),
+            f"{MONITORING_DEFAULTS} exporter image must not use latest — got {image}",
+        )
+        self.assertEqual(
+            mon.get("docker_metrics_exporter_port"),
+            "9797",
+            f"{MONITORING_DEFAULTS} docker_metrics_exporter_port must be 9797",
+        )
 
     def test_exporter_deployment_uses_proxy_url_and_no_socket(self):
         """Deployment points at the proxy URL, exposes 9797, mounts nothing."""
         self.assertTrue(EXPORTER_DEPLOYMENT.is_file(), f"missing {EXPORTER_DEPLOYMENT}")
         content = read(EXPORTER_DEPLOYMENT)
-        for marker in ("DOCKER_API_URL", "server_lan_ip", "docker_socket_proxy_port",
-                       "METRICS_PORT", "9797", "docker_metrics_exporter_image",
-                       "imagePullPolicy: IfNotPresent", "/healthz", "/metrics",
-                       "runAsNonRoot", "docker-metrics-exporter"):
-            self.assertIn(marker, content,
-                          f"{EXPORTER_DEPLOYMENT} must contain {marker}")
+        for marker in (
+            "DOCKER_API_URL",
+            "server_lan_ip",
+            "docker_socket_proxy_port",
+            "METRICS_PORT",
+            "9797",
+            "docker_metrics_exporter_image",
+            "imagePullPolicy: IfNotPresent",
+            "/healthz",
+            "/metrics",
+            "runAsNonRoot",
+            "docker-metrics-exporter",
+        ):
+            self.assertIn(
+                marker, content, f"{EXPORTER_DEPLOYMENT} must contain {marker}"
+            )
         # Port and address stay variable-driven, never literals.
-        self.assertNotIn("12375", content,
-                         f"{EXPORTER_DEPLOYMENT} must use docker_socket_proxy_port, not a literal")
-        self.assertIsNone(re.search(r"192\.168\.\d+", content),
-                          f"{EXPORTER_DEPLOYMENT} must not embed a LAN IP literal")
-        for forbidden in ("hostPort", "hostNetwork", "NodePort", "portainer",
-                          "privileged: true", "2375", "latest"):
-            self.assertNotIn(forbidden.lower(), content.lower(),
-                             f"{EXPORTER_DEPLOYMENT} must not contain {forbidden}")
+        self.assertNotIn(
+            "12375",
+            content,
+            f"{EXPORTER_DEPLOYMENT} must use docker_socket_proxy_port, not a literal",
+        )
+        self.assertIsNone(
+            re.search(r"192\.168\.\d+", content),
+            f"{EXPORTER_DEPLOYMENT} must not embed a LAN IP literal",
+        )
+        for forbidden in (
+            "hostPort",
+            "hostNetwork",
+            "NodePort",
+            "portainer",
+            "privileged: true",
+            "2375",
+            "latest",
+        ):
+            self.assertNotIn(
+                forbidden.lower(),
+                content.lower(),
+                f"{EXPORTER_DEPLOYMENT} must not contain {forbidden}",
+            )
         # Socket references are assembled here so this file never holds them.
         socket_fragment = "docker" + "." + "sock"
         unix_scheme = "unix" + "://"
-        self.assertNotIn(socket_fragment, content,
-                         f"{EXPORTER_DEPLOYMENT} must not mount a socket file")
-        self.assertNotIn(unix_scheme, content,
-                         f"{EXPORTER_DEPLOYMENT} must not build a socket URL")
+        self.assertNotIn(
+            socket_fragment,
+            content,
+            f"{EXPORTER_DEPLOYMENT} must not mount a socket file",
+        )
+        self.assertNotIn(
+            unix_scheme, content, f"{EXPORTER_DEPLOYMENT} must not build a socket URL"
+        )
 
     def test_exporter_service_is_clusterip_metrics_only(self):
         """Service is a ClusterIP named docker-metrics-exporter on 9797."""
         self.assertTrue(EXPORTER_SERVICE.is_file(), f"missing {EXPORTER_SERVICE}")
         content = read(EXPORTER_SERVICE)
-        for marker in ("kind: Service", "type: ClusterIP", "name: docker-metrics-exporter",
-                       "port: 9797", "targetPort: 9797", "app: docker-metrics-exporter"):
-            self.assertIn(marker, content,
-                          f"{EXPORTER_SERVICE} must contain {marker}")
+        for marker in (
+            "kind: Service",
+            "type: ClusterIP",
+            "name: docker-metrics-exporter",
+            "port: 9797",
+            "targetPort: 9797",
+            "app: docker-metrics-exporter",
+        ):
+            self.assertIn(marker, content, f"{EXPORTER_SERVICE} must contain {marker}")
         for forbidden in ("NodePort", "LoadBalancer", "hostPort", "portainer"):
-            self.assertNotIn(forbidden, content,
-                             f"{EXPORTER_SERVICE} must not contain {forbidden}")
+            self.assertNotIn(
+                forbidden, content, f"{EXPORTER_SERVICE} must not contain {forbidden}"
+            )
 
     def test_exporter_servicemonitor_scrapes_metrics(self):
         """ServiceMonitor is selected by the Prometheus release on /metrics."""
-        self.assertTrue(EXPORTER_SERVICEMONITOR.is_file(), f"missing {EXPORTER_SERVICEMONITOR}")
+        self.assertTrue(
+            EXPORTER_SERVICEMONITOR.is_file(), f"missing {EXPORTER_SERVICEMONITOR}"
+        )
         content = read(EXPORTER_SERVICEMONITOR)
-        for marker in ("kind: ServiceMonitor", "monitoring_release_name", "path: /metrics",
-                       "port: metrics", "app: docker-metrics-exporter",
-                       "monitoring_namespace"):
-            self.assertIn(marker, content,
-                          f"{EXPORTER_SERVICEMONITOR} must contain {marker}")
-        self.assertNotIn("portainer", content.lower(),
-                         f"{EXPORTER_SERVICEMONITOR} must not reference Portainer")
+        for marker in (
+            "kind: ServiceMonitor",
+            "monitoring_release_name",
+            "path: /metrics",
+            "port: metrics",
+            "app: docker-metrics-exporter",
+            "monitoring_namespace",
+        ):
+            self.assertIn(
+                marker, content, f"{EXPORTER_SERVICEMONITOR} must contain {marker}"
+            )
+        self.assertNotIn(
+            "portainer",
+            content.lower(),
+            f"{EXPORTER_SERVICEMONITOR} must not reference Portainer",
+        )
 
     def test_exporter_artifacts_match_selected_mode(self):
         """Built mode ships fallback source and skips recording rules; upstream is the reverse."""
-        mode = parse_simple_vars(MONITORING_DEFAULTS).get("docker_metrics_exporter_mode")
+        mode = parse_simple_vars(MONITORING_DEFAULTS).get(
+            "docker_metrics_exporter_mode"
+        )
         if mode == "built":
-            for path in (EXPORTER_APP, EXPORTER_TEST, EXPORTER_REQUIREMENTS, EXPORTER_DOCKERFILE):
+            for path in (
+                EXPORTER_APP,
+                EXPORTER_TEST,
+                EXPORTER_REQUIREMENTS,
+                EXPORTER_DOCKERFILE,
+            ):
                 self.assertTrue(path.is_file(), f"missing {path} in built mode")
-            self.assertFalse(EXPORTER_RECORDING_RULES.exists(),
-                             f"{EXPORTER_RECORDING_RULES} must not exist in built mode "
-                             "(fallback names are already stable)")
+            self.assertFalse(
+                EXPORTER_RECORDING_RULES.exists(),
+                f"{EXPORTER_RECORDING_RULES} must not exist in built mode "
+                "(fallback names are already stable)",
+            )
             dockerfile = read(EXPORTER_DOCKERFILE)
-            self.assertRegex(dockerfile, r"FROM python:3\.12-slim@sha256:[0-9a-f]{64}",
-                             f"{EXPORTER_DOCKERFILE} must pin the Python base by digest")
-            self.assertNotIn("latest", dockerfile.lower(),
-                             f"{EXPORTER_DOCKERFILE} must not use latest")
+            self.assertRegex(
+                dockerfile,
+                r"FROM python:3\.12-slim@sha256:[0-9a-f]{64}",
+                f"{EXPORTER_DOCKERFILE} must pin the Python base by digest",
+            )
+            self.assertNotIn(
+                "latest",
+                dockerfile.lower(),
+                f"{EXPORTER_DOCKERFILE} must not use latest",
+            )
             for marker in ("USER 65534", "EXPOSE 9797", "HEALTHCHECK", "/healthz"):
-                self.assertIn(marker, dockerfile,
-                              f"{EXPORTER_DOCKERFILE} must contain {marker}")
+                self.assertIn(
+                    marker, dockerfile, f"{EXPORTER_DOCKERFILE} must contain {marker}"
+                )
             requirements = read(EXPORTER_REQUIREMENTS).strip()
-            self.assertRegex(requirements, r"^prometheus_client==\d+\.\d+\.\d+\s*$",
-                             f"{EXPORTER_REQUIREMENTS} must pin one exact client version")
+            self.assertRegex(
+                requirements,
+                r"^prometheus_client==\d+\.\d+\.\d+\s*$",
+                f"{EXPORTER_REQUIREMENTS} must pin one exact client version",
+            )
         else:
-            for path in (EXPORTER_APP, EXPORTER_TEST, EXPORTER_REQUIREMENTS, EXPORTER_DOCKERFILE):
-                self.assertFalse(path.exists(),
-                                 f"{path} must not exist in upstream mode")
+            for path in (
+                EXPORTER_APP,
+                EXPORTER_TEST,
+                EXPORTER_REQUIREMENTS,
+                EXPORTER_DOCKERFILE,
+            ):
+                self.assertFalse(
+                    path.exists(), f"{path} must not exist in upstream mode"
+                )
 
     def test_fallback_collector_covers_required_series(self):
         """Fallback source defines the interfaces, paths, series, and bounded labels."""
         self.assertTrue(EXPORTER_APP.is_file(), f"missing {EXPORTER_APP}")
         content = read(EXPORTER_APP)
-        for marker in ("class DockerApiClient", "def get_json", "def collect_container_metrics",
-                       "def render_prometheus", "/version", "/containers/json?all=1",
-                       "/containers/%s/json", "stats?stream=false"):
-            self.assertIn(marker, content,
-                          f"{EXPORTER_APP} must contain {marker}")
+        for marker in (
+            "class DockerApiClient",
+            "def get_json",
+            "def collect_container_metrics",
+            "def render_prometheus",
+            "/version",
+            "/containers/json?all=1",
+            "/containers/%s/json",
+            "stats?stream=false",
+        ):
+            self.assertIn(marker, content, f"{EXPORTER_APP} must contain {marker}")
         for series in REQUIRED_EXPORTER_SERIES:
-            self.assertIn(series, content,
-                          f"{EXPORTER_APP} must expose stable series {series}")
-        for label in ("container_id", "container_name", "image", "state", "network", "health"):
-            self.assertIn(label, content,
-                          f"{EXPORTER_APP} must use bounded label {label}")
+            self.assertIn(
+                series, content, f"{EXPORTER_APP} must expose stable series {series}"
+            )
+        for label in (
+            "container_id",
+            "container_name",
+            "image",
+            "state",
+            "network",
+            "health",
+        ):
+            self.assertIn(
+                label, content, f"{EXPORTER_APP} must use bounded label {label}"
+            )
         for value in ("healthy", "unhealthy", "starting", "none"):
-            self.assertIn(value, content,
-                          f"{EXPORTER_APP} must bound health values (missing {value})")
+            self.assertIn(
+                value,
+                content,
+                f"{EXPORTER_APP} must bound health values (missing {value})",
+            )
         socket_fragment = "docker" + "." + "sock"
         unix_scheme = "unix" + "://"
-        self.assertNotIn(socket_fragment, content,
-                         f"{EXPORTER_APP} must never reference a socket file")
-        self.assertNotIn(unix_scheme, content,
-                         f"{EXPORTER_APP} must never build a socket URL")
+        self.assertNotIn(
+            socket_fragment,
+            content,
+            f"{EXPORTER_APP} must never reference a socket file",
+        )
+        self.assertNotIn(
+            unix_scheme, content, f"{EXPORTER_APP} must never build a socket URL"
+        )
 
     def test_exporter_tasks_cover_build_and_deploy(self):
         """Monitoring tasks build/import the fallback image and apply the manifests."""
         self.assertTrue(MONITORING_TASKS.is_file(), f"missing {MONITORING_TASKS}")
         tasks = read(MONITORING_TASKS)
-        for marker in ("docker_metrics_exporter_mode in ['upstream', 'built']",
-                       "docker save", "k3s ctr images import",
-                       "docker-exporter-deployment.yaml",
-                       "docker-exporter-service.yaml",
-                       "docker-exporter-servicemonitor.yaml",
-                       "deployment/docker-metrics-exporter"):
-            self.assertIn(marker, tasks,
-                          f"{MONITORING_TASKS} must contain {marker}")
+        for marker in (
+            "docker_metrics_exporter_mode in ['upstream', 'built']",
+            "docker save",
+            "k3s ctr images import",
+            "docker-exporter-deployment.yaml",
+            "docker-exporter-service.yaml",
+            "docker-exporter-servicemonitor.yaml",
+            "deployment/docker-metrics-exporter",
+        ):
+            self.assertIn(marker, tasks, f"{MONITORING_TASKS} must contain {marker}")
+
+    def test_exporter_registry_digest_reference_is_pull_only(self):
+        """A registry/digest deploy ref never reaches the local build+import path."""
+        self.assertTrue(MONITORING_TASKS.is_file(), f"missing {MONITORING_TASKS}")
+        tasks = read(MONITORING_TASKS)
+        for marker in (
+            "docker_metrics_exporter_pull_only",
+            "docker_metrics_exporter_image is search('@sha256:')",
+            "docker_metrics_exporter_local_build | bool",
+            "not (docker_metrics_exporter_pull_only | bool)",
+        ):
+            self.assertIn(
+                marker, tasks, f"{MONITORING_TASKS} must gate local build on {marker}"
+            )
+        defaults = parse_simple_vars(MONITORING_DEFAULTS)
+        self.assertEqual(
+            defaults.get("docker_metrics_exporter_local_build"),
+            "true",
+            f"{MONITORING_DEFAULTS} must default the lab local build on",
+        )
 
 
 MONITORING_VALUES = REPO / "ansible/roles/monitoring/templates/values.yaml.j2"
-MONITORING_SCRAPE = REPO / "ansible/roles/monitoring/templates/additional-scrape-configs.yaml.j2"
+MONITORING_SCRAPE = (
+    REPO / "ansible/roles/monitoring/templates/additional-scrape-configs.yaml.j2"
+)
 DASHBOARD_DIR = REPO / "k8s/monitoring/dashboards"
 
 EXPECTED_DASHBOARDS = ("host.json", "docker.json", "kubernetes.json", "jenkins.json")
@@ -974,12 +1712,13 @@ def values_block(content: str, header: str, width: int = 400) -> str:
     """Return the text window following a top-level values header."""
     idx = content.find(header)
     assert idx != -1, f"values template must contain header {header}"
-    return content[idx:idx + width]
+    return content[idx : idx + width]
 
 
 def dashboard_exprs(path: pathlib.Path) -> list:
     """Collect every PromQL expr from a Grafana dashboard JSON file."""
     import json as _json
+
     doc = _json.loads(read(path))
     exprs: list = []
 
@@ -1006,239 +1745,383 @@ class TestMonitoringStack(unittest.TestCase):
         valid config key. Dynamic maps must be built as Jinja expressions.
         """
         import re
-        for path in (MONITORING_TASKS, PORTAINER_TASKS, LABMONITOR_TASKS,
-                     COMPOSE_TASKS, FIREWALL_TASKS, K8S_PLATFORM_TASKS):
+
+        for path in (
+            MONITORING_TASKS,
+            PORTAINER_TASKS,
+            LABMONITOR_TASKS,
+            COMPOSE_TASKS,
+            FIREWALL_TASKS,
+            K8S_PLATFORM_TASKS,
+        ):
             if not path.is_file():
                 continue
             for lineno, line in enumerate(read(path).splitlines(), 1):
                 self.assertIsNone(
-                    re.search(r'''^\s*['"]?\{\{\s*[a-z_][a-z0-9_]*.*\}\}['"]?\s*:''', line),
-                    f"{path}:{lineno} must not use Jinja as a dict key — got {line.strip()}")
+                    re.search(
+                        r"""^\s*['"]?\{\{\s*[a-z_][a-z0-9_]*.*\}\}['"]?\s*:""", line
+                    ),
+                    f"{path}:{lineno} must not use Jinja as a dict key — got {line.strip()}",
+                )
 
     def test_monitoring_values_enable_required_exporters(self):
         """Values enable nodeExporter, kubeStateMetrics, kubelet/cAdvisor; exporter stays scraped."""
         self.assertTrue(MONITORING_VALUES.is_file(), f"missing {MONITORING_VALUES}")
         content = read(MONITORING_VALUES)
         for header in ("nodeExporter:", "kubeStateMetrics:", "kubelet:"):
-            self.assertIn(header, content,
-                          f"{MONITORING_VALUES} must contain {header}")
-            self.assertIn("enabled: true", values_block(content, header),
-                          f"{MONITORING_VALUES} {header} must set enabled: true")
-        self.assertIn("cAdvisor: true", values_block(content, "kubelet:", 800),
-                      f"{MONITORING_VALUES} kubelet must enable cAdvisor collection")
+            self.assertIn(header, content, f"{MONITORING_VALUES} must contain {header}")
+            self.assertIn(
+                "enabled: true",
+                values_block(content, header),
+                f"{MONITORING_VALUES} {header} must set enabled: true",
+            )
+        self.assertIn(
+            "cAdvisor: true",
+            values_block(content, "kubelet:", 800),
+            f"{MONITORING_VALUES} kubelet must enable cAdvisor collection",
+        )
         # The Docker exporter target stays covered by its ServiceMonitor.
-        self.assertTrue(EXPORTER_SERVICEMONITOR.is_file(),
-                        f"missing {EXPORTER_SERVICEMONITOR}")
+        self.assertTrue(
+            EXPORTER_SERVICEMONITOR.is_file(), f"missing {EXPORTER_SERVICEMONITOR}"
+        )
         servicemonitor = read(EXPORTER_SERVICEMONITOR)
-        for marker in ("app: docker-metrics-exporter", "port: metrics",
-                       "path: /metrics"):
-            self.assertIn(marker, servicemonitor,
-                          f"{EXPORTER_SERVICEMONITOR} must contain {marker}")
+        for marker in (
+            "app: docker-metrics-exporter",
+            "port: metrics",
+            "path: /metrics",
+        ):
+            self.assertIn(
+                marker,
+                servicemonitor,
+                f"{EXPORTER_SERVICEMONITOR} must contain {marker}",
+            )
 
     def test_monitoring_values_pin_retention_storage_and_nodeports(self):
         """Defaults and values pin retention, local-path storage, NodePorts, and image refs."""
         self.assertTrue(MONITORING_VALUES.is_file(), f"missing {MONITORING_VALUES}")
         content = read(MONITORING_VALUES)
         mon = parse_simple_vars(MONITORING_DEFAULTS)
-        self.assertEqual(mon.get("monitoring_chart_version"), "88.6.1",
-                         f"{MONITORING_DEFAULTS} chart must stay 88.6.1")
-        self.assertEqual(mon.get("monitoring_prometheus_retention"), "15d",
-                         f"{MONITORING_DEFAULTS} retention must stay 15d")
-        self.assertEqual(mon.get("monitoring_prometheus_storage_size"), "20Gi",
-                         f"{MONITORING_DEFAULTS} prometheus storage must stay 20Gi")
-        self.assertEqual(mon.get("monitoring_grafana_storage_size"), "5Gi",
-                         f"{MONITORING_DEFAULTS} grafana storage must stay 5Gi")
-        self.assertEqual(mon.get("prometheus_nodeport"), "30909",
-                         f"{MONITORING_DEFAULTS} prometheus_nodeport must stay 30909")
-        self.assertEqual(mon.get("grafana_nodeport"), "30300",
-                         f"{MONITORING_DEFAULTS} grafana_nodeport must stay 30300")
-        self.assertEqual(mon.get("monitoring_jenkins_metrics_path"), "/prometheus/",
-                         f"{MONITORING_DEFAULTS} Jenkins metrics path must stay /prometheus/")
+        self.assertEqual(
+            mon.get("monitoring_chart_version"),
+            "88.6.1",
+            f"{MONITORING_DEFAULTS} chart must stay 88.6.1",
+        )
+        self.assertEqual(
+            mon.get("monitoring_prometheus_retention"),
+            "15d",
+            f"{MONITORING_DEFAULTS} retention must stay 15d",
+        )
+        self.assertEqual(
+            mon.get("monitoring_prometheus_storage_size"),
+            "20Gi",
+            f"{MONITORING_DEFAULTS} prometheus storage must stay 20Gi",
+        )
+        self.assertEqual(
+            mon.get("monitoring_grafana_storage_size"),
+            "5Gi",
+            f"{MONITORING_DEFAULTS} grafana storage must stay 5Gi",
+        )
+        self.assertEqual(
+            mon.get("prometheus_nodeport"),
+            "30909",
+            f"{MONITORING_DEFAULTS} prometheus_nodeport must stay 30909",
+        )
+        self.assertEqual(
+            mon.get("grafana_nodeport"),
+            "30300",
+            f"{MONITORING_DEFAULTS} grafana_nodeport must stay 30300",
+        )
+        self.assertEqual(
+            mon.get("monitoring_jenkins_metrics_path"),
+            "/prometheus/",
+            f"{MONITORING_DEFAULTS} Jenkins metrics path must stay /prometheus/",
+        )
         # Helm v3 binary: the helm modules shell out to it, and v4 removed
         # `helm repo`, so the role must install the pinned v3 before use.
-        self.assertEqual(mon.get("monitoring_helm_version"), "v3.21.4",
-                         f"{MONITORING_DEFAULTS} Helm must stay pinned v3.21.4")
-        self.assertIn("get.helm.sh", mon.get("monitoring_helm_download_url", ""),
-                      f"{MONITORING_DEFAULTS} Helm must download from get.helm.sh "
-                      f"(GitHub v3.21.4 release has no tarball asset)")
-        self.assertRegex(mon.get("monitoring_helm_tarball_sha256", ""),
-                         r"^[0-9a-f]{64}$",
-                         f"{MONITORING_DEFAULTS} Helm tarball checksum must be pinned")
+        self.assertEqual(
+            mon.get("monitoring_helm_version"),
+            "v3.21.4",
+            f"{MONITORING_DEFAULTS} Helm must stay pinned v3.21.4",
+        )
+        self.assertIn(
+            "get.helm.sh",
+            mon.get("monitoring_helm_download_url", ""),
+            f"{MONITORING_DEFAULTS} Helm must download from get.helm.sh "
+            f"(GitHub v3.21.4 release has no tarball asset)",
+        )
+        self.assertRegex(
+            mon.get("monitoring_helm_tarball_sha256", ""),
+            r"^[0-9a-f]{64}$",
+            f"{MONITORING_DEFAULTS} Helm tarball checksum must be pinned",
+        )
         tasks = read(MONITORING_TASKS)
-        self.assertIn("monitoring_helm_download_url", tasks,
-                      f"{MONITORING_TASKS} must download Helm from the pinned URL")
-        self.assertIn("helm version --short", tasks,
-                      f"{MONITORING_TASKS} must assert the installed Helm version")
-        for marker in ("monitoring_prometheus_retention",
-                       "monitoring_prometheus_storage_size",
-                       "monitoring_grafana_storage_size",
-                       "prometheus_nodeport", "grafana_nodeport",
-                       "storageClassName: local-path",
-                       "storageSpec:", "volumeClaimTemplate:",
-                       "persistence:", "retention:"):
-            self.assertIn(marker, content,
-                          f"{MONITORING_VALUES} must contain {marker}")
-        self.assertGreaterEqual(content.count("local-path"), 2,
-                                f"{MONITORING_VALUES} must use local-path for "
-                                "Prometheus and Grafana storage")
+        self.assertIn(
+            "monitoring_helm_download_url",
+            tasks,
+            f"{MONITORING_TASKS} must download Helm from the pinned URL",
+        )
+        self.assertIn(
+            "helm version --short",
+            tasks,
+            f"{MONITORING_TASKS} must assert the installed Helm version",
+        )
+        for marker in (
+            "monitoring_prometheus_retention",
+            "monitoring_prometheus_storage_size",
+            "monitoring_grafana_storage_size",
+            "prometheus_nodeport",
+            "grafana_nodeport",
+            "storageClassName: local-path",
+            "storageSpec:",
+            "volumeClaimTemplate:",
+            "persistence:",
+            "retention:",
+        ):
+            self.assertIn(marker, content, f"{MONITORING_VALUES} must contain {marker}")
+        self.assertGreaterEqual(
+            content.count("local-path"),
+            2,
+            f"{MONITORING_VALUES} must use local-path for "
+            "Prometheus and Grafana storage",
+        )
         # Grafana admin and scrape-config references stay Secret-backed.
-        self.assertIn("monitoring_grafana_admin_secret_name", content,
-                      f"{MONITORING_VALUES} must reference the Grafana admin secret var")
-        self.assertEqual(mon.get("monitoring_grafana_admin_secret_name"), "grafana-admin",
-                         f"{MONITORING_DEFAULTS} Grafana admin secret must be grafana-admin")
-        for marker in ("monitoring_additional_scrape_configs_name",
-                       "monitoring_additional_scrape_configs_key"):
-            self.assertIn(marker, content,
-                          f"{MONITORING_VALUES} must contain {marker}")
-        self.assertEqual(mon.get("monitoring_additional_scrape_configs_name"),
-                         "prometheus-additional-scrape-configs",
-                         f"{MONITORING_DEFAULTS} scrape Secret name mismatch")
-        self.assertEqual(mon.get("monitoring_additional_scrape_configs_key"),
-                         "additional-scrape-configs.yaml",
-                         f"{MONITORING_DEFAULTS} scrape Secret key mismatch")
+        self.assertIn(
+            "monitoring_grafana_admin_secret_name",
+            content,
+            f"{MONITORING_VALUES} must reference the Grafana admin secret var",
+        )
+        self.assertEqual(
+            mon.get("monitoring_grafana_admin_secret_name"),
+            "grafana-admin",
+            f"{MONITORING_DEFAULTS} Grafana admin secret must be grafana-admin",
+        )
+        for marker in (
+            "monitoring_additional_scrape_configs_name",
+            "monitoring_additional_scrape_configs_key",
+        ):
+            self.assertIn(marker, content, f"{MONITORING_VALUES} must contain {marker}")
+        self.assertEqual(
+            mon.get("monitoring_additional_scrape_configs_name"),
+            "prometheus-additional-scrape-configs",
+            f"{MONITORING_DEFAULTS} scrape Secret name mismatch",
+        )
+        self.assertEqual(
+            mon.get("monitoring_additional_scrape_configs_key"),
+            "additional-scrape-configs.yaml",
+            f"{MONITORING_DEFAULTS} scrape Secret key mismatch",
+        )
         # Every component image pin variable must feed the chart values.
-        for var in ("monitoring_prometheus_image", "monitoring_grafana_image",
-                    "monitoring_node_exporter_image",
-                    "monitoring_kube_state_metrics_image",
-                    "monitoring_alertmanager_image", "monitoring_operator_image",
-                    "monitoring_config_reloader_image"):
-            self.assertIn(var, content,
-                          f"{MONITORING_VALUES} must set chart images from {var}")
+        for var in (
+            "monitoring_prometheus_image",
+            "monitoring_grafana_image",
+            "monitoring_node_exporter_image",
+            "monitoring_kube_state_metrics_image",
+            "monitoring_alertmanager_image",
+            "monitoring_operator_image",
+            "monitoring_config_reloader_image",
+        ):
+            self.assertIn(
+                var, content, f"{MONITORING_VALUES} must set chart images from {var}"
+            )
         # Helm release identity and the stable ClusterIP contract in tasks.
         tasks = read(MONITORING_TASKS)
-        for marker in ("prometheus-community/kube-prometheus-stack",
-                       "monitoring_chart_version", "monitoring_release_name",
-                       "monitoring_prometheus_service_name",
-                       "monitoring_prometheus_service_port",
-                       "operator.prometheus.io/name",
-                       "monitoring_release_name }}-kube-prometheus-prometheus",
-                       "targetPort: 9090"):
-            self.assertIn(marker, tasks,
-                          f"{MONITORING_TASKS} must contain {marker}")
+        for marker in (
+            "prometheus-community/kube-prometheus-stack",
+            "monitoring_chart_version",
+            "monitoring_release_name",
+            "monitoring_prometheus_service_name",
+            "monitoring_prometheus_service_port",
+            "operator.prometheus.io/name",
+            "monitoring_release_name }}-kube-prometheus-prometheus",
+            "targetPort: 9090",
+        ):
+            self.assertIn(marker, tasks, f"{MONITORING_TASKS} must contain {marker}")
 
     def test_monitoring_dashboard_files_have_expected_panels(self):
         """Four technical dashboards query real stack metrics; no LabMonitor content."""
         import json as _json
+
         for name in EXPECTED_DASHBOARDS:
             path = DASHBOARD_DIR / name
             self.assertTrue(path.is_file(), f"missing {path}")
             doc = _json.loads(read(path))
             panels = doc.get("panels", [])
-            self.assertGreaterEqual(len(panels), 3,
-                                    f"{path} must define at least three panels")
+            self.assertGreaterEqual(
+                len(panels), 3, f"{path} must define at least three panels"
+            )
             for panel in panels:
                 targets = panel.get("targets", [])
-                self.assertTrue(targets,
-                                f"{path} panel {panel.get('title')} must have targets")
+                self.assertTrue(
+                    targets, f"{path} panel {panel.get('title')} must have targets"
+                )
                 for target in targets:
-                    self.assertIn("expr", target,
-                                  f"{path} panel {panel.get('title')} target must query expr")
+                    self.assertIn(
+                        "expr",
+                        target,
+                        f"{path} panel {panel.get('title')} target must query expr",
+                    )
         host_exprs = dashboard_exprs(DASHBOARD_DIR / "host.json")
         for series in HOST_SERIES:
-            self.assertTrue(any(series in expr for expr in host_exprs),
-                            f"host.json must query {series}")
+            self.assertTrue(
+                any(series in expr for expr in host_exprs),
+                f"host.json must query {series}",
+            )
         docker_exprs = dashboard_exprs(DASHBOARD_DIR / "docker.json")
         for series in REQUIRED_EXPORTER_SERIES:
-            self.assertTrue(any(series in expr for expr in docker_exprs),
-                            f"docker.json must query {series}")
+            self.assertTrue(
+                any(series in expr for expr in docker_exprs),
+                f"docker.json must query {series}",
+            )
         kubernetes_exprs = dashboard_exprs(DASHBOARD_DIR / "kubernetes.json")
         for series in KUBERNETES_SERIES:
-            self.assertTrue(any(series in expr for expr in kubernetes_exprs),
-                            f"kubernetes.json must query {series}")
+            self.assertTrue(
+                any(series in expr for expr in kubernetes_exprs),
+                f"kubernetes.json must query {series}",
+            )
         jenkins_exprs = dashboard_exprs(DASHBOARD_DIR / "jenkins.json")
         for series in JENKINS_SERIES:
-            self.assertTrue(any(series in expr for expr in jenkins_exprs),
-                            f"jenkins.json must query {series}")
-        self.assertTrue(any('up{job="jenkins"}' in expr or "up{job='jenkins'}" in expr
-                            for expr in jenkins_exprs),
-                        "jenkins.json must include the up{job=\"jenkins\"} scrape-health panel")
+            self.assertTrue(
+                any(series in expr for expr in jenkins_exprs),
+                f"jenkins.json must query {series}",
+            )
+        self.assertTrue(
+            any(
+                'up{job="jenkins"}' in expr or "up{job='jenkins'}" in expr
+                for expr in jenkins_exprs
+            ),
+            'jenkins.json must include the up{job="jenkins"} scrape-health panel',
+        )
         # Technical dashboards only: no product navigation, cards, categories,
         # or LabMonitor API panels. (The docker.json PromQL legitimately
         # queries the labmonitor_docker_container_* exporter series.)
         for name in EXPECTED_DASHBOARDS:
             path = DASHBOARD_DIR / name
             content = read(path)
-            for forbidden in ("labmonitor.open.url", "labmonitor.enabled",
-                              "labmonitor.id", "labmonitor-api", "LABMONITOR",
-                              "cards", "category"):
-                self.assertNotIn(forbidden, content,
-                                 f"{path} must not contain product marker {forbidden!r}")
+            for forbidden in (
+                "labmonitor.open.url",
+                "labmonitor.enabled",
+                "labmonitor.id",
+                "labmonitor-api",
+                "LABMONITOR",
+                "cards",
+                "category",
+            ):
+                self.assertNotIn(
+                    forbidden,
+                    content,
+                    f"{path} must not contain product marker {forbidden!r}",
+                )
             lowered = content.lower()
-            self.assertIn("prometheus", lowered,
-                          f"{path} must use the Prometheus datasource")
+            self.assertIn(
+                "prometheus", lowered, f"{path} must use the Prometheus datasource"
+            )
 
     def test_prometheus_scrape_config_has_no_inline_secret_values(self):
         """Scrape template uses the pinned path, host target, and Vault credential only."""
         self.assertTrue(MONITORING_SCRAPE.is_file(), f"missing {MONITORING_SCRAPE}")
         content = read(MONITORING_SCRAPE)
-        for marker in ("job_name:", "metrics_path:",
-                       "monitoring_jenkins_metrics_path",
-                       "server_lan_ip", "compose_jenkins_port",
-                       "basic_auth:", "jenkins_prometheus_user",
-                       "jenkins_prometheus_api_token"):
-            self.assertIn(marker, content,
-                          f"{MONITORING_SCRAPE} must contain {marker}")
+        for marker in (
+            "job_name:",
+            "metrics_path:",
+            "monitoring_jenkins_metrics_path",
+            "server_lan_ip",
+            "compose_jenkins_port",
+            "basic_auth:",
+            "jenkins_prometheus_user",
+            "jenkins_prometheus_api_token",
+        ):
+            self.assertIn(marker, content, f"{MONITORING_SCRAPE} must contain {marker}")
         mon = parse_simple_vars(MONITORING_DEFAULTS)
-        self.assertEqual(mon.get("monitoring_jenkins_metrics_path"), "/prometheus/",
-                         f"{MONITORING_DEFAULTS} metrics path must stay /prometheus/")
+        self.assertEqual(
+            mon.get("monitoring_jenkins_metrics_path"),
+            "/prometheus/",
+            f"{MONITORING_DEFAULTS} metrics path must stay /prometheus/",
+        )
         for path in (LAB_EXAMPLE, PROD_EXAMPLE):
             example = parse_simple_vars(path)
-            self.assertEqual(example.get("monitoring_jenkins_metrics_path"), "/prometheus/",
-                             f"{path} must pin monitoring_jenkins_metrics_path=/prometheus/")
+            self.assertEqual(
+                example.get("monitoring_jenkins_metrics_path"),
+                "/prometheus/",
+                f"{path} must pin monitoring_jenkins_metrics_path=/prometheus/",
+            )
         # Every password line must interpolate Vault; never carry a literal.
         for raw in content.splitlines():
             line = raw.split("#", 1)[0]
             if "password" in line.lower() and ":" in line:
-                self.assertIn("{{", line,
-                              f"{MONITORING_SCRAPE} password must interpolate Vault — got {raw!r}")
-        self.assertIsNone(re.search(r"(?m)^\s*token\s*:", content),
-                          f"{MONITORING_SCRAPE} must use basic_auth, not an inline token field")
-        self.assertNotIn("changeme", content.lower(),
-                         f"{MONITORING_SCRAPE} must not contain placeholder secrets")
-        self.assertIsNone(re.search(r"192\.168\.\d+", content),
-                          f"{MONITORING_SCRAPE} must use server_lan_ip, not a LAN literal")
+                self.assertIn(
+                    "{{",
+                    line,
+                    f"{MONITORING_SCRAPE} password must interpolate Vault — got {raw!r}",
+                )
+        self.assertIsNone(
+            re.search(r"(?m)^\s*token\s*:", content),
+            f"{MONITORING_SCRAPE} must use basic_auth, not an inline token field",
+        )
+        self.assertNotIn(
+            "changeme",
+            content.lower(),
+            f"{MONITORING_SCRAPE} must not contain placeholder secrets",
+        )
+        self.assertIsNone(
+            re.search(r"192\.168\.\d+", content),
+            f"{MONITORING_SCRAPE} must use server_lan_ip, not a LAN literal",
+        )
         # Secret creation must hide values from logs.
         tasks = read(MONITORING_TASKS)
-        for marker in ("monitoring_grafana_admin_password",
-                       "jenkins_prometheus_api_token",
-                       "additional-scrape-configs.yaml"):
-            self.assertIn(marker, tasks,
-                          f"{MONITORING_TASKS} must contain {marker}")
-        self.assertGreaterEqual(tasks.count("no_log: true"), 3,
-                                f"{MONITORING_TASKS} must hide the Vault assert and both Secrets")
+        for marker in (
+            "monitoring_grafana_admin_password",
+            "jenkins_prometheus_api_token",
+            "additional-scrape-configs.yaml",
+        ):
+            self.assertIn(marker, tasks, f"{MONITORING_TASKS} must contain {marker}")
+        self.assertGreaterEqual(
+            tasks.count("no_log: true"),
+            3,
+            f"{MONITORING_TASKS} must hide the Vault assert and both Secrets",
+        )
 
     def test_monitoring_tasks_install_and_wait_for_stack(self):
         """Role installs the pinned chart, stable Service, dashboards, then waits Ready."""
         self.assertTrue(MONITORING_TASKS.is_file(), f"missing {MONITORING_TASKS}")
         tasks = read(MONITORING_TASKS)
-        for marker in ("Ensure monitoring namespace exists",
-                       "prometheus-community",
-                       "values_files",
-                       "grafana-dashboard-",
-                       "{name: host, file: host.json}",
-                       "{name: docker, file: docker.json}",
-                       "{name: kubernetes, file: kubernetes.json}",
-                       "{name: jenkins, file: jenkins.json}",
-                       "monitoring_dashboard_sidecar_label",
-                       "app.kubernetes.io/name=grafana",
-                       "app.kubernetes.io/name=prometheus",
-                       "prometheus-node-exporter",
-                       "kube-state-metrics",
-                       "deployment/docker-metrics-exporter"):
-            self.assertIn(marker, tasks,
-                          f"{MONITORING_TASKS} must contain {marker}")
+        for marker in (
+            "Ensure monitoring namespace exists",
+            "prometheus-community",
+            "values_files",
+            "grafana-dashboard-",
+            "{name: host, file: host.json}",
+            "{name: docker, file: docker.json}",
+            "{name: kubernetes, file: kubernetes.json}",
+            "{name: jenkins, file: jenkins.json}",
+            "monitoring_dashboard_sidecar_label",
+            "app.kubernetes.io/name=grafana",
+            "app.kubernetes.io/name=prometheus",
+            "prometheus-node-exporter",
+            "kube-state-metrics",
+            "deployment/docker-metrics-exporter",
+        ):
+            self.assertIn(marker, tasks, f"{MONITORING_TASKS} must contain {marker}")
         namespace_idx = tasks.find("Ensure monitoring namespace exists")
         helm_idx = tasks.find("prometheus-community/kube-prometheus-stack")
         exporter_idx = tasks.find("docker-exporter-service.yaml")
         dashboards_idx = tasks.find("grafana-dashboard-")
         self.assertNotEqual(helm_idx, -1, f"{MONITORING_TASKS} must install the chart")
-        self.assertLess(namespace_idx, helm_idx,
-                        f"{MONITORING_TASKS} namespace must precede the chart install")
-        self.assertLess(helm_idx, exporter_idx,
-                        f"{MONITORING_TASKS} chart install must precede exporter "
-                        "ServiceMonitor apply (CRD dependency)")
-        self.assertLess(helm_idx, dashboards_idx,
-                        f"{MONITORING_TASKS} chart install must precede dashboards")
+        self.assertLess(
+            namespace_idx,
+            helm_idx,
+            f"{MONITORING_TASKS} namespace must precede the chart install",
+        )
+        self.assertLess(
+            helm_idx,
+            exporter_idx,
+            f"{MONITORING_TASKS} chart install must precede exporter "
+            "ServiceMonitor apply (CRD dependency)",
+        )
+        self.assertLess(
+            helm_idx,
+            dashboards_idx,
+            f"{MONITORING_TASKS} chart install must precede dashboards",
+        )
 
 
 def parse_compose_services(path: pathlib.Path) -> dict:
@@ -1271,21 +2154,31 @@ def parse_compose_services(path: pathlib.Path) -> dict:
         elif indent == 4 and current_service is not None:
             if stripped.endswith(":"):
                 key = stripped[:-1]
-                current_key = key if key in ("volumes", "ports", "environment") else None
+                current_key = (
+                    key if key in ("volumes", "ports", "environment") else None
+                )
             else:
                 current_key = None
-        elif indent == 6 and current_service is not None and current_key in ("volumes", "ports"):
+        elif (
+            indent == 6
+            and current_service is not None
+            and current_key in ("volumes", "ports")
+        ):
             m = re.match(r"^-\s+(.*)$", stripped)
             if m:
                 val = m.group(1).strip()
                 if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
                     val = val[1:-1]
                 services[current_service][current_key].append(val)
-        elif indent == 6 and current_service is not None and current_key == "environment":
+        elif (
+            indent == 6 and current_service is not None and current_key == "environment"
+        ):
             if stripped.startswith("-"):
                 m = re.match(r"^-\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)$", stripped)
                 if m:
-                    services[current_service]["environment"][m.group(1)] = m.group(2).strip().strip("'\"")
+                    services[current_service]["environment"][m.group(1)] = (
+                        m.group(2).strip().strip("'\"")
+                    )
             elif ":" in stripped:
                 key, val = stripped.split(":", 1)
                 val = val.strip()
@@ -1296,19 +2189,33 @@ def parse_compose_services(path: pathlib.Path) -> dict:
 
 
 PORTAINER_SERVER_TEMPLATE = REPO / "ansible/roles/portainer/templates/server.yaml.j2"
-PORTAINER_AGENT_TEMPLATE = REPO / "ansible/roles/portainer/templates/kubernetes-agent.yaml.j2"
-PORTAINER_AGENT_ENV_TEMPLATE = REPO / "ansible/roles/portainer/templates/portainer-agent.env.j2"
+PORTAINER_AGENT_TEMPLATE = (
+    REPO / "ansible/roles/portainer/templates/kubernetes-agent.yaml.j2"
+)
+PORTAINER_AGENT_ENV_TEMPLATE = (
+    REPO / "ansible/roles/portainer/templates/portainer-agent.env.j2"
+)
 PORTAINER_AGENT_COMPOSE = REPO / "compose/portainer-agent/compose.yaml"
 PORTAINER_AGENT_ENV_EXAMPLE = REPO / "compose/portainer-agent/.env.example"
 FIREWALL_DEFAULTS = REPO / "ansible/roles/firewall/defaults/main.yml"
 FIREWALL_TASKS = REPO / "ansible/roles/firewall/tasks/main.yml"
-FIREWALL_DOCKER_USER_TEMPLATE = REPO / "ansible/roles/firewall/templates/home-server-docker-user.sh.j2"
+FIREWALL_DOCKER_USER_TEMPLATE = (
+    REPO / "ansible/roles/firewall/templates/home-server-docker-user.sh.j2"
+)
 LABMONITOR_RBAC = REPO / "k8s/labmonitor/rbac.yaml"
-LABMONITOR_PROVIDER_TEMPLATE = REPO / "ansible/roles/labmonitor-foundation/templates/provider-config.yaml.j2"
-LABMONITOR_CATALOG_TEMPLATE = REPO / "ansible/roles/labmonitor-foundation/templates/catalog.yaml.j2"
-LABMONITOR_JENKINS_SECRET_TEMPLATE = REPO / "ansible/roles/labmonitor-foundation/templates/jenkins-secret.yaml.j2"
+LABMONITOR_PROVIDER_TEMPLATE = (
+    REPO / "ansible/roles/labmonitor-foundation/templates/provider-config.yaml.j2"
+)
+LABMONITOR_CATALOG_TEMPLATE = (
+    REPO / "ansible/roles/labmonitor-foundation/templates/catalog.yaml.j2"
+)
+LABMONITOR_JENKINS_SECRET_TEMPLATE = (
+    REPO / "ansible/roles/labmonitor-foundation/templates/jenkins-secret.yaml.j2"
+)
 K8S_PLATFORM_TASKS = REPO / "ansible/roles/k8s-platform/tasks/main.yml"
-MONITORING_EXPORTER_DEPLOYMENT_TEMPLATE = REPO / "ansible/roles/monitoring/templates/docker-exporter-deployment.yaml.j2"
+MONITORING_EXPORTER_DEPLOYMENT_TEMPLATE = (
+    REPO / "ansible/roles/monitoring/templates/docker-exporter-deployment.yaml.j2"
+)
 
 
 def top_level_block(content: str, key: str) -> str:
@@ -1316,7 +2223,7 @@ def top_level_block(content: str, key: str) -> str:
     lines = content.splitlines()
     start = next(i for i, line in enumerate(lines) if line.startswith(key + ":"))
     block: list = []
-    for line in lines[start + 1:]:
+    for line in lines[start + 1 :]:
         if line.strip() == "" or line.startswith("#"):
             block.append(line)
             continue
@@ -1332,184 +2239,395 @@ class TestPortainer(unittest.TestCase):
         for path in (PORTAINER_SERVER_TEMPLATE, PORTAINER_AGENT_TEMPLATE):
             self.assertTrue(path.is_file(), f"missing {path}")
             content = read(path)
-            self.assertIn('namespace: "{{ portainer_namespace }}"', content,
-                          f"{path} must scope namespaced resources to "
-                          "'{{ portainer_namespace }}'")
-            for other in ("kube-system", "monitoring", "labmonitor", "default",
-                          "kube-public"):
-                self.assertNotIn(f"namespace: {other}", content,
-                                 f"{path} must not place resources in {other}")
-                self.assertNotIn(f'namespace: "{other}"', content,
-                                 f"{path} must not place resources in {other}")
+            self.assertIn(
+                'namespace: "{{ portainer_namespace }}"',
+                content,
+                f"{path} must scope namespaced resources to "
+                "'{{ portainer_namespace }}'",
+            )
+            for other in (
+                "kube-system",
+                "monitoring",
+                "labmonitor",
+                "default",
+                "kube-public",
+            ):
+                self.assertNotIn(
+                    f"namespace: {other}",
+                    content,
+                    f"{path} must not place resources in {other}",
+                )
+                self.assertNotIn(
+                    f'namespace: "{other}"',
+                    content,
+                    f"{path} must not place resources in {other}",
+                )
         defaults = parse_simple_vars(PORTAINER_DEFAULTS)
-        self.assertEqual(defaults.get("portainer_namespace"), "portainer",
-                         f"{PORTAINER_DEFAULTS} portainer_namespace must be portainer")
+        self.assertEqual(
+            defaults.get("portainer_namespace"),
+            "portainer",
+            f"{PORTAINER_DEFAULTS} portainer_namespace must be portainer",
+        )
         tasks = read(PORTAINER_TASKS)
-        self.assertIn("portainer_namespace", tasks,
-                      f"{PORTAINER_TASKS} must reference portainer_namespace")
+        self.assertIn(
+            "portainer_namespace",
+            tasks,
+            f"{PORTAINER_TASKS} must reference portainer_namespace",
+        )
         # Service discovery metadata rides on the Server Service only.
         server = read(PORTAINER_SERVER_TEMPLATE)
-        for marker in ('labmonitor.enabled: "true"',
-                       'labmonitor.id: "portainer"',
-                       'labmonitor.category: "administration"',
-                       'labmonitor.icon: "portainer"',
-                       'labmonitor.name: "Portainer"',
-                       'labmonitor.open.url: "https://portainer.{{ base_domain }}"'):
-            self.assertIn(marker, server,
-                          f"{PORTAINER_SERVER_TEMPLATE} must carry metadata {marker}")
+        for marker in (
+            'labmonitor.enabled: "true"',
+            'labmonitor.id: "portainer"',
+            'labmonitor.category: "administration"',
+            'labmonitor.icon: "portainer"',
+            'labmonitor.name: "Portainer"',
+            'labmonitor.open.url: "https://portainer.{{ base_domain }}"',
+        ):
+            self.assertIn(
+                marker,
+                server,
+                f"{PORTAINER_SERVER_TEMPLATE} must carry metadata {marker}",
+            )
 
     def test_labmonitor_service_account_is_not_reused_by_portainer(self):
         """No Portainer file may reference labmonitor-api; agents use dedicated identities."""
-        for path in (PORTAINER_SERVER_TEMPLATE, PORTAINER_AGENT_TEMPLATE,
-                     PORTAINER_TASKS, PORTAINER_DEFAULTS,
-                     PORTAINER_AGENT_ENV_TEMPLATE,
-                     PORTAINER_AGENT_COMPOSE, PORTAINER_AGENT_ENV_EXAMPLE):
+        for path in (
+            PORTAINER_SERVER_TEMPLATE,
+            PORTAINER_AGENT_TEMPLATE,
+            PORTAINER_TASKS,
+            PORTAINER_DEFAULTS,
+            PORTAINER_AGENT_ENV_TEMPLATE,
+            PORTAINER_AGENT_COMPOSE,
+            PORTAINER_AGENT_ENV_EXAMPLE,
+        ):
             self.assertTrue(path.is_file(), f"missing {path}")
-            self.assertNotIn("labmonitor-api", read(path),
-                             f"{path} must never reuse the labmonitor-api ServiceAccount")
+            self.assertNotIn(
+                "labmonitor-api",
+                read(path),
+                f"{path} must never reuse the labmonitor-api ServiceAccount",
+            )
         server = read(PORTAINER_SERVER_TEMPLATE)
-        self.assertIn("kind: ServiceAccount", server,
-                      f"{PORTAINER_SERVER_TEMPLATE} must define a dedicated ServiceAccount")
-        self.assertIn("serviceAccountName:", server,
-                      f"{PORTAINER_SERVER_TEMPLATE} must run under its own ServiceAccount")
+        self.assertIn(
+            "kind: ServiceAccount",
+            server,
+            f"{PORTAINER_SERVER_TEMPLATE} must define a dedicated ServiceAccount",
+        )
+        self.assertIn(
+            "serviceAccountName:",
+            server,
+            f"{PORTAINER_SERVER_TEMPLATE} must run under its own ServiceAccount",
+        )
         agent = read(PORTAINER_AGENT_TEMPLATE)
-        self.assertIn("kind: ServiceAccount", agent,
-                      f"{PORTAINER_AGENT_TEMPLATE} must define a dedicated Agent ServiceAccount")
-        self.assertIn("kind: ClusterRoleBinding", agent,
-                      f"{PORTAINER_AGENT_TEMPLATE} must bind its own ClusterRole")
+        self.assertIn(
+            "kind: ServiceAccount",
+            agent,
+            f"{PORTAINER_AGENT_TEMPLATE} must define a dedicated Agent ServiceAccount",
+        )
+        self.assertIn(
+            "kind: ClusterRoleBinding",
+            agent,
+            f"{PORTAINER_AGENT_TEMPLATE} must bind its own ClusterRole",
+        )
         idx = agent.find("kind: ClusterRoleBinding")
-        window = agent[idx:idx + 2000]
-        self.assertIn("portainer_k8s_agent_service_name", window,
-                      f"{PORTAINER_AGENT_TEMPLATE} ClusterRoleBinding must bind "
-                      "the dedicated Agent ServiceAccount")
+        window = agent[idx : idx + 2000]
+        self.assertIn(
+            "portainer_k8s_agent_service_name",
+            window,
+            f"{PORTAINER_AGENT_TEMPLATE} ClusterRoleBinding must bind "
+            "the dedicated Agent ServiceAccount",
+        )
         # The shared agent credential is a dedicated Secret from Vault, never printed.
         for marker in ("secretKeyRef", "portainer_agent_secret_name"):
-            self.assertIn(marker, server,
-                          f"{PORTAINER_SERVER_TEMPLATE} must consume {marker}")
-            self.assertIn(marker, agent,
-                          f"{PORTAINER_AGENT_TEMPLATE} must consume {marker}")
+            self.assertIn(
+                marker, server, f"{PORTAINER_SERVER_TEMPLATE} must consume {marker}"
+            )
+            self.assertIn(
+                marker, agent, f"{PORTAINER_AGENT_TEMPLATE} must consume {marker}"
+            )
         tasks = read(PORTAINER_TASKS)
-        self.assertIn("portainer_agent_secret", tasks,
-                      f"{PORTAINER_TASKS} must validate the Vault agent secret")
-        self.assertIn("no_log: true", tasks,
-                      f"{PORTAINER_TASKS} must never print the agent secret")
+        self.assertIn(
+            "portainer_agent_secret",
+            tasks,
+            f"{PORTAINER_TASKS} must validate the Vault agent secret",
+        )
+        self.assertIn(
+            "no_log: true",
+            tasks,
+            f"{PORTAINER_TASKS} must never print the agent secret",
+        )
+
+    def test_portainer_deployments_roll_when_agent_secret_rotates(self):
+        """Both pod templates carry the agent Secret checksum so rotation rolls them.
+
+        The host Docker Agent is recreated with the new AGENT_SECRET by Compose,
+        so the Server and Kubernetes Agent must restart when the shared Secret
+        changes; otherwise the running Server keeps authenticating with the old
+        value and later independent pod restarts can split the two.
+        """
+        tasks = read(PORTAINER_TASKS)
+        self.assertIn(
+            "portainer_agent_secret_checksum",
+            tasks,
+            f"{PORTAINER_TASKS} must compute a Secret checksum for pod rollout",
+        )
+        self.assertIn(
+            "portainer_agent_secret | hash('sha256')",
+            tasks,
+            f"{PORTAINER_TASKS} checksum must be derived from the Vault "
+            "portainer_agent_secret value",
+        )
+        for path in (PORTAINER_SERVER_TEMPLATE, PORTAINER_AGENT_TEMPLATE):
+            content = read(path)
+            self.assertIn(
+                "checksum/agent-secret",
+                content,
+                f"{path} must annotate the pod template with the Secret checksum",
+            )
+            self.assertIn(
+                "portainer_agent_secret_checksum",
+                content,
+                f"{path} must reuse the shared checksum so both Deployments roll together",
+            )
+            # The annotation must sit on the pod template metadata, not the
+            # Deployment metadata, so a checksum change triggers a rollout.
+            templates = list(re.finditer(r"^  template:\s*$", content, re.M))
+            self.assertEqual(
+                len(templates),
+                1,
+                f"{path} must declare exactly one Deployment pod template — "
+                f"got {len(templates)}",
+            )
+            block = content[templates[0].end() :]
+            next_spec = re.search(r"^    spec:", block, re.M)
+            self.assertIsNotNone(next_spec, f"{path} pod template must define a spec")
+            assert next_spec is not None
+            pod_template = block[: next_spec.start()]
+            self.assertIn(
+                "checksum/agent-secret",
+                pod_template,
+                f"{path} checksum annotation must live inside the pod template",
+            )
 
     def test_portainer_agent_headless_service_publishes_unready_addresses(self):
         """Agent peer discovery cannot wait for the agent readiness gate."""
         agent = read(PORTAINER_AGENT_TEMPLATE)
         headless_index = agent.index("name: s-portainer-agent-headless")
-        headless_service = agent[headless_index:headless_index + 800]
-        self.assertIn("clusterIP: None", headless_service,
-                      f"{PORTAINER_AGENT_TEMPLATE} must define a headless agent Service")
-        self.assertIn("publishNotReadyAddresses: true", headless_service,
-                      f"{PORTAINER_AGENT_TEMPLATE} must publish unready endpoints so "
-                      "agents can resolve their peer-discovery Service before readiness")
+        headless_service = agent[headless_index : headless_index + 800]
+        self.assertIn(
+            "clusterIP: None",
+            headless_service,
+            f"{PORTAINER_AGENT_TEMPLATE} must define a headless agent Service",
+        )
+        self.assertIn(
+            "publishNotReadyAddresses: true",
+            headless_service,
+            f"{PORTAINER_AGENT_TEMPLATE} must publish unready endpoints so "
+            "agents can resolve their peer-discovery Service before readiness",
+        )
 
     def test_portainer_docker_agent_is_the_only_new_admin_socket_mount(self):
         """Host Docker Agent is the only new RW socket mount, bound to 9001 via Vault secret."""
-        self.assertTrue(PORTAINER_AGENT_COMPOSE.is_file(), f"missing {PORTAINER_AGENT_COMPOSE}")
+        self.assertTrue(
+            PORTAINER_AGENT_COMPOSE.is_file(), f"missing {PORTAINER_AGENT_COMPOSE}"
+        )
         services = parse_compose_services(PORTAINER_AGENT_COMPOSE)
-        self.assertIn("portainer-agent", services,
-                      f"{PORTAINER_AGENT_COMPOSE} must define service portainer-agent "
-                      f"— got {sorted(services)}")
+        self.assertIn(
+            "portainer-agent",
+            services,
+            f"{PORTAINER_AGENT_COMPOSE} must define service portainer-agent "
+            f"— got {sorted(services)}",
+        )
         svc = services["portainer-agent"]
         mounts = [v for v in svc["volumes"] if "/var/run/docker.sock" in v]
-        self.assertEqual(len(mounts), 1,
-                         f"{PORTAINER_AGENT_COMPOSE} must mount the socket exactly once "
-                         f"— got {svc['volumes']}")
-        self.assertTrue(mounts[0].startswith("/var/run/docker.sock:/var/run/docker.sock"),
-                        f"{PORTAINER_AGENT_COMPOSE} socket source must be "
-                        f"/var/run/docker.sock — got {mounts[0]}")
-        self.assertFalse(mounts[0].endswith(":ro"),
-                         f"{PORTAINER_AGENT_COMPOSE} is the explicit admin exception: "
-                         f"RW mount, never :ro — got {mounts[0]}")
-        self.assertEqual(svc["environment"].get("AGENT_SECRET"), "${AGENT_SECRET:?required}",
-                         f"{PORTAINER_AGENT_COMPOSE} AGENT_SECRET must come from Vault "
-                         f"— got {svc['environment']}")
+        self.assertEqual(
+            len(mounts),
+            1,
+            f"{PORTAINER_AGENT_COMPOSE} must mount the socket exactly once "
+            f"— got {svc['volumes']}",
+        )
+        self.assertTrue(
+            mounts[0].startswith("/var/run/docker.sock:/var/run/docker.sock"),
+            f"{PORTAINER_AGENT_COMPOSE} socket source must be "
+            f"/var/run/docker.sock — got {mounts[0]}",
+        )
+        self.assertFalse(
+            mounts[0].endswith(":ro"),
+            f"{PORTAINER_AGENT_COMPOSE} is the explicit admin exception: "
+            f"RW mount, never :ro — got {mounts[0]}",
+        )
+        self.assertEqual(
+            svc["environment"].get("AGENT_SECRET"),
+            "${AGENT_SECRET:?required}",
+            f"{PORTAINER_AGENT_COMPOSE} AGENT_SECRET must come from Vault "
+            f"— got {svc['environment']}",
+        )
         content = read(PORTAINER_AGENT_COMPOSE)
-        self.assertNotIn("DOCKER_SOCKET_PROXY", content,
-                         f"{PORTAINER_AGENT_COMPOSE} must have no relation to "
-                         "docker-socket-proxy credentials")
-        self.assertNotIn("labmonitor.open.url", content,
-                         f"{PORTAINER_AGENT_COMPOSE} is a provider, not an app card")
+        self.assertNotIn(
+            "DOCKER_SOCKET_PROXY",
+            content,
+            f"{PORTAINER_AGENT_COMPOSE} must have no relation to "
+            "docker-socket-proxy credentials",
+        )
+        self.assertNotIn(
+            "labmonitor.open.url",
+            content,
+            f"{PORTAINER_AGENT_COMPOSE} is a provider, not an app card",
+        )
         ports = svc["ports"]
-        self.assertEqual(len(ports), 1,
-                         f"{PORTAINER_AGENT_COMPOSE} must publish exactly one port "
-                         f"— got {ports}")
+        self.assertEqual(
+            len(ports),
+            1,
+            f"{PORTAINER_AGENT_COMPOSE} must publish exactly one port — got {ports}",
+        )
         m = re.search(r":(\d+):(\d+)\s*$", ports[0])
-        self.assertIsNotNone(m,
-                              f"{PORTAINER_AGENT_COMPOSE} port entry must be "
-                              f"host:container — got {ports[0]}")
+        self.assertIsNotNone(
+            m,
+            f"{PORTAINER_AGENT_COMPOSE} port entry must be "
+            f"host:container — got {ports[0]}",
+        )
         host, container = m.groups() if m is not None else ("", "")
-        self.assertEqual(host, "9001",
-                         f"{PORTAINER_AGENT_COMPOSE} host port must be 9001 — got {ports[0]}")
-        self.assertEqual(container, "9001",
-                         f"{PORTAINER_AGENT_COMPOSE} container port must be 9001 — got {ports[0]}")
-        self.assertIn("PORTAINER_AGENT_BIND_IP", ports[0],
-                      f"{PORTAINER_AGENT_COMPOSE} port entry must bind via "
-                      f"PORTAINER_AGENT_BIND_IP (server_lan_ip only) — got {ports[0]}")
+        self.assertEqual(
+            host,
+            "9001",
+            f"{PORTAINER_AGENT_COMPOSE} host port must be 9001 — got {ports[0]}",
+        )
+        self.assertEqual(
+            container,
+            "9001",
+            f"{PORTAINER_AGENT_COMPOSE} container port must be 9001 — got {ports[0]}",
+        )
+        self.assertIn(
+            "PORTAINER_AGENT_BIND_IP",
+            ports[0],
+            f"{PORTAINER_AGENT_COMPOSE} port entry must bind via "
+            f"PORTAINER_AGENT_BIND_IP (server_lan_ip only) — got {ports[0]}",
+        )
         # Kubernetes manifests never touch the socket; only the host agent does.
         for path in (PORTAINER_SERVER_TEMPLATE, PORTAINER_AGENT_TEMPLATE):
-            self.assertNotIn("docker.sock", read(path),
-                             f"{path} must never mount the Docker socket")
-        # Repo-wide: exactly the two pre-existing mounts plus the new admin agent.
-        mounters = sorted(p.parent.name for p in (REPO / "compose").glob("*/compose.yaml")
-                          if "/var/run/docker.sock" in read(p))
-        self.assertEqual(mounters, ["docker-provider", "jenkins", "portainer-agent"],
-                         "socket mounts are limited to docker-provider (:ro), "
-                         f"jenkins (RW), portainer-agent (admin RW) — got {mounters}")
+            self.assertNotIn(
+                "docker.sock", read(path), f"{path} must never mount the Docker socket"
+            )
+        # Repo-wide base compose files: only the read-only proxy and the admin
+        # agent mount the socket. Jenkins is NOT a standing socket consumer —
+        # its RW mount lives in the opt-in overlay (asserted separately).
+        mounters = sorted(
+            p.parent.name
+            for p in (REPO / "compose").glob("*/compose.yaml")
+            if "/var/run/docker.sock" in read(p)
+        )
+        self.assertEqual(
+            mounters,
+            ["docker-provider", "portainer-agent"],
+            "base socket mounts are limited to docker-provider (:ro) and "
+            f"portainer-agent (admin RW) — got {mounters}",
+        )
 
     def test_portainer_uses_fixed_nodeport_30900(self):
         """Server stays on NodePort 30900 for LAN/VPN; agent port 9001 stays pod-only."""
-        self.assertEqual(parse_simple_vars(PORTAINER_DEFAULTS).get("portainer_nodeport"),
-                         "30900",
-                         f"{PORTAINER_DEFAULTS} portainer_nodeport must be 30900")
+        self.assertEqual(
+            parse_simple_vars(PORTAINER_DEFAULTS).get("portainer_nodeport"),
+            "30900",
+            f"{PORTAINER_DEFAULTS} portainer_nodeport must be 30900",
+        )
         server = read(PORTAINER_SERVER_TEMPLATE)
-        self.assertIn("type: NodePort", server,
-                      f"{PORTAINER_SERVER_TEMPLATE} Server Service must be NodePort")
-        self.assertIn("nodePort: {{ portainer_nodeport | int }}", server,
-                      f"{PORTAINER_SERVER_TEMPLATE} must render nodePort as native int")
-        self.assertIn("port: {{ portainer_service_port | int }}", server,
-                      f"{PORTAINER_SERVER_TEMPLATE} must render port as native int")
-        self.assertNotIn('port: "{{ portainer_service_port }}"', server,
-                         f"{PORTAINER_SERVER_TEMPLATE} must not quote Service port as string")
-        self.assertNotIn('nodePort: "{{ portainer_nodeport }}"', server,
-                         f"{PORTAINER_SERVER_TEMPLATE} must not quote nodePort as string")
-        self.assertNotIn("30900", server,
-                         f"{PORTAINER_SERVER_TEMPLATE} must use the variable, not a literal")
+        self.assertIn(
+            "type: NodePort",
+            server,
+            f"{PORTAINER_SERVER_TEMPLATE} Server Service must be NodePort",
+        )
+        self.assertIn(
+            "nodePort: {{ portainer_nodeport | int }}",
+            server,
+            f"{PORTAINER_SERVER_TEMPLATE} must render nodePort as native int",
+        )
+        self.assertIn(
+            "port: {{ portainer_service_port | int }}",
+            server,
+            f"{PORTAINER_SERVER_TEMPLATE} must render port as native int",
+        )
+        self.assertNotIn(
+            'port: "{{ portainer_service_port }}"',
+            server,
+            f"{PORTAINER_SERVER_TEMPLATE} must not quote Service port as string",
+        )
+        self.assertNotIn(
+            'nodePort: "{{ portainer_nodeport }}"',
+            server,
+            f"{PORTAINER_SERVER_TEMPLATE} must not quote nodePort as string",
+        )
+        self.assertNotIn(
+            "30900",
+            server,
+            f"{PORTAINER_SERVER_TEMPLATE} must use the variable, not a literal",
+        )
         agent = read(PORTAINER_AGENT_TEMPLATE)
-        self.assertIn("type: ClusterIP", agent,
-                      f"{PORTAINER_AGENT_TEMPLATE} Agent Service must stay ClusterIP")
-        self.assertNotIn("nodePort", agent,
-                         f"{PORTAINER_AGENT_TEMPLATE} must not expose a NodePort")
-        self.assertIn("port: {{ portainer_agent_port | int }}", agent,
-                      f"{PORTAINER_AGENT_TEMPLATE} must render port as native int")
-        self.assertNotIn('port: "{{ portainer_agent_port }}"', agent,
-                         f"{PORTAINER_AGENT_TEMPLATE} must not quote Service port as string")
+        self.assertIn(
+            "type: ClusterIP",
+            agent,
+            f"{PORTAINER_AGENT_TEMPLATE} Agent Service must stay ClusterIP",
+        )
+        self.assertNotIn(
+            "nodePort", agent, f"{PORTAINER_AGENT_TEMPLATE} must not expose a NodePort"
+        )
+        self.assertIn(
+            "port: {{ portainer_agent_port | int }}",
+            agent,
+            f"{PORTAINER_AGENT_TEMPLATE} must render port as native int",
+        )
+        self.assertNotIn(
+            'port: "{{ portainer_agent_port }}"',
+            agent,
+            f"{PORTAINER_AGENT_TEMPLATE} must not quote Service port as string",
+        )
         fw_defaults = read(FIREWALL_DEFAULTS)
         allowlist = top_level_block(fw_defaults, "firewall_nodeport_allowlist")
         for nodeport in ("30900", "30300", "30909"):
-            self.assertIn(nodeport, allowlist,
-                          f"{FIREWALL_DEFAULTS} NodePort allowlist must contain {nodeport}")
-        self.assertNotIn("12375", allowlist,
-                         f"{FIREWALL_DEFAULTS} NodePort allowlist must never contain 12375")
-        backhaul = top_level_block(fw_defaults, "firewall_portainer_agent_backhaul_ports")
-        self.assertIn("9001", backhaul,
-                      f"{FIREWALL_DEFAULTS} agent backhaul must cover 9001")
-        self.assertNotIn("12375", read(FIREWALL_TASKS),
-                         f"{FIREWALL_TASKS} must not add a literal 12375 rule")
+            self.assertIn(
+                nodeport,
+                allowlist,
+                f"{FIREWALL_DEFAULTS} NodePort allowlist must contain {nodeport}",
+            )
+        self.assertNotIn(
+            "12375",
+            allowlist,
+            f"{FIREWALL_DEFAULTS} NodePort allowlist must never contain 12375",
+        )
+        backhaul = top_level_block(
+            fw_defaults, "firewall_portainer_agent_backhaul_ports"
+        )
+        self.assertIn(
+            "9001", backhaul, f"{FIREWALL_DEFAULTS} agent backhaul must cover 9001"
+        )
+        self.assertNotIn(
+            "12375",
+            read(FIREWALL_TASKS),
+            f"{FIREWALL_TASKS} must not add a literal 12375 rule",
+        )
         fw_tasks = read(FIREWALL_TASKS)
-        self.assertGreaterEqual(fw_tasks.count("firewall_portainer_agent_backhaul_ports"), 2,
-                                f"{FIREWALL_TASKS} must loop the agent backhaul var for "
-                                "both the pod-CIDR allow and the LAN/VPN deny")
-        self.assertGreaterEqual(fw_tasks.count("rule: deny"), 2,
-                                f"{FIREWALL_TASKS} must deny LAN/VPN to the agent port")
-        self.assertIn("firewall_nodeport_allowlist", fw_tasks,
-                      f"{FIREWALL_TASKS} must open the NodePort allowlist to LAN/VPN")
+        self.assertGreaterEqual(
+            fw_tasks.count("firewall_portainer_agent_backhaul_ports"),
+            2,
+            f"{FIREWALL_TASKS} must loop the agent backhaul var for "
+            "both the pod-CIDR allow and the LAN/VPN deny",
+        )
+        self.assertGreaterEqual(
+            fw_tasks.count("rule: deny"),
+            2,
+            f"{FIREWALL_TASKS} must deny LAN/VPN to the agent port",
+        )
+        self.assertIn(
+            "firewall_nodeport_allowlist",
+            fw_tasks,
+            f"{FIREWALL_TASKS} must open the NodePort allowlist to LAN/VPN",
+        )
         docker_user = read(FIREWALL_DOCKER_USER_TEMPLATE)
-        self.assertIn("firewall_portainer_agent_backhaul_ports", docker_user,
-                      f"{FIREWALL_DOCKER_USER_TEMPLATE} must filter the published "
-                      "agent port (Docker bypasses UFW)")
+        self.assertIn(
+            "firewall_portainer_agent_backhaul_ports",
+            docker_user,
+            f"{FIREWALL_DOCKER_USER_TEMPLATE} must filter the published "
+            "agent port (Docker bypasses UFW)",
+        )
 
 
 def split_yaml_docs(text: str) -> list:
@@ -1560,7 +2678,7 @@ def parse_k8s_rules(doc: str) -> list:
         target[key] = val.strip("'\"")
         return None
 
-    for line in lines[start + 1:]:
+    for line in lines[start + 1 :]:
         if not line.strip() or line.strip().startswith("#"):
             continue
         indent = len(line) - len(line.lstrip(" "))
@@ -1591,8 +2709,12 @@ def normalized_rules(rules: list) -> list:
     """Sort every list value so rule comparison is order-insensitive."""
     normalized = []
     for rule in rules:
-        normalized.append({key: sorted(val) if isinstance(val, list) else val
-                           for key, val in rule.items()})
+        normalized.append(
+            {
+                key: sorted(val) if isinstance(val, list) else val
+                for key, val in rule.items()
+            }
+        )
     return sorted(normalized, key=repr)
 
 
@@ -1600,13 +2722,22 @@ class TestLabmonitorFoundation(unittest.TestCase):
     def test_labmonitor_rbac_manifest_is_staged_on_the_managed_host(self):
         """Remote k8s modules must not read controller-only playbook paths."""
         tasks = read(LABMONITOR_TASKS)
-        self.assertIn("Copy LabMonitor RBAC manifest to managed host", tasks,
-                      f"{LABMONITOR_TASKS} must stage the RBAC manifest before applying it")
-        self.assertIn("dest: /tmp/home-server-labmonitor-rbac.yaml", tasks,
-                      f"{LABMONITOR_TASKS} must use a host-local RBAC manifest path")
-        rbac_task = tasks[tasks.index("Apply LabMonitor least-privilege RBAC"):]
-        self.assertIn("src: /tmp/home-server-labmonitor-rbac.yaml", rbac_task,
-                      f"{LABMONITOR_TASKS} must apply the staged host-local RBAC manifest")
+        self.assertIn(
+            "Copy LabMonitor RBAC manifest to managed host",
+            tasks,
+            f"{LABMONITOR_TASKS} must stage the RBAC manifest before applying it",
+        )
+        self.assertIn(
+            "dest: /tmp/home-server-labmonitor-rbac.yaml",
+            tasks,
+            f"{LABMONITOR_TASKS} must use a host-local RBAC manifest path",
+        )
+        rbac_task = tasks[tasks.index("Apply LabMonitor least-privilege RBAC") :]
+        self.assertIn(
+            "src: /tmp/home-server-labmonitor-rbac.yaml",
+            rbac_task,
+            f"{LABMONITOR_TASKS} must apply the staged host-local RBAC manifest",
+        )
 
     def test_labmonitor_rbac_has_only_required_read_verbs(self):
         """labmonitor RBAC grants get/list/watch only on nodes/pods/services/namespaces/deployments."""
@@ -1620,180 +2751,355 @@ class TestLabmonitorFoundation(unittest.TestCase):
             return match.group(1)
 
         kinds = sorted(doc_kind(doc) for doc in docs)
-        self.assertEqual(kinds, ["ClusterRole", "ClusterRoleBinding", "Namespace",
-                                "Role", "RoleBinding", "ServiceAccount"],
-                         f"{LABMONITOR_RBAC} must hold exactly the six foundation resources — got {kinds}")
+        self.assertEqual(
+            kinds,
+            [
+                "ClusterRole",
+                "ClusterRoleBinding",
+                "Namespace",
+                "Role",
+                "RoleBinding",
+                "ServiceAccount",
+            ],
+            f"{LABMONITOR_RBAC} must hold exactly the six foundation resources — got {kinds}",
+        )
 
         def single(kind: str) -> str:
-            matches = [doc for doc in docs
-                       if re.search(rf"^kind:\s*{kind}\s*$", doc, re.M)]
-            self.assertEqual(len(matches), 1,
-                             f"{LABMONITOR_RBAC} must hold exactly one {kind} — got {len(matches)}")
+            matches = [
+                doc for doc in docs if re.search(rf"^kind:\s*{kind}\s*$", doc, re.M)
+            ]
+            self.assertEqual(
+                len(matches),
+                1,
+                f"{LABMONITOR_RBAC} must hold exactly one {kind} — got {len(matches)}",
+            )
             return matches[0]
 
         namespace = single("Namespace")
-        self.assertIn("name: labmonitor", namespace,
-                      f"{LABMONITOR_RBAC} Namespace must be labmonitor")
+        self.assertIn(
+            "name: labmonitor",
+            namespace,
+            f"{LABMONITOR_RBAC} Namespace must be labmonitor",
+        )
         account = single("ServiceAccount")
-        self.assertIn("name: labmonitor-api", account,
-                      f"{LABMONITOR_RBAC} ServiceAccount must be labmonitor-api")
-        self.assertIn("namespace: labmonitor", account,
-                      f"{LABMONITOR_RBAC} ServiceAccount must live in labmonitor")
+        self.assertIn(
+            "name: labmonitor-api",
+            account,
+            f"{LABMONITOR_RBAC} ServiceAccount must be labmonitor-api",
+        )
+        self.assertIn(
+            "namespace: labmonitor",
+            account,
+            f"{LABMONITOR_RBAC} ServiceAccount must live in labmonitor",
+        )
         cluster_role = single("ClusterRole")
-        self.assertIn("name: labmonitor-reader", cluster_role,
-                      f"{LABMONITOR_RBAC} ClusterRole must be labmonitor-reader")
+        self.assertIn(
+            "name: labmonitor-reader",
+            cluster_role,
+            f"{LABMONITOR_RBAC} ClusterRole must be labmonitor-reader",
+        )
         self.assertEqual(
             normalized_rules(parse_k8s_rules(cluster_role)),
-            normalized_rules([
-                {"apiGroups": [""], "resources": ["nodes", "pods", "services", "namespaces"],
-                 "verbs": ["get", "list", "watch"]},
-                {"apiGroups": ["apps"], "resources": ["deployments"],
-                 "verbs": ["get", "list", "watch"]},
-            ]),
+            normalized_rules(
+                [
+                    {
+                        "apiGroups": [""],
+                        "resources": ["nodes", "pods", "services", "namespaces"],
+                        "verbs": ["get", "list", "watch"],
+                    },
+                    {
+                        "apiGroups": ["apps"],
+                        "resources": ["deployments"],
+                        "verbs": ["get", "list", "watch"],
+                    },
+                ]
+            ),
             f"{LABMONITOR_RBAC} ClusterRole must grant get/list/watch only on "
             "nodes/pods/services/namespaces + apps/deployments",
         )
         role = single("Role")
-        self.assertIn("namespace: labmonitor", role,
-                      f"{LABMONITOR_RBAC} Role must live in labmonitor")
+        self.assertIn(
+            "namespace: labmonitor",
+            role,
+            f"{LABMONITOR_RBAC} Role must live in labmonitor",
+        )
         self.assertEqual(
             normalized_rules(parse_k8s_rules(role)),
-            normalized_rules([
-                {"apiGroups": [""], "resources": ["configmaps"],
-                 "resourceNames": ["labmonitor-catalog", "labmonitor-provider-config"],
-                 "verbs": ["get"]},
-            ]),
+            normalized_rules(
+                [
+                    {
+                        "apiGroups": [""],
+                        "resources": ["configmaps"],
+                        "resourceNames": [
+                            "labmonitor-catalog",
+                            "labmonitor-provider-config",
+                        ],
+                        "verbs": ["get"],
+                    },
+                ]
+            ),
             f"{LABMONITOR_RBAC} Role must allow get only on the two named ConfigMaps",
         )
-        for kind, ref_kind, ref_name in (("ClusterRoleBinding", "ClusterRole", "labmonitor-reader"),
-                                        ("RoleBinding", "Role", "labmonitor-config-reader")):
+        for kind, ref_kind, ref_name in (
+            ("ClusterRoleBinding", "ClusterRole", "labmonitor-reader"),
+            ("RoleBinding", "Role", "labmonitor-config-reader"),
+        ):
             binding = single(kind)
-            subjects = re.findall(r"-\s*kind:\s*(\S+)\s*\n\s*name:\s*(\S+)\s*\n\s*namespace:\s*(\S+)",
-                                  binding)
-            self.assertEqual(subjects, [("ServiceAccount", "labmonitor-api", "labmonitor")],
-                             f"{LABMONITOR_RBAC} {kind} must bind only "
-                             "system:serviceaccount:labmonitor:labmonitor-api — got {subjects}")
-            self.assertIn(f"kind: {ref_kind}", binding,
-                          f"{LABMONITOR_RBAC} {kind} must reference {ref_kind}")
-            self.assertIn(f"name: {ref_name}", binding,
-                          f"{LABMONITOR_RBAC} {kind} must reference {ref_name}")
+            subjects = re.findall(
+                r"-\s*kind:\s*(\S+)\s*\n\s*name:\s*(\S+)\s*\n\s*namespace:\s*(\S+)",
+                binding,
+            )
+            self.assertEqual(
+                subjects,
+                [("ServiceAccount", "labmonitor-api", "labmonitor")],
+                f"{LABMONITOR_RBAC} {kind} must bind only "
+                "system:serviceaccount:labmonitor:labmonitor-api — got {subjects}",
+            )
+            self.assertIn(
+                f"kind: {ref_kind}",
+                binding,
+                f"{LABMONITOR_RBAC} {kind} must reference {ref_kind}",
+            )
+            self.assertIn(
+                f"name: {ref_name}",
+                binding,
+                f"{LABMONITOR_RBAC} {kind} must reference {ref_name}",
+            )
         # No token Secret: the future Deployment uses a projected token.
-        self.assertNotIn("kind: Secret", read(LABMONITOR_RBAC),
-                         f"{LABMONITOR_RBAC} must not create a token Secret")
+        self.assertNotIn(
+            "kind: Secret",
+            read(LABMONITOR_RBAC),
+            f"{LABMONITOR_RBAC} must not create a token Secret",
+        )
 
     def test_labmonitor_rbac_has_no_secret_permissions(self):
         """No Secret/event/workload-write/cluster-admin grant anywhere in the LabMonitor foundation."""
         self.assertTrue(LABMONITOR_RBAC.is_file(), f"missing {LABMONITOR_RBAC}")
         rbac = read(LABMONITOR_RBAC)
         lowered = rbac.lower()
-        for forbidden in ("secret", "cluster-admin", "events", "daemonsets",
-                          "statefulsets", "persistentvolumes"):
-            self.assertNotIn(forbidden, lowered,
-                             f"{LABMONITOR_RBAC} must not mention {forbidden}")
-        for verb in ('"create"', '"delete"', '"update"', '"patch"',
-                     '"deletecollection"', '"*"'):
-            self.assertNotIn(verb, rbac,
-                             f"{LABMONITOR_RBAC} must not grant write verb {verb}")
-        self.assertNotIn("token", lowered,
-                         f"{LABMONITOR_RBAC} must not create or reference a token")
+        for forbidden in (
+            "secret",
+            "cluster-admin",
+            "events",
+            "daemonsets",
+            "statefulsets",
+            "persistentvolumes",
+        ):
+            self.assertNotIn(
+                forbidden, lowered, f"{LABMONITOR_RBAC} must not mention {forbidden}"
+            )
+        for verb in (
+            '"create"',
+            '"delete"',
+            '"update"',
+            '"patch"',
+            '"deletecollection"',
+            '"*"',
+        ):
+            self.assertNotIn(
+                verb, rbac, f"{LABMONITOR_RBAC} must not grant write verb {verb}"
+            )
+        self.assertNotIn(
+            "token", lowered, f"{LABMONITOR_RBAC} must not create or reference a token"
+        )
         # The Jenkins Secret carries only the Vault username + api-token, never a password.
-        self.assertTrue(LABMONITOR_JENKINS_SECRET_TEMPLATE.is_file(),
-                        f"missing {LABMONITOR_JENKINS_SECRET_TEMPLATE}")
+        self.assertTrue(
+            LABMONITOR_JENKINS_SECRET_TEMPLATE.is_file(),
+            f"missing {LABMONITOR_JENKINS_SECRET_TEMPLATE}",
+        )
         secret_template = read(LABMONITOR_JENKINS_SECRET_TEMPLATE)
-        self.assertIn("kind: Secret", secret_template,
-                      f"{LABMONITOR_JENKINS_SECRET_TEMPLATE} must render a Secret")
-        self.assertIn("labmonitor_jenkins_secret_name", secret_template,
-                      f"{LABMONITOR_JENKINS_SECRET_TEMPLATE} must use the role secret-name var")
-        self.assertIn('"{{ jenkins_labmonitor_user }}"', secret_template,
-                      f"{LABMONITOR_JENKINS_SECRET_TEMPLATE} must take username from Vault")
-        self.assertIn('"{{ jenkins_labmonitor_api_token }}"', secret_template,
-                      f"{LABMONITOR_JENKINS_SECRET_TEMPLATE} must take api-token from Vault")
+        self.assertIn(
+            "kind: Secret",
+            secret_template,
+            f"{LABMONITOR_JENKINS_SECRET_TEMPLATE} must render a Secret",
+        )
+        self.assertIn(
+            "labmonitor_jenkins_secret_name",
+            secret_template,
+            f"{LABMONITOR_JENKINS_SECRET_TEMPLATE} must use the role secret-name var",
+        )
+        self.assertIn(
+            '"{{ jenkins_labmonitor_user }}"',
+            secret_template,
+            f"{LABMONITOR_JENKINS_SECRET_TEMPLATE} must take username from Vault",
+        )
+        self.assertIn(
+            '"{{ jenkins_labmonitor_api_token }}"',
+            secret_template,
+            f"{LABMONITOR_JENKINS_SECRET_TEMPLATE} must take api-token from Vault",
+        )
         string_data = secret_template.split("stringData:", 1)[1]
         keys = re.findall(r"^\s{2}(\S+):", string_data, re.M)
-        self.assertEqual(sorted(keys), ["api-token", "username"],
-                         f"{LABMONITOR_JENKINS_SECRET_TEMPLATE} must carry exactly "
-                         f"username + api-token — got {keys}")
-        for path in (LABMONITOR_JENKINS_SECRET_TEMPLATE, LABMONITOR_PROVIDER_TEMPLATE,
-                     LABMONITOR_CATALOG_TEMPLATE, LABMONITOR_TASKS):
-            self.assertNotIn("password", read(path).lower(),
-                             f"{path} must never mention a password")
+        self.assertEqual(
+            sorted(keys),
+            ["api-token", "username"],
+            f"{LABMONITOR_JENKINS_SECRET_TEMPLATE} must carry exactly "
+            f"username + api-token — got {keys}",
+        )
+        for path in (
+            LABMONITOR_JENKINS_SECRET_TEMPLATE,
+            LABMONITOR_PROVIDER_TEMPLATE,
+            LABMONITOR_CATALOG_TEMPLATE,
+            LABMONITOR_TASKS,
+        ):
+            self.assertNotIn(
+                "password", read(path).lower(), f"{path} must never mention a password"
+            )
         tasks = read(LABMONITOR_TASKS)
-        self.assertIn("jenkins_labmonitor_api_token", tasks,
-                      f"{LABMONITOR_TASKS} must validate the Vault api token")
-        self.assertIn("no_log: true", tasks,
-                      f"{LABMONITOR_TASKS} must never print Vault values")
+        self.assertIn(
+            "jenkins_labmonitor_api_token",
+            tasks,
+            f"{LABMONITOR_TASKS} must validate the Vault api token",
+        )
+        self.assertIn(
+            "no_log: true", tasks, f"{LABMONITOR_TASKS} must never print Vault values"
+        )
 
     def test_provider_config_contains_internal_endpoints_only(self):
         """Provider ConfigMap exposes only internal endpoints with the single environment IP."""
-        self.assertTrue(LABMONITOR_PROVIDER_TEMPLATE.is_file(),
-                        f"missing {LABMONITOR_PROVIDER_TEMPLATE}")
+        self.assertTrue(
+            LABMONITOR_PROVIDER_TEMPLATE.is_file(),
+            f"missing {LABMONITOR_PROVIDER_TEMPLATE}",
+        )
         template = read(LABMONITOR_PROVIDER_TEMPLATE)
-        for marker in ("schema: labmonitor.providers/v1",
-                       "base_url: http://prometheus.monitoring.svc.cluster.local:9090",
-                       "base_url: http://{{ server_lan_ip }}:12375",
-                       "base_url: http://{{ server_lan_ip }}:18080",
-                       "mode: in_cluster"):
-            self.assertIn(marker, template,
-                          f"{LABMONITOR_PROVIDER_TEMPLATE} must contain {marker}")
+        for marker in (
+            "schema: labmonitor.providers/v1",
+            "base_url: http://prometheus.monitoring.svc.cluster.local:"
+            "{{ monitoring_prometheus_service_port }}",
+            "base_url: http://{{ server_lan_ip }}:12375",
+            "base_url: http://{{ server_lan_ip }}:{{ compose_jenkins_port }}",
+            "mode: in_cluster",
+        ):
+            self.assertIn(
+                marker,
+                template,
+                f"{LABMONITOR_PROVIDER_TEMPLATE} must contain {marker}",
+            )
         providers = re.findall(r"^  ([a-z]+):\s*$", template, re.M)
-        self.assertEqual(sorted(providers), ["docker", "jenkins", "kubernetes", "prometheus"],
-                         f"{LABMONITOR_PROVIDER_TEMPLATE} must define exactly the four "
-                         f"providers — got {providers}")
+        self.assertEqual(
+            sorted(providers),
+            ["docker", "jenkins", "kubernetes", "prometheus"],
+            f"{LABMONITOR_PROVIDER_TEMPLATE} must define exactly the four "
+            f"providers — got {providers}",
+        )
         jinja_vars = set(re.findall(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\b", template))
-        self.assertEqual(jinja_vars, {"server_lan_ip"},
-                         f"{LABMONITOR_PROVIDER_TEMPLATE} must vary only on server_lan_ip "
-                         f"— got {jinja_vars}")
-        for forbidden in ("password", "token", "secret", "credential", "nodeport",
-                          "ingress", "https://", "192.168.", "192.0.2.",
-                          "lab.arpa", "home.arpa"):
-            self.assertNotIn(forbidden, template.lower(),
-                             f"{LABMONITOR_PROVIDER_TEMPLATE} must not contain {forbidden}")
+        self.assertEqual(
+            jinja_vars,
+            {
+                "server_lan_ip",
+                "compose_jenkins_port",
+                "monitoring_prometheus_service_port",
+            },
+            f"{LABMONITOR_PROVIDER_TEMPLATE} must render server_lan_ip and "
+            f"the supported port overrides — got {jinja_vars}",
+        )
+        for forbidden in (
+            "password",
+            "token",
+            "secret",
+            "credential",
+            "nodeport",
+            "ingress",
+            "https://",
+            "192.168.",
+            "192.0.2.",
+            "lab.arpa",
+            "home.arpa",
+        ):
+            self.assertNotIn(
+                forbidden,
+                template.lower(),
+                f"{LABMONITOR_PROVIDER_TEMPLATE} must not contain {forbidden}",
+            )
         tasks = read(LABMONITOR_TASKS)
-        self.assertIn("labmonitor_provider_config_name", tasks,
-                      f"{LABMONITOR_TASKS} must apply the provider ConfigMap by role var")
-        self.assertIn("provider-config.yaml.j2", tasks,
-                      f"{LABMONITOR_TASKS} must render {LABMONITOR_PROVIDER_TEMPLATE.name}")
-        self.assertNotIn("NodePort", tasks,
-                         f"{LABMONITOR_TASKS} must not expose a provider NodePort")
-        self.assertNotIn("kind: Ingress", tasks,
-                         f"{LABMONITOR_TASKS} must not expose a provider Ingress")
+        self.assertIn(
+            "labmonitor_provider_config_name",
+            tasks,
+            f"{LABMONITOR_TASKS} must apply the provider ConfigMap by role var",
+        )
+        self.assertIn(
+            "provider-config.yaml.j2",
+            tasks,
+            f"{LABMONITOR_TASKS} must render {LABMONITOR_PROVIDER_TEMPLATE.name}",
+        )
+        self.assertNotIn(
+            "NodePort", tasks, f"{LABMONITOR_TASKS} must not expose a provider NodePort"
+        )
+        self.assertNotIn(
+            "kind: Ingress",
+            tasks,
+            f"{LABMONITOR_TASKS} must not expose a provider Ingress",
+        )
 
     def test_catalog_contains_cockpit_only_for_host_native_services(self):
         """Catalog holds exactly the initial Cockpit entry; providers stay out of navigation."""
-        self.assertTrue(LABMONITOR_CATALOG_TEMPLATE.is_file(),
-                        f"missing {LABMONITOR_CATALOG_TEMPLATE}")
+        self.assertTrue(
+            LABMONITOR_CATALOG_TEMPLATE.is_file(),
+            f"missing {LABMONITOR_CATALOG_TEMPLATE}",
+        )
         template = read(LABMONITOR_CATALOG_TEMPLATE)
-        for marker in ("schema: labmonitor.services/v1",
-                       "- id: cockpit",
-                       "enabled: true",
-                       "name: Cockpit",
-                       "category: administration",
-                       "icon: cockpit",
-                       "open_url: https://cockpit.{{ base_domain }}",
-                       "runtime: host"):
-            self.assertIn(marker, template,
-                          f"{LABMONITOR_CATALOG_TEMPLATE} must contain {marker}")
+        for marker in (
+            "schema: labmonitor.services/v1",
+            "- id: cockpit",
+            "enabled: true",
+            "name: Cockpit",
+            "category: administration",
+            "icon: cockpit",
+            "open_url: https://cockpit.{{ base_domain }}",
+            "runtime: host",
+        ):
+            self.assertIn(
+                marker, template, f"{LABMONITOR_CATALOG_TEMPLATE} must contain {marker}"
+            )
         ids = re.findall(r"^  - id:\s*(\S+)\s*$", template, re.M)
-        self.assertEqual(ids, ["cockpit"],
-                         f"{LABMONITOR_CATALOG_TEMPLATE} must list exactly cockpit — got {ids}")
-        for forbidden in ("postgres", "proxy", "exporter", "agent", "prometheus",
-                          "grafana", "portainer", "jenkins", "n8n", "metabase"):
-            self.assertNotIn(forbidden, template.lower(),
-                             f"{LABMONITOR_CATALOG_TEMPLATE} must not list {forbidden}")
+        self.assertEqual(
+            ids,
+            ["cockpit"],
+            f"{LABMONITOR_CATALOG_TEMPLATE} must list exactly cockpit — got {ids}",
+        )
+        for forbidden in (
+            "postgres",
+            "proxy",
+            "exporter",
+            "agent",
+            "prometheus",
+            "grafana",
+            "portainer",
+            "jenkins",
+            "n8n",
+            "metabase",
+        ):
+            self.assertNotIn(
+                forbidden,
+                template.lower(),
+                f"{LABMONITOR_CATALOG_TEMPLATE} must not list {forbidden}",
+            )
         jinja_vars = set(re.findall(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\b", template))
-        self.assertEqual(jinja_vars, {"base_domain"},
-                         f"{LABMONITOR_CATALOG_TEMPLATE} must vary only on base_domain "
-                         f"— got {jinja_vars}")
+        self.assertEqual(
+            jinja_vars,
+            {"base_domain"},
+            f"{LABMONITOR_CATALOG_TEMPLATE} must vary only on base_domain "
+            f"— got {jinja_vars}",
+        )
         tasks = read(LABMONITOR_TASKS)
-        self.assertIn("labmonitor_catalog_name", tasks,
-                      f"{LABMONITOR_TASKS} must apply the catalog ConfigMap by role var")
-        self.assertIn("catalog.yaml.j2", tasks,
-                      f"{LABMONITOR_TASKS} must render {LABMONITOR_CATALOG_TEMPLATE.name}")
+        self.assertIn(
+            "labmonitor_catalog_name",
+            tasks,
+            f"{LABMONITOR_TASKS} must apply the catalog ConfigMap by role var",
+        )
+        self.assertIn(
+            "catalog.yaml.j2",
+            tasks,
+            f"{LABMONITOR_TASKS} must render {LABMONITOR_CATALOG_TEMPLATE.name}",
+        )
 
     def test_catalog_and_kubernetes_services_use_one_environment_domain(self):
         """Catalog + Grafana/Prometheus/Portainer Services share the selected base_domain."""
-        for path in (LABMONITOR_CATALOG_TEMPLATE, MONITORING_TASKS,
-                     PORTAINER_SERVER_TEMPLATE):
+        for path in (
+            LABMONITOR_CATALOG_TEMPLATE,
+            MONITORING_TASKS,
+            PORTAINER_SERVER_TEMPLATE,
+        ):
             self.assertTrue(path.is_file(), f"missing {path}")
         monitoring = read(MONITORING_TASKS)
         portainer = read(PORTAINER_SERVER_TEMPLATE)
@@ -1801,9 +3107,9 @@ class TestLabmonitorFoundation(unittest.TestCase):
         for text, marker in (
             (catalog, "open_url: https://cockpit.{{ base_domain }}"),
             (monitoring, 'labmonitor.id: "grafana"'),
-            (monitoring, "labmonitor.open.url: \"https://grafana.{{ base_domain }}\""),
+            (monitoring, 'labmonitor.open.url: "https://grafana.{{ base_domain }}"'),
             (monitoring, 'labmonitor.id: "prometheus"'),
-            (monitoring, "labmonitor.open.url: \"https://prometheus.{{ base_domain }}\""),
+            (monitoring, 'labmonitor.open.url: "https://prometheus.{{ base_domain }}"'),
             (portainer, 'labmonitor.id: "portainer"'),
             (portainer, 'labmonitor.open.url: "https://portainer.{{ base_domain }}"'),
         ):
@@ -1813,40 +3119,81 @@ class TestLabmonitorFoundation(unittest.TestCase):
             (monitoring, "prometheus", "observability"),
             (portainer, "portainer", "administration"),
         ):
-            self.assertIn(f'labmonitor.id: "{expected_id}"', text,
-                          f"Service metadata must pin id {expected_id}")
-            self.assertIn(f'labmonitor.category: "{expected_category}"', text,
-                          f"Service {expected_id} must use category {expected_category}")
-            self.assertIn(f'labmonitor.icon: "{expected_id}"', text,
-                          f"Service {expected_id} must use icon {expected_id}")
-            self.assertIn('labmonitor.enabled: "true"', text,
-                          f"Service {expected_id} must set labmonitor.enabled")
-        for path in (LABMONITOR_CATALOG_TEMPLATE, LABMONITOR_PROVIDER_TEMPLATE,
-                     LABMONITOR_RBAC, MONITORING_TASKS, PORTAINER_SERVER_TEMPLATE):
+            self.assertIn(
+                f'labmonitor.id: "{expected_id}"',
+                text,
+                f"Service metadata must pin id {expected_id}",
+            )
+            self.assertIn(
+                f'labmonitor.category: "{expected_category}"',
+                text,
+                f"Service {expected_id} must use category {expected_category}",
+            )
+            self.assertIn(
+                f'labmonitor.icon: "{expected_id}"',
+                text,
+                f"Service {expected_id} must use icon {expected_id}",
+            )
+            self.assertIn(
+                'labmonitor.enabled: "true"',
+                text,
+                f"Service {expected_id} must set labmonitor.enabled",
+            )
+        for path in (
+            LABMONITOR_CATALOG_TEMPLATE,
+            LABMONITOR_PROVIDER_TEMPLATE,
+            LABMONITOR_RBAC,
+            MONITORING_TASKS,
+            PORTAINER_SERVER_TEMPLATE,
+        ):
             content = read(path)
             for forbidden in ("lab.arpa", "home.arpa", "192.168.", "192.0.2."):
-                self.assertNotIn(forbidden, content,
-                                 f"{path} must use {{{{ base_domain }}}}, not literal {forbidden}")
+                self.assertNotIn(
+                    forbidden,
+                    content,
+                    f"{path} must use {{{{ base_domain }}}}, not literal {forbidden}",
+                )
         # Discovery metadata rides on the Service only, never on a Deployment.
-        self.assertNotIn("kind: Deployment", monitoring,
-                         f"{MONITORING_TASKS} must not define a Deployment discovery source")
-        self.assertNotIn("labmonitor.", read(MONITORING_EXPORTER_DEPLOYMENT_TEMPLATE),
-                         f"{MONITORING_EXPORTER_DEPLOYMENT_TEMPLATE} must not carry discovery metadata")
-        service_docs = [doc for doc in split_yaml_docs(portainer) if "labmonitor." in doc]
-        self.assertEqual(len(service_docs), 1,
-                         f"{PORTAINER_SERVER_TEMPLATE} must carry discovery metadata "
-                         "on exactly one document")
-        self.assertIn("kind: Service", service_docs[0],
-                      f"{PORTAINER_SERVER_TEMPLATE} discovery metadata must sit on the Service")
+        self.assertNotIn(
+            "kind: Deployment",
+            monitoring,
+            f"{MONITORING_TASKS} must not define a Deployment discovery source",
+        )
+        self.assertNotIn(
+            "labmonitor.",
+            read(MONITORING_EXPORTER_DEPLOYMENT_TEMPLATE),
+            f"{MONITORING_EXPORTER_DEPLOYMENT_TEMPLATE} must not carry discovery metadata",
+        )
+        service_docs = [
+            doc for doc in split_yaml_docs(portainer) if "labmonitor." in doc
+        ]
+        self.assertEqual(
+            len(service_docs),
+            1,
+            f"{PORTAINER_SERVER_TEMPLATE} must carry discovery metadata "
+            "on exactly one document",
+        )
+        self.assertIn(
+            "kind: Service",
+            service_docs[0],
+            f"{PORTAINER_SERVER_TEMPLATE} discovery metadata must sit on the Service",
+        )
         platform_tasks = read(K8S_PLATFORM_TASKS)
         for marker in ("monitoring_namespace", "portainer_namespace", "labmonitor"):
-            self.assertIn(marker, platform_tasks,
-                          f"{K8S_PLATFORM_TASKS} must gate the discovery contract ({marker})")
+            self.assertIn(
+                marker,
+                platform_tasks,
+                f"{K8S_PLATFORM_TASKS} must gate the discovery contract ({marker})",
+            )
 
 
-PLATFORM_INGRESS_TEMPLATE = REPO / "ansible/roles/k8s-platform/templates/platform-ingress.yaml.j2"
+PLATFORM_INGRESS_TEMPLATE = (
+    REPO / "ansible/roles/k8s-platform/templates/platform-ingress.yaml.j2"
+)
 PLATFORM_DEFAULTS = REPO / "ansible/roles/k8s-platform/defaults/main.yml"
-TRAEFIK_HELMCHART_TEMPLATE = REPO / "ansible/roles/k8s-platform/templates/traefik-helmchartconfig.yaml.j2"
+TRAEFIK_HELMCHART_TEMPLATE = (
+    REPO / "ansible/roles/k8s-platform/templates/traefik-helmchartconfig.yaml.j2"
+)
 HOSTS_GENERATOR = REPO / "scripts/hosts/generate-hosts.sh"
 LAB_HOSTS_EXAMPLE = REPO / "scripts/hosts/lab.hosts.example"
 PROD_HOSTS_EXAMPLE = REPO / "scripts/hosts/prod.hosts.example"
@@ -1870,12 +3217,21 @@ EXPECTED_ACTIVE_SERVICES = (
 # Kubernetes apps use Ingress-to-Service routing.
 FILE_PROVIDER_SERVICES = ("cockpit", "jenkins", "n8n", "metabase")
 INGRESS_SERVICES = {
-    "grafana": ("monitoring_namespace", "monitoring_grafana_service_name",
-                "monitoring_grafana_service_port"),
-    "prometheus": ("monitoring_namespace", "monitoring_prometheus_service_name",
-                   "monitoring_prometheus_service_port"),
-    "portainer": ("portainer_namespace", "portainer_service_name",
-                  "portainer_service_port"),
+    "grafana": (
+        "monitoring_namespace",
+        "monitoring_grafana_service_name",
+        "monitoring_grafana_service_port",
+    ),
+    "prometheus": (
+        "monitoring_namespace",
+        "monitoring_prometheus_service_name",
+        "monitoring_prometheus_service_port",
+    ),
+    "portainer": (
+        "portainer_namespace",
+        "portainer_service_name",
+        "portainer_service_port",
+    ),
 }
 
 
@@ -1921,28 +3277,42 @@ class TestFinalRoutes(unittest.TestCase):
         self.assertTrue(HOSTS_GENERATOR.is_file(), f"missing {HOSTS_GENERATOR}")
         helper = read(HOSTS_GENERATOR)
         m = re.search(r"^for service in (.+?); do\s*$", helper, re.M)
-        self.assertIsNotNone(m,
-                             f"{HOSTS_GENERATOR} must iterate a fixed service list")
+        self.assertIsNotNone(m, f"{HOSTS_GENERATOR} must iterate a fixed service list")
         assert m is not None
         helper_services = m.group(1).split()
-        self.assertEqual(sorted(helper_services), sorted(EXPECTED_ACTIVE_SERVICES),
-                         f"{HOSTS_GENERATOR} must list exactly "
-                         f"{sorted(EXPECTED_ACTIVE_SERVICES)} — got {sorted(helper_services)}")
-        self.assertNotIn("glance", helper,
-                         f"{HOSTS_GENERATOR} must not list the legacy dashboard")
-        for path, domain in ((LAB_HOSTS_EXAMPLE, "lab.arpa"),
-                             (PROD_HOSTS_EXAMPLE, "home.arpa")):
+        self.assertEqual(
+            sorted(helper_services),
+            sorted(EXPECTED_ACTIVE_SERVICES),
+            f"{HOSTS_GENERATOR} must list exactly "
+            f"{sorted(EXPECTED_ACTIVE_SERVICES)} — got {sorted(helper_services)}",
+        )
+        self.assertNotIn(
+            "glance", helper, f"{HOSTS_GENERATOR} must not list the legacy dashboard"
+        )
+        for path, domain in (
+            (LAB_HOSTS_EXAMPLE, "lab.arpa"),
+            (PROD_HOSTS_EXAMPLE, "home.arpa"),
+        ):
             self.assertTrue(path.is_file(), f"missing {path}")
             services = hosts_example_services(path)
-            self.assertEqual(len(services), 7,
-                             f"{path} must hold exactly seven lines — got {services}")
-            self.assertEqual(sorted(services), sorted(EXPECTED_ACTIVE_SERVICES),
-                             f"{path} must list exactly "
-                             f"{sorted(EXPECTED_ACTIVE_SERVICES)} — got {sorted(services)}")
+            self.assertEqual(
+                len(services),
+                7,
+                f"{path} must hold exactly seven lines — got {services}",
+            )
+            self.assertEqual(
+                sorted(services),
+                sorted(EXPECTED_ACTIVE_SERVICES),
+                f"{path} must list exactly "
+                f"{sorted(EXPECTED_ACTIVE_SERVICES)} — got {sorted(services)}",
+            )
             for raw in read(path).splitlines():
                 if raw.strip():
-                    self.assertIn(domain, raw,
-                                  f"{path} line must use domain {domain} — got {raw!r}")
+                    self.assertIn(
+                        domain,
+                        raw,
+                        f"{path} line must use domain {domain} — got {raw!r}",
+                    )
 
     def test_no_active_glance_or_builds_api_runtime_reference(self):
         """No active Ansible/Compose/K8s/script/README path loads legacy concepts."""
@@ -1962,68 +3332,102 @@ class TestFinalRoutes(unittest.TestCase):
                 if rx.search(content):
                     offenders.append(f"{path.relative_to(REPO)} matches {rx.pattern}")
         self.assertGreater(scanned, 0, "active-tree scan must cover real files")
-        self.assertEqual(offenders, [],
-                         "active tree must not reference legacy runtime concepts — "
-                         f"got {offenders}")
+        self.assertEqual(
+            offenders,
+            [],
+            f"active tree must not reference legacy runtime concepts — got {offenders}",
+        )
 
     def test_ingress_routes_only_human_interfaces(self):
         """File provider + Ingress cover exactly the seven human HTTPS hosts."""
-        self.assertTrue(PLATFORM_INGRESS_TEMPLATE.is_file(),
-                        f"missing {PLATFORM_INGRESS_TEMPLATE}")
-        self.assertTrue(TRAEFIK_HELMCHART_TEMPLATE.is_file(),
-                        f"missing {TRAEFIK_HELMCHART_TEMPLATE}")
+        self.assertTrue(
+            PLATFORM_INGRESS_TEMPLATE.is_file(), f"missing {PLATFORM_INGRESS_TEMPLATE}"
+        )
+        self.assertTrue(
+            TRAEFIK_HELMCHART_TEMPLATE.is_file(),
+            f"missing {TRAEFIK_HELMCHART_TEMPLATE}",
+        )
         ingress = read(PLATFORM_INGRESS_TEMPLATE)
         provider = read(TRAEFIK_HELMCHART_TEMPLATE)
         # File provider keeps the four Compose/Cockpit human routes.
         for service in FILE_PROVIDER_SERVICES:
             marker = "Host(`" + service + ".{{ base_domain }}`)"
-            self.assertIn(marker, provider,
-                          f"{TRAEFIK_HELMCHART_TEMPLATE} must route human host {marker}")
+            self.assertIn(
+                marker,
+                provider,
+                f"{TRAEFIK_HELMCHART_TEMPLATE} must route human host {marker}",
+            )
         # Ingress covers exactly the three Kubernetes human interfaces.
         docs = split_yaml_docs(ingress)
-        self.assertEqual(len(docs), 3,
-                         f"{PLATFORM_INGRESS_TEMPLATE} must hold exactly three "
-                         f"Ingress docs — got {len(docs)}")
-        rule_hosts = re.findall(r"^\s*-\s*host:\s*\"?([a-z]+)\.\{\{\s*base_domain\s*\}\}\"?",
-                                ingress, re.M)
-        tls_hosts = re.findall(r"^\s*-\s*\"?([a-z]+)\.\{\{\s*base_domain\s*\}\}\"?",
-                               ingress, re.M)
+        self.assertEqual(
+            len(docs),
+            3,
+            f"{PLATFORM_INGRESS_TEMPLATE} must hold exactly three "
+            f"Ingress docs — got {len(docs)}",
+        )
+        rule_hosts = re.findall(
+            r"^\s*-\s*host:\s*\"?([a-z]+)\.\{\{\s*base_domain\s*\}\}\"?", ingress, re.M
+        )
+        tls_hosts = re.findall(
+            r"^\s*-\s*\"?([a-z]+)\.\{\{\s*base_domain\s*\}\}\"?", ingress, re.M
+        )
         for origin, found in (("rule", rule_hosts), ("TLS", tls_hosts)):
-            self.assertEqual(sorted(found), ["grafana", "portainer", "prometheus"],
-                             f"{PLATFORM_INGRESS_TEMPLATE} every Ingress needs one "
-                             f"{origin} host — got {found}")
-        self.assertEqual(ingress.count("ingressClassName: traefik"), 3,
-                         f"{PLATFORM_INGRESS_TEMPLATE} every Ingress must set "
-                         "ingressClassName: traefik")
-        self.assertEqual(ingress.count("pathType: Prefix"), 3,
-                         f"{PLATFORM_INGRESS_TEMPLATE} every Ingress must use "
-                         "pathType: Prefix")
+            self.assertEqual(
+                sorted(found),
+                ["grafana", "portainer", "prometheus"],
+                f"{PLATFORM_INGRESS_TEMPLATE} every Ingress needs one "
+                f"{origin} host — got {found}",
+            )
+        self.assertEqual(
+            ingress.count("ingressClassName: traefik"),
+            3,
+            f"{PLATFORM_INGRESS_TEMPLATE} every Ingress must set "
+            "ingressClassName: traefik",
+        )
+        self.assertEqual(
+            ingress.count("pathType: Prefix"),
+            3,
+            f"{PLATFORM_INGRESS_TEMPLATE} every Ingress must use pathType: Prefix",
+        )
         # Backends resolve through role vars to the Ready Services.
         merged: dict = {}
         for path in (MONITORING_DEFAULTS, PORTAINER_DEFAULTS):
             merged.update(parse_simple_vars(path))
         for service, (ns_var, name_var, port_var) in INGRESS_SERVICES.items():
             for var in (ns_var, name_var, port_var):
-                self.assertIn("{{ %s }}" % var, ingress,
-                              f"{PLATFORM_INGRESS_TEMPLATE} {service} must stay "
-                              f"variable-driven via {{{{ {var} }}}}")
-            self.assertIn('name: "%s"' % service,
-                          ingress.replace("{{ %s }}" % name_var, service),
-                          f"{PLATFORM_INGRESS_TEMPLATE} {service} backend must "
-                          f"resolve to Service {service}")
-            self.assertIn("number: %s" % merged[port_var], ingress.replace(
-                "{{ %s }}" % port_var, merged[port_var]),
+                self.assertIn(
+                    "{{ %s }}" % var,
+                    ingress,
+                    f"{PLATFORM_INGRESS_TEMPLATE} {service} must stay "
+                    f"variable-driven via {{{{ {var} }}}}",
+                )
+            self.assertIn(
+                'name: "%s"' % service,
+                ingress.replace("{{ %s }}" % name_var, service),
+                f"{PLATFORM_INGRESS_TEMPLATE} {service} backend must "
+                f"resolve to Service {service}",
+            )
+            self.assertIn(
+                "number: %s" % merged[port_var],
+                ingress.replace("{{ %s }}" % port_var, merged[port_var]),
                 f"{PLATFORM_INGRESS_TEMPLATE} {service} backend must resolve "
-                f"to port {merged[port_var]}")
+                f"to port {merged[port_var]}",
+            )
         # No Ingress for the future API, the Docker proxy, or the exporter.
         for forbidden in ("labmonitor", "12375", "9797", "exporter", "proxy"):
-            self.assertNotIn(forbidden, ingress,
-                             f"{PLATFORM_INGRESS_TEMPLATE} must not route {forbidden}")
+            self.assertNotIn(
+                forbidden,
+                ingress,
+                f"{PLATFORM_INGRESS_TEMPLATE} must not route {forbidden}",
+            )
         routers_block = provider.split("routers:", 1)[1].split("services:", 1)[0]
         routers = re.findall(r"^ {14}([a-z0-9-]+):\s*$", routers_block, re.M)
-        self.assertEqual(sorted(routers), sorted(FILE_PROVIDER_SERVICES),
-                         f"{TRAEFIK_HELMCHART_TEMPLATE} routers must stay exactly "
-                         f"{sorted(FILE_PROVIDER_SERVICES)} — got {sorted(routers)}")
+        self.assertEqual(
+            sorted(routers),
+            sorted(FILE_PROVIDER_SERVICES),
+            f"{TRAEFIK_HELMCHART_TEMPLATE} routers must stay exactly "
+            f"{sorted(FILE_PROVIDER_SERVICES)} — got {sorted(routers)}",
+        )
 
     def test_provider_ports_have_no_ingress_or_nodeport(self):
         """12375/exporter ports stay ClusterIP-only: no Ingress, NodePort, or host port."""
@@ -2042,20 +3446,32 @@ class TestFinalRoutes(unittest.TestCase):
         )
         indexes = [tasks.find(marker) for marker in order_markers]
         for marker, idx in zip(order_markers, indexes):
-            self.assertNotEqual(idx, -1,
-                                f"{K8S_PLATFORM_TASKS} must contain stage '{marker}'")
-        self.assertEqual(indexes, sorted(indexes),
-                         f"{K8S_PLATFORM_TASKS} Traefik stages must stay ordered "
-                         f"{list(order_markers)}")
-        self.assertIn("k8s_platform_ingress_path", tasks,
-                      f"{K8S_PLATFORM_TASKS} must render the Ingress via "
-                      "k8s_platform_ingress_path")
-        self.assertIn("k8s_platform_ingress_path", read(PLATFORM_DEFAULTS),
-                      f"{PLATFORM_DEFAULTS} must define k8s_platform_ingress_path")
+            self.assertNotEqual(
+                idx, -1, f"{K8S_PLATFORM_TASKS} must contain stage '{marker}'"
+            )
+        self.assertEqual(
+            indexes,
+            sorted(indexes),
+            f"{K8S_PLATFORM_TASKS} Traefik stages must stay ordered "
+            f"{list(order_markers)}",
+        )
+        self.assertIn(
+            "k8s_platform_ingress_path",
+            tasks,
+            f"{K8S_PLATFORM_TASKS} must render the Ingress via "
+            "k8s_platform_ingress_path",
+        )
+        self.assertIn(
+            "k8s_platform_ingress_path",
+            read(PLATFORM_DEFAULTS),
+            f"{PLATFORM_DEFAULTS} must define k8s_platform_ingress_path",
+        )
         # No NodePort may carry a provider port anywhere in the active tree.
         # NodePorts stay variable-driven, so resolve each reference via defaults.
         all_defaults: dict = {}
-        for defaults_path in sorted((REPO / "ansible/roles").glob("*/defaults/main.yml")):
+        for defaults_path in sorted(
+            (REPO / "ansible/roles").glob("*/defaults/main.yml")
+        ):
             all_defaults.update(parse_simple_vars(defaults_path))
         nodeports: list = []
         for path in iter_active_files():
@@ -2066,30 +3482,46 @@ class TestFinalRoutes(unittest.TestCase):
             except (UnicodeDecodeError, OSError):
                 continue
             for match in re.finditer(
-                    r"nodePort:\s*[\"']?(?:(\d+)[\"']?|\{\{\s*([A-Za-z_][A-Za-z0-9_]*))",
-                    content):
+                r"nodePort:\s*[\"']?(?:(\d+)[\"']?|\{\{\s*([A-Za-z_][A-Za-z0-9_]*))",
+                content,
+            ):
                 if match.group(1) is not None:
                     nodeports.append(match.group(1))
                 else:
                     var = match.group(2)
-                    self.assertIn(var, all_defaults,
-                                  f"{path} nodePort var {var} must resolve via role defaults")
+                    self.assertIn(
+                        var,
+                        all_defaults,
+                        f"{path} nodePort var {var} must resolve via role defaults",
+                    )
                     nodeports.append(str(all_defaults[var]))
-        self.assertEqual(sorted(set(nodeports)), ["30300", "30900", "30909"],
-                         "active tree NodePorts must stay exactly the human "
-                         f"contracts 30300/30909/30900 — got {sorted(set(nodeports))}")
-        for path in (EXPORTER_DEPLOYMENT, EXPORTER_SERVICE, EXPORTER_SERVICEMONITOR,
-                     PROVIDER_COMPOSE):
+        self.assertEqual(
+            sorted(set(nodeports)),
+            ["30300", "30900", "30909"],
+            "active tree NodePorts must stay exactly the human "
+            f"contracts 30300/30909/30900 — got {sorted(set(nodeports))}",
+        )
+        for path in (
+            EXPORTER_DEPLOYMENT,
+            EXPORTER_SERVICE,
+            EXPORTER_SERVICEMONITOR,
+            PROVIDER_COMPOSE,
+        ):
             content = read(path)
-            self.assertNotIn("kind: Ingress", content,
-                             f"{path} provider must not define an Ingress")
-            self.assertNotIn("NodePort", content,
-                             f"{path} provider must not use a NodePort")
+            self.assertNotIn(
+                "kind: Ingress", content, f"{path} provider must not define an Ingress"
+            )
+            self.assertNotIn(
+                "NodePort", content, f"{path} provider must not use a NodePort"
+            )
         # The provider host port never gains a hostname.
-        for text, origin in ((read(PLATFORM_INGRESS_TEMPLATE), "platform Ingress"),
-                             (read(TRAEFIK_HELMCHART_TEMPLATE), "file provider")):
-            self.assertNotIn("12375", text,
-                             f"{origin} must not expose the Docker proxy port")
+        for text, origin in (
+            (read(PLATFORM_INGRESS_TEMPLATE), "platform Ingress"),
+            (read(TRAEFIK_HELMCHART_TEMPLATE), "file provider"),
+        ):
+            self.assertNotIn(
+                "12375", text, f"{origin} must not expose the Docker proxy port"
+            )
 
 
 VERIFY_SCRIPT = REPO / "scripts/verify/platform.sh"
@@ -2103,27 +3535,44 @@ class TestVerificationScript(unittest.TestCase):
     def test_verification_script_does_not_print_env_files(self):
         """platform.sh never dumps generated env files and never logs credential values."""
         self.assertTrue(VERIFY_SCRIPT.is_file(), f"missing {VERIFY_SCRIPT}")
-        self.assertTrue(VERIFY_SCRIPT.stat().st_mode & 0o111,
-                        f"{VERIFY_SCRIPT} must be executable")
+        self.assertTrue(
+            VERIFY_SCRIPT.stat().st_mode & 0o111, f"{VERIFY_SCRIPT} must be executable"
+        )
         content = read(VERIFY_SCRIPT)
         # No dump command that could target a generated env file. (`awk print`
         # of pod names elsewhere in the script is unrelated to env files, so
         # the dump check is scoped to .env proximity; the blanket .env ban
         # below makes the guarantee absolute.)
-        for rx in (r"\bcat\b[^\n]*\.env", r"\.env[^\n]*\bcat\b",
-                   r"\bprint\w*\b[^\n]*\.env", r"\.env[^\n]*\bprint\w*\b"):
-            self.assertIsNone(re.search(rx, content),
-                              f"{VERIFY_SCRIPT} must never dump a generated env file ({rx})")
-        self.assertIsNone(re.search(r"(?:^|[\s;&|])cat(?:\s|$)", content),
-                          f"{VERIFY_SCRIPT} must never invoke 'cat'")
-        self.assertIsNone(re.search(r"\.env(?:\s|$|[\"'])", content),
-                          f"{VERIFY_SCRIPT} must not reference generated .env files at all")
+        for rx in (
+            r"\bcat\b[^\n]*\.env",
+            r"\.env[^\n]*\bcat\b",
+            r"\bprint\w*\b[^\n]*\.env",
+            r"\.env[^\n]*\bprint\w*\b",
+        ):
+            self.assertIsNone(
+                re.search(rx, content),
+                f"{VERIFY_SCRIPT} must never dump a generated env file ({rx})",
+            )
+        self.assertIsNone(
+            re.search(r"(?:^|[\s;&|])cat(?:\s|$)", content),
+            f"{VERIFY_SCRIPT} must never invoke 'cat'",
+        )
+        self.assertIsNone(
+            re.search(r"\.env(?:\s|$|[\"'])", content),
+            f"{VERIFY_SCRIPT} must not reference generated .env files at all",
+        )
         # Credentials come from the process environment or live Secret
         # objects, never from files, and are never expanded into log output.
-        self.assertIn("process environment", content,
-                      f"{VERIFY_SCRIPT} must document the env-only credential contract")
-        self.assertIn("Secret", content,
-                      f"{VERIFY_SCRIPT} must consume credentials via Secret references")
+        self.assertIn(
+            "process environment",
+            content,
+            f"{VERIFY_SCRIPT} must document the env-only credential contract",
+        )
+        self.assertIn(
+            "Secret",
+            content,
+            f"{VERIFY_SCRIPT} must consume credentials via Secret references",
+        )
         for lineno, raw in enumerate(content.splitlines(), 1):
             code = raw.split("#", 1)[0]
             for segment in re.split(r"\|\||&&|;|\{|\}", code):
@@ -2139,27 +3588,45 @@ class TestVerificationScript(unittest.TestCase):
         self.assertTrue(VERIFY_SCRIPT.is_file(), f"missing {VERIFY_SCRIPT}")
         content = read(VERIFY_SCRIPT)
         lowered = content.lower()
-        for keyword in ("prometheus", "docker", "jenkins",
-                        "kubernetes", "discovery", "portainer"):
-            self.assertIn(keyword, lowered,
-                          f"{VERIFY_SCRIPT} must check the {keyword} boundary")
+        for keyword in (
+            "prometheus",
+            "docker",
+            "jenkins",
+            "kubernetes",
+            "discovery",
+            "portainer",
+        ):
+            self.assertIn(
+                keyword, lowered, f"{VERIFY_SCRIPT} must check the {keyword} boundary"
+            )
         for marker in ("12375", "18080", "labmonitor", "targets", "/metrics"):
-            self.assertIn(marker, content,
-                          f"{VERIFY_SCRIPT} must contain functional marker {marker}")
+            self.assertIn(
+                marker,
+                content,
+                f"{VERIFY_SCRIPT} must contain functional marker {marker}",
+            )
 
     def test_verification_script_never_exposes_provider_ports_with_ufw_allow_all(self):
         """platform.sh inspects the firewall read-only; it never opens provider ports."""
         self.assertTrue(VERIFY_SCRIPT.is_file(), f"missing {VERIFY_SCRIPT}")
         content = read(VERIFY_SCRIPT)
-        self.assertIn("set -Eeuo pipefail", content,
-                      f"{VERIFY_SCRIPT} must start with 'set -Eeuo pipefail'")
-        self.assertIn("KUBECONFIG", content,
-                      f"{VERIFY_SCRIPT} must resolve KUBECONFIG")
-        self.assertIn("/etc/rancher/k3s/k3s.yaml", content,
-                      f"{VERIFY_SCRIPT} must default to /etc/rancher/k3s/k3s.yaml")
+        self.assertIn(
+            "set -Eeuo pipefail",
+            content,
+            f"{VERIFY_SCRIPT} must start with 'set -Eeuo pipefail'",
+        )
+        self.assertIn("KUBECONFIG", content, f"{VERIFY_SCRIPT} must resolve KUBECONFIG")
+        self.assertIn(
+            "/etc/rancher/k3s/k3s.yaml",
+            content,
+            f"{VERIFY_SCRIPT} must default to /etc/rancher/k3s/k3s.yaml",
+        )
         self.assertIsNone(
-            re.search(r"\bufw\s+(allow|deny|enable|disable|delete|insert|route)\b",
-                      content, re.IGNORECASE),
+            re.search(
+                r"\bufw\s+(allow|deny|enable|disable|delete|insert|route)\b",
+                content,
+                re.IGNORECASE,
+            ),
             f"{VERIFY_SCRIPT} must never mutate UFW state (read-only 'ufw status' only)",
         )
         self.assertIsNone(
@@ -2176,70 +3643,224 @@ class TestFinalFixWave(unittest.TestCase):
         """Destruction is gated on the one-shot marker + explicit opt-in."""
         tasks = read(COMPOSE_TASKS)
         # One-shot marker gates every destructive path.
-        self.assertIn(".clean-baseline-complete", tasks,
-                      f"{COMPOSE_TASKS} must stat/create the one-shot marker")
-        self.assertIn("jenkins_baseline_marker", tasks,
-                      f"{COMPOSE_TASKS} must gate destruction on the marker fact")
+        self.assertIn(
+            ".clean-baseline-complete",
+            tasks,
+            f"{COMPOSE_TASKS} must stat/create the one-shot marker",
+        )
+        self.assertIn(
+            "jenkins_baseline_marker",
+            tasks,
+            f"{COMPOSE_TASKS} must gate destruction on the marker fact",
+        )
         # Every `state: absent` removal of the exact Jenkins path is conditional.
         # The Bluefin init-script removal is intentionally non-destructive and is
         # covered separately by
         # test_jenkins_bluefin_groovy_staging_is_non_destructive.
         absent_blocks = [m.start() for m in re.finditer(r"state:\s*absent", tasks)]
-        self.assertGreaterEqual(len(absent_blocks), 2,
-                                f"{COMPOSE_TASKS} must keep exact-path removals — got {len(absent_blocks)}")
+        self.assertGreaterEqual(
+            len(absent_blocks),
+            2,
+            f"{COMPOSE_TASKS} must keep exact-path removals — got {len(absent_blocks)}",
+        )
         gated_blocks = 0
         for idx in absent_blocks:
-            window = tasks[max(0, idx - 500):idx + 800]
+            window = tasks[max(0, idx - 500) : idx + 800]
             if "03-bluefin.groovy" in window:
                 continue
             gated_blocks += 1
-            self.assertIn("/srv/home-server/data/jenkins", window,
-                          f"{COMPOSE_TASKS} absent removal must target the exact Jenkins path")
-            self.assertIn("jenkins_baseline_marker", window,
-                          f"{COMPOSE_TASKS} absent removal must check the marker (no unconditional wipe)")
-            self.assertIn("jenkins_clean_reset_confirmed", window,
-                          f"{COMPOSE_TASKS} absent removal must require explicit opt-in")
-        self.assertGreaterEqual(gated_blocks, 2,
-                                f"{COMPOSE_TASKS} must keep both marker-gated Jenkins removals — got {gated_blocks}")
+            self.assertIn(
+                "/srv/home-server/data/jenkins",
+                window,
+                f"{COMPOSE_TASKS} absent removal must target the exact Jenkins path",
+            )
+            self.assertIn(
+                "jenkins_baseline_marker",
+                window,
+                f"{COMPOSE_TASKS} absent removal must check the marker (no unconditional wipe)",
+            )
+            self.assertIn(
+                "jenkins_clean_reset_confirmed",
+                window,
+                f"{COMPOSE_TASKS} absent removal must require explicit opt-in",
+            )
+        self.assertGreaterEqual(
+            gated_blocks,
+            2,
+            f"{COMPOSE_TASKS} must keep both marker-gated Jenkins removals — got {gated_blocks}",
+        )
         # Container removal is equally gated.
-        self.assertIn("jenkins_clean_reset_confirmed is sameas true", tasks,
-                      f"{COMPOSE_TASKS} must keep explicit opt-in (sameas true)")
+        self.assertIn(
+            "jenkins_clean_reset_confirmed is sameas true",
+            tasks,
+            f"{COMPOSE_TASKS} must keep explicit opt-in (sameas true)",
+        )
         # Skip-with-warning when clean+unconfirmed; steady-state no-op when marked.
-        self.assertIn("jenkins_preflight_clean", tasks,
-                      f"{COMPOSE_TASKS} must compute preflight-clean for skip-vs-fail")
+        self.assertIn(
+            "jenkins_preflight_clean",
+            tasks,
+            f"{COMPOSE_TASKS} must compute preflight-clean for skip-vs-fail",
+        )
         lowered = tasks.lower()
-        self.assertIn("no-op", lowered,
-                      f"{COMPOSE_TASKS} must document the steady-state no-op rerun")
-        self.assertIn("skipping destructive reset", lowered,
-                      f"{COMPOSE_TASKS} must warn (not fail) when clean+unconfirmed")
+        self.assertIn(
+            "no-op",
+            lowered,
+            f"{COMPOSE_TASKS} must document the steady-state no-op rerun",
+        )
+        self.assertIn(
+            "skipping destructive reset",
+            lowered,
+            f"{COMPOSE_TASKS} must warn (not fail) when clean+unconfirmed",
+        )
         # Fail-closed + invariants preserved.
-        self.assertIn('compose_jenkins_data_dir == "/srv/home-server/data/jenkins"', tasks,
-                      f"{COMPOSE_TASKS} must keep the exact path check")
-        self.assertIn("jobs[name,builds[number]]", tasks,
-                      f"{COMPOSE_TASKS} must keep the zero jobs/builds preflight query")
-        self.assertIn("no_log: true", tasks,
-                      f"{COMPOSE_TASKS} must keep no_log around secrets")
+        self.assertIn(
+            'compose_jenkins_data_dir == "/srv/home-server/data/jenkins"',
+            tasks,
+            f"{COMPOSE_TASKS} must keep the exact path check",
+        )
+        self.assertIn(
+            "jobs[name,builds[number]]",
+            tasks,
+            f"{COMPOSE_TASKS} must keep the zero jobs/builds preflight query",
+        )
+        self.assertIn(
+            "no_log: true", tasks, f"{COMPOSE_TASKS} must keep no_log around secrets"
+        )
         for forbidden in ("backup", "restore", "migration"):
             for line in tasks.splitlines():
                 if forbidden in line.lower() and not line.strip().startswith("#"):
-                    self.fail(f"{COMPOSE_TASKS} must not add {forbidden} path — found: {line.strip()}")
+                    self.fail(
+                        f"{COMPOSE_TASKS} must not add {forbidden} path — found: {line.strip()}"
+                    )
         # One-shot revert is documented in role comments and README.
-        self.assertIn("To re-run one-shot, remove", tasks,
-                      f"{COMPOSE_TASKS} must document the one-shot revert")
-        self.assertIn("one-shot", read(REPO / "README.md").lower(),
-                      "README.md must document the Jenkins one-shot revert")
+        self.assertIn(
+            "To re-run one-shot, remove",
+            tasks,
+            f"{COMPOSE_TASKS} must document the one-shot revert",
+        )
+        self.assertIn(
+            "one-shot",
+            read(REPO / "README.md").lower(),
+            "README.md must document the Jenkins one-shot revert",
+        )
+
+    def test_jenkins_clean_marker_recorded_for_already_clean_baseline(self):
+        """P1: a fresh already-clean baseline is recorded before Bluefin jobs.
+
+        With jenkins_clean_reset_confirmed=false and jenkins_bluefin_enabled=true
+        on a fresh host, the run skips the wipe but must still record the marker
+        (no destructive reset) before creating the managed Bluefin jobs; reruns
+        then find the marker and stay idempotent instead of aborting on the
+        non-empty jobs preflight.
+        """
+        tasks = read(COMPOSE_TASKS)
+        marker_dest = 'dest: "{{ compose_jenkins_data_dir }}/.clean-baseline-complete"'
+        marker_idx = tasks.index(marker_dest)
+        block_end = tasks.find("\n- name:", marker_idx)
+        block = tasks[marker_idx : block_end if block_end != -1 else len(tasks)]
+        self.assertIn(
+            "not jenkins_baseline_marker.stat.exists",
+            block,
+            f"{COMPOSE_TASKS} marker must stay gated on the one-shot marker",
+        )
+        self.assertIn(
+            "jenkins_preflight_clean",
+            block,
+            f"{COMPOSE_TASKS} must record an already-clean baseline without a wipe",
+        )
+        self.assertIn(
+            "jenkins_clean_reset_confirmed is sameas true",
+            block,
+            f"{COMPOSE_TASKS} must still record after a confirmed destructive reset",
+        )
+        # Recorded before Bluefin jobs are staged/provisioned.
+        self.assertLess(
+            marker_idx,
+            tasks.index("03-bluefin.groovy"),
+            f"{COMPOSE_TASKS} must record the baseline marker before Bluefin jobs",
+        )
+        # Destructive removals stay gated on marker + explicit confirmation.
+        for match in re.finditer(r"state:\s*absent", tasks):
+            window = tasks[max(0, match.start() - 500) : match.start() + 800]
+            if "03-bluefin.groovy" in window:
+                continue
+            self.assertIn(
+                "jenkins_baseline_marker",
+                window,
+                f"{COMPOSE_TASKS} every Jenkins removal must stay marker-gated",
+            )
+            self.assertIn(
+                "jenkins_clean_reset_confirmed is sameas true",
+                window,
+                f"{COMPOSE_TASKS} every Jenkins removal must stay explicitly confirmed",
+            )
+
+    def test_disabling_bluefin_never_deletes_jobs_credentials_or_history(self):
+        """Disabling Bluefin only removes the staged init script.
+
+        Managed jobs, the credentials store, and build history must survive so a
+        later re-enable reconciles instead of losing state.
+        """
+        tasks = read(COMPOSE_TASKS)
+        self.assertNotIn(
+            "credentials.xml",
+            tasks,
+            f"{COMPOSE_TASKS} must not delete the Jenkins credentials store",
+        )
+        for match in re.finditer(r"state: absent", tasks):
+            window = tasks[max(0, match.start() - 400) : match.start() + 120]
+            self.assertNotIn(
+                "/jobs",
+                window,
+                f"{COMPOSE_TASKS} must not remove a jobs path via state: absent",
+            )
+            self.assertNotIn(
+                "/builds",
+                window,
+                f"{COMPOSE_TASKS} must not remove a builds path via state: absent",
+            )
+        removal_start = tasks.find("Remover Groovy Bluefin")
+        self.assertNotEqual(
+            removal_start,
+            -1,
+            f"{COMPOSE_TASKS} must keep the non-destructive Bluefin script removal",
+        )
+        removal_block = tasks[removal_start : removal_start + 600]
+        self.assertIn(
+            "03-bluefin.groovy",
+            removal_block,
+            f"{COMPOSE_TASKS} Bluefin removal must target only the staged script",
+        )
+        self.assertIn(
+            "state: absent",
+            removal_block,
+            f"{COMPOSE_TASKS} Bluefin removal must delete the staged script",
+        )
+        self.assertIn(
+            "not (jenkins_bluefin_enabled | default(false))",
+            removal_block,
+            f"{COMPOSE_TASKS} Bluefin removal must be gated on the disabled flag",
+        )
 
     def test_firewall_anon_gate_is_non_2xx(self):
         """Anonymous /api/json gate asserts the non-2xx contract."""
         tasks = read(FIREWALL_TASKS)
-        self.assertIn("is not match('^2..')", tasks,
-                      f"{FIREWALL_TASKS} until must assert non-2xx")
-        self.assertIn("is match('^2..')", tasks,
-                      f"{FIREWALL_TASKS} failed_when must stay fail-closed on 2xx")
-        self.assertNotIn('stdout == "403"', tasks,
-                         f"{FIREWALL_TASKS} must not require exactly 403")
-        self.assertNotIn('stdout != "403"', tasks,
-                         f"{FIREWALL_TASKS} must not fail on non-403 non-2xx")
+        self.assertIn(
+            "is not match('^2..')", tasks, f"{FIREWALL_TASKS} until must assert non-2xx"
+        )
+        self.assertIn(
+            "is match('^2..')",
+            tasks,
+            f"{FIREWALL_TASKS} failed_when must stay fail-closed on 2xx",
+        )
+        self.assertNotIn(
+            'stdout == "403"', tasks, f"{FIREWALL_TASKS} must not require exactly 403"
+        )
+        self.assertNotIn(
+            'stdout != "403"',
+            tasks,
+            f"{FIREWALL_TASKS} must not fail on non-403 non-2xx",
+        )
 
     def test_k8s_service_ports_render_as_native_ints(self):
         """Service port/nodePort render with | int and parse as int when rendered."""
@@ -2248,50 +3869,78 @@ class TestFinalFixWave(unittest.TestCase):
         monitoring = read(MONITORING_TASKS)
         # Templates render unquoted native ints (rendered manifests safe_load as int).
         for path, content, markers in (
-            (PORTAINER_SERVER_TEMPLATE, server,
-             ("port: {{ portainer_service_port | int }}",
-              "nodePort: {{ portainer_nodeport | int }}")),
-            (PORTAINER_AGENT_TEMPLATE, agent,
-             ("port: {{ portainer_agent_port | int }}",)),
+            (
+                PORTAINER_SERVER_TEMPLATE,
+                server,
+                (
+                    "port: {{ portainer_service_port | int }}",
+                    "nodePort: {{ portainer_nodeport | int }}",
+                ),
+            ),
+            (
+                PORTAINER_AGENT_TEMPLATE,
+                agent,
+                ("port: {{ portainer_agent_port | int }}",),
+            ),
         ):
             for marker in markers:
-                self.assertIn(marker, content,
-                              f"{path} must render {marker} as native int")
+                self.assertIn(
+                    marker, content, f"{path} must render {marker} as native int"
+                )
         # Ansible task definitions stay valid YAML (quoted) but convert via | int,
         # so the templated dict carries native ints.
-        for marker in ("port: \"{{ monitoring_prometheus_service_port | int }}\"",
-                       "port: \"{{ monitoring_grafana_service_port | int }}\""):
-            self.assertIn(marker, monitoring,
-                          f"{MONITORING_TASKS} must render {marker} (| int)")
+        for marker in (
+            'port: "{{ monitoring_prometheus_service_port | int }}"',
+            'port: "{{ monitoring_grafana_service_port | int }}"',
+        ):
+            self.assertIn(
+                marker, monitoring, f"{MONITORING_TASKS} must render {marker} (| int)"
+            )
         for content, quoted in (
-            (server, ['port: "{{ portainer_service_port }}"',
-                      'nodePort: "{{ portainer_nodeport }}"']),
+            (
+                server,
+                [
+                    'port: "{{ portainer_service_port }}"',
+                    'nodePort: "{{ portainer_nodeport }}"',
+                ],
+            ),
             (agent, ['port: "{{ portainer_agent_port }}"']),
-            (monitoring, ['port: "{{ monitoring_prometheus_service_port }}"',
-                          'port: "{{ monitoring_grafana_service_port }}"']),
+            (
+                monitoring,
+                [
+                    'port: "{{ monitoring_prometheus_service_port }}"',
+                    'port: "{{ monitoring_grafana_service_port }}"',
+                ],
+            ),
         ):
             for marker in quoted:
-                self.assertNotIn(marker, content,
-                                 f"must not render quoted string without | int: {marker}")
+                self.assertNotIn(
+                    marker,
+                    content,
+                    f"must not render quoted string without | int: {marker}",
+                )
         # Render with dummy ints and verify yaml parses port/nodePort as int.
         try:
             import yaml as _yaml
         except Exception:
             self.skipTest("PyYAML unavailable for int parse check")
             return
-        rendered_server = server.replace("{{ portainer_service_port | int }}", "9000") \
-            .replace("{{ portainer_nodeport | int }}", "30900") \
-            .replace("{{ portainer_namespace }}", "portainer") \
-            .replace("{{ portainer_service_name }}", "portainer") \
-            .replace("{{ portainer_data_size }}", "5Gi") \
-            .replace("{{ portainer_agent_secret_name }}", "portainer-agent") \
+        rendered_server = (
+            server.replace("{{ portainer_service_port | int }}", "9000")
+            .replace("{{ portainer_nodeport | int }}", "30900")
+            .replace("{{ portainer_namespace }}", "portainer")
+            .replace("{{ portainer_service_name }}", "portainer")
+            .replace("{{ portainer_data_size }}", "5Gi")
+            .replace("{{ portainer_agent_secret_name }}", "portainer-agent")
             .replace("{{ base_domain }}", "lab.arpa")
+        )
         docs = [d for d in _yaml.safe_load_all(rendered_server) if isinstance(d, dict)]
         svc = next(d for d in docs if d.get("kind") == "Service")
         for key in ("port", "nodePort"):
             val = svc["spec"]["ports"][0][key]
-            self.assertIsInstance(val, int,
-                                  f"server Service {key} must parse as int — got {val!r}")
+            self.assertIsInstance(
+                val, int, f"server Service {key} must parse as int — got {val!r}"
+            )
         self.assertEqual(svc["spec"]["ports"][0]["port"], 9000)
         self.assertEqual(svc["spec"]["ports"][0]["nodePort"], 30900)
 
@@ -2300,45 +3949,480 @@ class TestFinalFixWave(unittest.TestCase):
         fw_defaults = read(FIREWALL_DEFAULTS)
         allowlist = top_level_block(fw_defaults, "firewall_nodeport_allowlist")
         for nodeport in ("30900", "30300", "30909"):
-            self.assertIn(nodeport, allowlist,
-                          f"{FIREWALL_DEFAULTS} allowlist must contain {nodeport}")
-        self.assertNotIn("12375", allowlist,
-                         f"{FIREWALL_DEFAULTS} allowlist must never contain 12375")
-        self.assertNotIn("9001", allowlist,
-                         f"{FIREWALL_DEFAULTS} allowlist must never contain pod-only 9001")
+            self.assertIn(
+                nodeport,
+                allowlist,
+                f"{FIREWALL_DEFAULTS} allowlist must contain {nodeport}",
+            )
+        self.assertNotIn(
+            "12375",
+            allowlist,
+            f"{FIREWALL_DEFAULTS} allowlist must never contain 12375",
+        )
+        self.assertNotIn(
+            "9001",
+            allowlist,
+            f"{FIREWALL_DEFAULTS} allowlist must never contain pod-only 9001",
+        )
         fw_tasks = read(FIREWALL_TASKS)
-        self.assertIn("firewall_nodeport_allowlist", fw_tasks,
-                      f"{FIREWALL_TASKS} must loop the NodePort allowlist to LAN/VPN")
-        self.assertIn("resolved_firewall_trusted_cidrs", fw_tasks,
-                      f"{FIREWALL_TASKS} NodePort allow must stay LAN/VPN-scoped")
+        self.assertIn(
+            "firewall_nodeport_allowlist",
+            fw_tasks,
+            f"{FIREWALL_TASKS} must loop the NodePort allowlist to LAN/VPN",
+        )
+        self.assertIn(
+            "resolved_firewall_trusted_cidrs",
+            fw_tasks,
+            f"{FIREWALL_TASKS} NodePort allow must stay LAN/VPN-scoped",
+        )
 
     def test_exporter_prod_override_is_documented(self):
         """Lab keeps local build+import; prod override path is commented in defaults+examples."""
         defaults = read(MONITORING_DEFAULTS)
-        self.assertIn('docker_metrics_exporter_image: "labmonitor-docker-exporter:1.0.0"',
-                      defaults,
-                      f"{MONITORING_DEFAULTS} must keep the lab local build image")
-        self.assertIn("docker_metrics_exporter_mode: built", defaults,
-                      f"{MONITORING_DEFAULTS} must keep lab built mode")
-        for marker in ("ignored inventory", "registry.", "@sha256:",
-                       "docker_metrics_exporter_image",
-                       "lab keeps", "never use `latest`"):
-            self.assertIn(marker.lower(), defaults.lower(),
-                          f"{MONITORING_DEFAULTS} must document prod override ({marker})")
+        self.assertIn(
+            'docker_metrics_exporter_image: "labmonitor-docker-exporter:1.0.0"',
+            defaults,
+            f"{MONITORING_DEFAULTS} must keep the lab local build image",
+        )
+        self.assertIn(
+            "docker_metrics_exporter_mode: built",
+            defaults,
+            f"{MONITORING_DEFAULTS} must keep lab built mode",
+        )
+        for marker in (
+            "ignored inventory",
+            "registry.",
+            "@sha256:",
+            "docker_metrics_exporter_image",
+            "docker_metrics_exporter_local_build",
+            "pull-only",
+            "lab keeps",
+            "never use `latest`",
+        ):
+            self.assertIn(
+                marker.lower(),
+                defaults.lower(),
+                f"{MONITORING_DEFAULTS} must document prod override ({marker})",
+            )
         for path in (LAB_EXAMPLE, PROD_EXAMPLE):
             example = read(path)
-            self.assertIn("docker_metrics_exporter_image", example,
-                          f"{path} must document the exporter override var")
-            self.assertIn("@sha256:", example,
-                          f"{path} must show a digest-pinned registry example")
-            self.assertIn("ignored inventory", example.lower(),
-                          f"{path} must point at the ignored inventory override path")
+            self.assertIn(
+                "docker_metrics_exporter_image",
+                example,
+                f"{path} must document the exporter override var",
+            )
+            self.assertIn(
+                "@sha256:",
+                example,
+                f"{path} must show a digest-pinned registry example",
+            )
+            self.assertIn(
+                "docker_metrics_exporter_local_build",
+                example,
+                f"{path} must document the pull-only toggle",
+            )
+            self.assertIn(
+                "pull-only",
+                example.lower(),
+                f"{path} must document that registry refs are pull-only",
+            )
+            self.assertIn(
+                "ignored inventory",
+                example.lower(),
+                f"{path} must point at the ignored inventory override path",
+            )
         # Lab build+import flow stays intact.
         tasks = read(MONITORING_TASKS)
-        for marker in ("docker save", "k3s ctr images import",
-                       "docker_metrics_exporter_mode == 'built'"):
-            self.assertIn(marker, tasks,
-                          f"{MONITORING_TASKS} must keep the lab build+import flow")
+        for marker in (
+            "docker save",
+            "k3s ctr images import",
+            "docker_metrics_exporter_mode == 'built'",
+        ):
+            self.assertIn(
+                marker, tasks, f"{MONITORING_TASKS} must keep the lab build+import flow"
+            )
+
+
+def template_iptables_rules(text: str) -> list:
+    """Join iptables rule continuations from the DOCKER-USER template.
+
+    Pure Jinja control lines and comments are skipped; each returned string is
+    one complete ``"$iptables_bin" -A ...`` rule as the script executes it
+    (Jinja expressions stay literal, which is enough for static assertions).
+    """
+    rules: list = []
+    buffer = ""
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("{%"):
+            continue
+        if stripped.endswith("\\"):
+            buffer += stripped[:-1] + " "
+            continue
+        buffer += stripped
+        if buffer.startswith('"$iptables_bin"'):
+            rules.append(buffer)
+        buffer = ""
+    return rules
+
+
+class TestFirewallForwardPath(unittest.TestCase):
+    """Review fixes for the DNAT'd host ingress boundaries.
+
+    Kubernetes NodePorts are DNAT'd by kube-proxy before FORWARD, and Compose
+    publishes application ports on every host address, so neither UFW INPUT
+    rules nor ctorigdst=server_lan_ip DROPs can enforce the trusted allowlist.
+    Both boundaries must be enforced by original destination port in the
+    managed DOCKER-USER chain, with an explicit fallback deny.
+    """
+
+    def test_kubernetes_nodeports_are_enforced_in_the_forward_chain(self):
+        """NodePorts carry a trusted-source allow and an explicit fallback deny."""
+        template = read(FIREWALL_DOCKER_USER_TEMPLATE)
+        self.assertIn(
+            "firewall_nodeport_allowlist",
+            template,
+            f"{FIREWALL_DOCKER_USER_TEMPLATE} must filter the NodePort allowlist "
+            "(UFW INPUT rules never see DNAT'd NodePort traffic)",
+        )
+        self.assertIn(
+            "resolved_firewall_trusted_cidrs",
+            template,
+            f"{FIREWALL_DOCKER_USER_TEMPLATE} NodePort allow must stay LAN/VPN-scoped",
+        )
+        self.assertGreaterEqual(
+            template.count("in firewall_nodeport_allowlist"),
+            2,
+            f"{FIREWALL_DOCKER_USER_TEMPLATE} must emit both the NodePort allow "
+            "and the NodePort fallback deny",
+        )
+        rules = template_iptables_rules(template)
+        nodeport_returns = [r for r in rules if "(NodePort)" in r and " -j RETURN" in r]
+        nodeport_drops = [r for r in rules if "(NodePort)" in r and " -j DROP" in r]
+        self.assertTrue(
+            nodeport_returns,
+            f"{FIREWALL_DOCKER_USER_TEMPLATE} must allow trusted sources to NodePorts",
+        )
+        self.assertTrue(
+            nodeport_drops,
+            f"{FIREWALL_DOCKER_USER_TEMPLATE} must deny untrusted NodePort sources",
+        )
+        for rule in nodeport_returns:
+            self.assertIn(
+                '-s "{{ source }}"',
+                rule,
+                f"{FIREWALL_DOCKER_USER_TEMPLATE} NodePort allow must be source-scoped",
+            )
+            self.assertIn("--ctorigdstport", rule, rule)
+            self.assertNotRegex(rule, r"--ctorigdst\s", rule)
+        for rule in nodeport_drops:
+            self.assertIn(
+                '--ctorigdstport "{{ item.port }}"',
+                rule,
+                f"{FIREWALL_DOCKER_USER_TEMPLATE} NodePort deny must key on the original port",
+            )
+        # tasks/main.yml proves the effective chain at runtime and documents why
+        # the INPUT allowlist is not sufficient.
+        tasks = read(FIREWALL_TASKS)
+        self.assertIn(
+            "firewall_nodeport_allowlist | map(attribute='port')",
+            tasks,
+            f"{FIREWALL_TASKS} must validate every NodePort in the managed chain",
+        )
+        self.assertIn(
+            "--ctorigdstport $port",
+            tasks,
+            f"{FIREWALL_TASKS} must assert the DNAT-aware NodePort match",
+        )
+        self.assertIn(
+            "sofrem DNAT",
+            tasks,
+            f"{FIREWALL_TASKS} must document why NodePorts bypass UFW INPUT",
+        )
+
+    def test_forward_drops_cover_every_original_destination(self):
+        """Every forward DROP keys on the port only, never on ctorigdst IP."""
+        template = read(FIREWALL_DOCKER_USER_TEMPLATE)
+        rules = template_iptables_rules(template)
+        drops = [r for r in rules if " -j DROP" in r]
+        self.assertTrue(
+            drops, f"{FIREWALL_DOCKER_USER_TEMPLATE} must end with fallback denies"
+        )
+        for rule in drops:
+            self.assertIn("--ctorigdstport", rule, rule)
+            self.assertIsNone(
+                re.search(r"--ctorigdst\s", rule),
+                f"DROP must cover any original destination address: {rule}",
+            )
+        # Positive control: the documented exceptions still pin server_lan_ip.
+        self.assertRegex(
+            template,
+            r'--ctorigdst "?\{\{\s*server_lan_ip\s*\}\}"?',
+            f"{FIREWALL_DOCKER_USER_TEMPLATE} must keep the server_lan_ip allows",
+        )
+
+    def test_postgres_stays_denied_on_every_interface_when_enabled(self):
+        """Enabling direct PostgreSQL only adds a trusted allow; the deny stays."""
+        template = read(FIREWALL_DOCKER_USER_TEMPLATE)
+        self.assertIn(
+            "{% if firewall_postgres_direct_enable %}",
+            template,
+            f"{FIREWALL_DOCKER_USER_TEMPLATE} must gate the PostgreSQL allow",
+        )
+        self.assertNotIn(
+            "{% if not firewall_postgres_direct_enable %}",
+            template,
+            f"{FIREWALL_DOCKER_USER_TEMPLATE} must not gate the PostgreSQL deny: "
+            "enabling temporary access must not re-expose other host interfaces",
+        )
+        rules = template_iptables_rules(template)
+        pg_drops = [
+            r for r in rules if "firewall_postgres_port" in r and " -j DROP" in r
+        ]
+        self.assertTrue(
+            pg_drops,
+            f"{FIREWALL_DOCKER_USER_TEMPLATE} must always deny direct PostgreSQL",
+        )
+        for rule in pg_drops:
+            self.assertIsNone(re.search(r"--ctorigdst\s", rule), rule)
+
+
+DOTENV_FILTER = REPO / "ansible/filter_plugins/dotenv.py"
+
+# Vault-sourced values written into generated dotenv files. Docker Compose
+# parses `.env` with the compose-go dotenv parser, so every one of these must be
+# routed through the `dotenv_literal` filter (see PR #3 review P2).
+DOTENV_SECRET_TEMPLATES = {
+    REPO / "ansible/roles/compose-services/templates/n8n.env.j2": (
+        "postgres_n8n_password",
+        "n8n_encryption_key",
+        "postgres_automation_writer_password",
+    ),
+    REPO / "ansible/roles/compose-services/templates/jenkins.env.j2": (
+        "jenkins_admin_password",
+        "jenkins_labmonitor_password",
+        "jenkins_labmonitor_api_token",
+        "jenkins_prometheus_password",
+        "jenkins_prometheus_api_token",
+        "jenkins_github_token",
+        "jenkins_ghcr_username",
+        "jenkins_ghcr_token",
+        "jenkins_n8n_webhook_url",
+        "jenkins_n8n_webhook_token",
+    ),
+    REPO / "ansible/roles/compose-services/templates/postgres.env.j2": (
+        "postgres_superuser_password",
+        "postgres_n8n_password",
+        "postgres_metabase_password",
+    ),
+    REPO / "ansible/roles/compose-services/templates/metabase.env.j2": (
+        "postgres_metabase_password",
+        "postgres_automation_reader_password",
+    ),
+    REPO / "ansible/roles/portainer/templates/portainer-agent.env.j2": (
+        "portainer_agent_secret",
+    ),
+}
+
+
+def load_dotenv_literal():
+    """Import the filter plugin as a pure-Python callable (no Ansible needed)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "home_server_dotenv_filter", DOTENV_FILTER
+    )
+    assert spec is not None and spec.loader is not None, f"cannot load {DOTENV_FILTER}"
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.dotenv_literal
+
+
+def parse_compose_double_quoted(token: str) -> str:
+    """Model compose-go's parser for a double-quoted dotenv token (stdlib only).
+
+    Mirrors `dotenv/parser.go`: scan to the closing quote (honouring `\\` before
+    the quote), then run `expandEscapes` and the `$$` -> `$` interpolation pass.
+    """
+    assert token.startswith('"') and token.endswith('"') and len(token) >= 2, token
+    body = token[1:-1]
+    chars: list = []
+    escaped = False
+    for ch in body:
+        if escaped:
+            if ch == '"':
+                chars.append('"')
+            else:
+                chars.extend(("\\", ch))
+            escaped = False
+        elif ch == "\\":
+            escaped = True
+        else:
+            chars.append(ch)
+    value = "".join(chars)
+    replacements = {
+        "\\a": "\a",
+        "\\b": "\b",
+        "\\f": "\f",
+        "\\n": "\n",
+        "\\r": "\r",
+        "\\t": "\t",
+        "\\v": "\v",
+        '\\"': '"',
+        "\\$": "$$",
+        "\\\\": "\\",
+    }
+    value = re.sub(
+        r"\\(?:[abcfnrtv$\"\\]|0\d{0,3})",
+        lambda m: replacements.get(m.group(0), m.group(0)),
+        value,
+    )
+    return value.replace("$$", "$")
+
+
+class TestDotenvLiteralEscaping(unittest.TestCase):
+    """Generated dotenv secrets survive Docker Compose parsing byte-for-byte."""
+
+    def test_filter_plugin_exists_and_exposes_dotenv_literal(self):
+        """The escaping filter lives in the playbook-adjacent plugin directory."""
+        self.assertTrue(DOTENV_FILTER.is_file(), f"missing {DOTENV_FILTER}")
+        content = read(DOTENV_FILTER)
+        self.assertIn("def dotenv_literal(", content, f"{DOTENV_FILTER} must define it")
+        self.assertIn(
+            '"dotenv_literal": dotenv_literal',
+            content,
+            f"{DOTENV_FILTER} must register dotenv_literal as a filter",
+        )
+        self.assertNotIn(
+            "import ansible",
+            content,
+            f"{DOTENV_FILTER} must stay importable without Ansible",
+        )
+
+    def test_dotenv_literal_round_trips_dotenv_metacharacters(self):
+        """Every `$`/backslash/quote/CRLF value parses back to the raw secret."""
+        dotenv_literal = load_dotenv_literal()
+        values = (
+            "p@ss$word",
+            "p$$word",
+            "${NOPE}",
+            "$FOO",
+            "$1",
+            "trailing$",
+            "$$",
+            "back\\slash",
+            "\\",
+            "tab\\there",
+            'quote"inside',
+            'mix\\$"end',
+            "single'quote",
+            "hash#tag",
+            "space value",
+            "a=b=c",
+            "%percent%",
+            "!bang",
+            "line1\nline2",
+            "carriage\rreturn",
+            "crlf\r\nend",
+            "tab\tchar",
+            "",
+        )
+        for raw in values:
+            token = dotenv_literal(raw)
+            self.assertTrue(
+                token.startswith('"') and token.endswith('"'),
+                f"dotenv_literal({raw!r}) must return a double-quoted token — got {token!r}",
+            )
+            self.assertEqual(
+                parse_compose_double_quoted(token),
+                raw,
+                f"dotenv_literal({raw!r}) must round-trip via Compose parsing — got {token!r}",
+            )
+
+    def test_dotenv_literal_uses_expected_escape_sequences(self):
+        """Pin the exact encoding so a future edit cannot silently weaken it."""
+        dotenv_literal = load_dotenv_literal()
+        self.assertEqual(dotenv_literal("s3cr3t$value"), '"s3cr3t$$value"')
+        self.assertEqual(dotenv_literal("${X}"), '"$${X}"')
+        self.assertEqual(dotenv_literal("a\\b"), '"a\\\\b"')
+        self.assertEqual(dotenv_literal('has"quote'), '"has\\"quote"')
+        self.assertEqual(dotenv_literal("line1\nline2"), '"line1\\nline2"')
+        self.assertEqual(dotenv_literal("plain-password"), '"plain-password"')
+
+    def test_every_vault_secret_template_uses_dotenv_literal(self):
+        """No Vault value is interpolated into dotenv without the escaping filter."""
+        for path, variables in DOTENV_SECRET_TEMPLATES.items():
+            self.assertTrue(path.is_file(), f"missing {path}")
+            content = read(path)
+            self.assertIn(
+                "dotenv_literal",
+                content,
+                f"{path} must escape Vault secrets with dotenv_literal",
+            )
+            for var in variables:
+                signature = "{{ " + var + " | dotenv_literal }}"
+                self.assertIn(
+                    signature,
+                    content,
+                    f"{path} must render {var} via {signature}",
+                )
+                self.assertNotIn(
+                    "{{ " + var + " }}",
+                    content,
+                    f"{path} must not interpolate {var} raw into dotenv",
+                )
+                self.assertEqual(
+                    content.count(var),
+                    content.count(signature),
+                    f"{path} every {var} reference must be escaped with dotenv_literal",
+                )
+
+    def test_jenkins_bluefin_secrets_are_escaped_inside_the_conditional(self):
+        """The opt-in Bluefin Vault values are escaped like the always-on secrets."""
+        jenkins_template = next(
+            p for p in DOTENV_SECRET_TEMPLATES if p.name == "jenkins.env.j2"
+        )
+        template = read(jenkins_template)
+        start = template.index("{% if jenkins_bluefin_enabled")
+        end = template.index("{% endif %}", start)
+        block = template[start:end]
+        for var in (
+            "jenkins_github_token",
+            "jenkins_ghcr_username",
+            "jenkins_ghcr_token",
+            "jenkins_n8n_webhook_url",
+            "jenkins_n8n_webhook_token",
+        ):
+            self.assertIn(
+                "{{ " + var + " | dotenv_literal }}",
+                block,
+                f"jenkins.env.j2 Bluefin block must escape {var}",
+            )
+
+    def test_env_render_tasks_never_log_secret_values(self):
+        """Every task that renders a secret-bearing dotenv file keeps no_log: true."""
+        for path, task_names in (
+            (
+                COMPOSE_TASKS,
+                (
+                    "Gerar .env postgres no host",
+                    "Gerar .env jenkins no host",
+                    "Gerar .env n8n no host",
+                    "Gerar .env metabase no host",
+                ),
+            ),
+            (PORTAINER_TASKS, ("Render portainer-agent .env on host",)),
+        ):
+            content = read(path)
+            for task in task_names:
+                idx = content.index(task)
+                boundary = content.find("\n- name:", idx + 1)
+                block = content[idx : boundary if boundary != -1 else len(content)]
+                self.assertIn(
+                    "no_log: true",
+                    block,
+                    f"{path} task '{task}' must render with no_log: true",
+                )
 
 
 if __name__ == "__main__":

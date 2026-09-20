@@ -1,0 +1,12 @@
+---
+# Overlay opt-in: adiciona o socket Docker RW do host exigido pelo pipeline
+# Bluefin (build de imagens). A role compose-services só passa este arquivo ao
+# `docker compose` quando jenkins_bluefin_enabled=true; com o default false o
+# socket não é montado.
+#
+# O nome não é `compose.override.yaml`, então o Compose nunca o carrega
+# sozinho — ele precisa ser referenciado explicitamente com `-f`.
+services:
+  jenkins:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

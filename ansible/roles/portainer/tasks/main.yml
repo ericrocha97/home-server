@@ -49,6 +49,17 @@
         agent-secret: "{{ portainer_agent_secret }}"
   no_log: true
 
+# Rotation contract: the host Docker Agent is recreated with the new
+# AGENT_SECRET by Compose, so the Kubernetes Server and Agent pod templates must
+# carry a checksum of the same Secret. When the Vault value changes the
+# annotation changes and both Deployments roll, instead of leaving the running
+# Server authenticating with the old secret.
+- name: Compute Portainer agent Secret checksum for Deployment rollout
+  ansible.builtin.set_fact:
+    portainer_agent_secret_checksum: >-
+      {{ portainer_agent_secret | hash('sha256') }}
+  no_log: true
+
 - name: Ensure Portainer manifest fragment directory exists
   ansible.builtin.file:
     path: /tmp/home-server-portainer-fragments

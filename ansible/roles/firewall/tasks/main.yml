@@ -103,6 +103,10 @@
     comment: "Deny non-k3s to {{ item.comment }}"
   loop: "{{ firewall_portainer_agent_backhaul_ports }}"
 
+# Cobre apenas sockets locais do host (INPUT). O tráfego NodePort é DNAT'd pelo
+# kube-proxy para um endereço de pod antes do FORWARD, então a allowlist efetiva
+# para 30300/30900/30909 vive na chain gerenciada HOME_SERVER_DOCKER
+# (--ctorigdstport, com DROP final) renderizada mais abaixo.
 - name: Permitir NodePorts humanas (Portainer UI) somente da LAN/VPN
   community.general.ufw:
     rule: allow
@@ -168,6 +172,10 @@
 # source: "!{{ lan_cidr }}": a sintaxe de negação varia e pode virar placebo.
 # --ctorigdst/--ctorigdstport é obrigatório porque DOCKER-USER executa depois do DNAT;
 # sem isso os matches poderiam procurar a porta interna do container em vez da publicada.
+# A mesma chain também filtra os NodePorts: o kube-proxy faz DNAT antes do FORWARD, então
+# as regras INPUT de 30300/30900/30909 não os restringem. Os DROP são por porta de destino
+# original em qualquer endereço de destino, porque Compose/NodePort publicam em todas as
+# interfaces (não apenas server_lan_ip).
 # Alternativas rejeitadas: ufw-docker (dependência externa),
 # DOCKER_OPTS="--iptables=false"/iptables: false (quebraria o roteamento necessário
 # do Docker e o file provider). A chain dedicada e o serviço systemd abaixo são obrigatórios.
@@ -221,6 +229,20 @@
       [[ "${policy_rules[$index]}" == *" -j RETURN"* ]]
     done
     [[ "${policy_rules[-1]}" == *" -j RETURN"* ]]
+
+    # NodePorts sofrem DNAT antes do FORWARD (UFW INPUT não os vê): a allowlist
+    # efetiva precisa existir na chain com allow e fallback deny por porta.
+    nodeport_ports=({{ firewall_nodeport_ports }})
+    for port in "${nodeport_ports[@]}"; do
+      allow=0
+      deny=0
+      for rule in "${policy_rules[@]}"; do
+        [[ "$rule" == *"--ctorigdstport $port "* ]] || continue
+        [[ "$rule" == *" -j RETURN"* ]] && allow=1
+        [[ "$rule" == *" -j DROP"* ]] && deny=1
+      done
+      (( allow == 1 && deny == 1 ))
+    done
     iptables -L DOCKER-USER --line-numbers -n
     iptables -S DOCKER-USER
     iptables -S "{{ firewall_docker_user_chain }}"
@@ -228,3 +250,5 @@
     executable: /bin/bash
   changed_when: false
   when: firewall_docker_user_chain_fix
+  vars:
+    firewall_nodeport_ports: "{{ firewall_nodeport_allowlist | map(attribute='port') | join(' ') }}"

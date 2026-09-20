@@ -97,12 +97,16 @@ Edit `hosts.yml` and set `ansible_host` to the target's real LAN IP. Then edit
 - Review ports, retention, storage sizes, and NodePorts before deployment.
 - `jenkins_bluefin_enabled` defaults to `false`. Set it to `true` to provision
   the two Bluefin pipeline jobs and their credentials (it requires the extra
-  Vault values listed below); leaving it `false` deploys Jenkins unchanged.
+  Vault values listed below); leaving it `false` deploys Jenkins unchanged and
+  without the read-write host Docker socket. Enabling it is what adds the
+  `compose.bluefin.yaml` overlay that mounts `/var/run/docker.sock`.
 - Leave `jenkins_clean_reset_confirmed: false` unless you explicitly authorize
   the destructive Jenkins clean baseline. This is a one-shot operation: it
   runs only while `/srv/home-server/data/jenkins/.clean-baseline-complete` is
   absent. To run it again, remove that marker and explicitly set the variable
-  to `true`; set it back to `false` immediately after the approved run.
+  to `true`; set it back to `false` immediately after the approved run. When the
+  preflight is already clean, the role records the marker without a destructive
+  reset, so reruns (including managed Bluefin jobs) stay idempotent.
 
 The tracked examples use documentation IPs only. Do not commit `hosts.yml`,
 `group_vars/all/vars.yml`, `vault.yml`, or generated host `.env` files.
@@ -335,8 +339,11 @@ curl --connect-timeout 5 "http://<server LAN IP>:12375/version"
   Metabase.
 - Docker monitoring uses the read-only proxy on port `12375`; the metrics
   exporter must not mount `/var/run/docker.sock`.
-- The Portainer Docker Agent is the only administrative read-write Docker
-  socket exception and remains isolated on port `9001`.
+- The Portainer Docker Agent is the standing administrative read-write Docker
+  socket exception and remains isolated on port `9001`. Jenkins only receives
+  the read-write host Docker socket when `jenkins_bluefin_enabled: true`; with
+  the default `false` the `compose/jenkins/compose.yaml` project mounts no
+  socket, and the opt-in `compose.bluefin.yaml` overlay is not applied.
 - Jenkins does not join the database network. n8n is the only service joining
   both automation and data networks. `automation_writer` owns the shared
   database; `automation_reader` has no write or `CREATE` privilege.

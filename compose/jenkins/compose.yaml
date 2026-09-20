@@ -25,6 +25,10 @@ services:
       JENKINS_GHCR_TOKEN: "${JENKINS_GHCR_TOKEN:-}"
       JENKINS_N8N_WEBHOOK_URL: "${JENKINS_N8N_WEBHOOK_URL:-}"
       JENKINS_N8N_WEBHOOK_TOKEN: "${JENKINS_N8N_WEBHOOK_TOKEN:-}"
+      # Sinaliza ao entrypoint se o socket Docker RW é obrigatório.
+      # O mount vive em compose.bluefin.yaml e só é aplicado com
+      # jenkins_bluefin_enabled=true.
+      JENKINS_BLUEFIN_ENABLED: "${JENKINS_BLUEFIN_ENABLED:-false}"
     labels:
       labmonitor.enabled: "${LABMONITOR_ENABLED:-true}"
       labmonitor.id: "${LABMONITOR_ID:?required}"
@@ -37,7 +41,9 @@ services:
     volumes:
       - jenkins_home:/var/jenkins_home
       - jenkins_init_groovy:/usr/share/jenkins/ref/init.groovy.d:ro
-      - /var/run/docker.sock:/var/run/docker.sock
+      # O socket Docker RW NÃO é montado por padrão. Ele é adicionado apenas
+      # pelo overlay compose.bluefin.yaml, aplicado quando
+      # jenkins_bluefin_enabled=true.
     networks:
       - home-server-automation
     healthcheck:
