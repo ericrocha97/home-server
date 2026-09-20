@@ -1,0 +1,54 @@
+import jenkins.model.*
+import hudson.model.User
+import hudson.security.*
+import hudson.security.csrf.DefaultCrumbIssuer
+import org.jenkinsci.plugins.matrixauth.PermissionEntry
+
+def instance = Jenkins.get()
+def env = System.getenv()
+def adminId = env['JENKINS_ADMIN_ID'] ?: 'admin'
+def adminPass = env['JENKINS_ADMIN_PASSWORD']
+if (adminPass == null || adminPass.trim().isEmpty()) {
+  throw new IllegalStateException("JENKINS_ADMIN_PASSWORD ausente — abortando bootstrap de segurança")
+}
+// Preserve the existing admin: reuse the current realm when already private,
+// otherwise install a new private realm. Never create provider users here.
+def currentRealm = instance.getSecurityRealm()
+def hudsonRealm
+if (currentRealm instanceof HudsonPrivateSecurityRealm) {
+  hudsonRealm = (HudsonPrivateSecurityRealm) currentRealm
+} else {
+  hudsonRealm = new HudsonPrivateSecurityRealm(false)
+  instance.setSecurityRealm(hudsonRealm)
+}
+def adminUser = User.getById(adminId, false)
+if (adminUser == null) {
+  hudsonRealm.createAccount(adminId, adminPass)
+} else {
+  // The Vault value is the source of truth: re-assert it on the existing admin
+  // so rotating JENKINS_ADMIN_PASSWORD takes effect on the next restart instead
+  // of being ignored while the account already exists. addProperty replaces the
+  // previous Details property (same class) and persists the user.
+  adminUser.addProperty(HudsonPrivateSecurityRealm.Details.fromPlainPassword(adminPass))
+  adminUser.save()
+}
+// Phase-one migration: replace FullControlOnceLoggedIn with the pinned
+// fine-grained matrix strategy. Anonymous receives no grants.
+def strategy = instance.getAuthorizationStrategy()
+if (!(strategy instanceof GlobalMatrixAuthorizationStrategy)) {
+  strategy = new GlobalMatrixAuthorizationStrategy()
+  instance.setAuthorizationStrategy(strategy)
+}
+// Reconcile the admin grant deterministically as an explicit USER entry:
+// drop any existing grant for this account first (including legacy ambiguous
+// EITHER entries), then re-add it. matrix-auth 3.x flags leftover legacy
+// entries as ambiguous.
+strategy.getGrantedPermissionEntries().values().each { entries ->
+  entries.removeIf { it.sid == adminId }
+}
+strategy.add(Jenkins.ADMINISTER, PermissionEntry.user(adminId))
+instance.setCrumbIssuer(new DefaultCrumbIssuer(true))
+instance.save()
+def loc = JenkinsLocationConfiguration.get()
+loc.setUrl(env['JENKINS_URL'] ?: "https://jenkins.${env['BASE_DOMAIN'] ?: 'lab.arpa'}")
+loc.save()

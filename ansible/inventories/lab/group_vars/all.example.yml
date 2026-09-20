@@ -1,0 +1,73 @@
+---
+environment_name: lab
+base_domain: lab.arpa
+server_lan_ip: "{{ ansible_host }}"
+server_lan_interface: ""
+lan_cidr: 192.0.2.0/24
+vpn_cidr: ""
+base_timezone: Etc/UTC
+k3s_version: v1.36.3+k3s1
+k3s_pod_cidr: 10.42.0.0/16
+k3s_service_cidr: 10.43.0.0/16
+k3s_flannel_interface: ""
+base_admin_user: "{{ ansible_user }}"
+
+# --- Compose services ---
+# Preencher com as quatro refs completas nome:tag@sha256:<64-hex>.
+compose_postgres_image: "postgres:17.5@sha256:aadf2c0696f5ef357aa7a68da995137f0cf17bad0bf6e1f17de06ae5c769b302"
+compose_jenkins_base_image: "jenkins/jenkins:2.568.3-lts-jdk21@sha256:c1e4c349365f6d16d88595b2c5f7e8ff39b8ae1d061f62420bac193b4b9616d0"
+compose_jenkins_build_tag_prefix: "2.568.3-lts-jdk21"
+compose_n8n_image: "n8nio/n8n:2.39.4@sha256:5fa13ec66b5703f3ae0189eb979940baec35add43fa828e2313b1fe5190e7d25"
+compose_metabase_image: "metabase/metabase:v0.63.17@sha256:918187453bd5d70849d14bb6af0bb482a617dc849f251502679a8e626d98f4ee"
+# Jenkins clean baseline — explicit opt-in, operator changes to true only for the clean baseline run
+jenkins_clean_reset_confirmed: false
+# Jenkins Bluefin pipeline (opt-in; keep false in examples)
+jenkins_bluefin_enabled: false
+compose_postgres_port: 15432
+compose_jenkins_port: 18080
+compose_n8n_port: 15678
+compose_metabase_port: 13001
+compose_postgres_uid: 999
+compose_postgres_gid: 999
+compose_jenkins_uid: 1000
+compose_jenkins_gid: 1000
+compose_n8n_uid: 1000
+compose_n8n_gid: 1000
+compose_metabase_uid: 2000
+compose_metabase_gid: 2000
+compose_postgres_db_automation: automation
+compose_postgres_user_automation_writer: automation_writer
+compose_postgres_user_automation_reader: automation_reader
+
+# --- Platform foundation (non-secret) ---
+docker_socket_proxy_port: 12375
+docker_metrics_exporter_port: 9797
+# Exporter prod override (commented example — lab keeps local build+import flow).
+# Prod sets this in the ignored inventory (ansible/inventories/prod/group_vars/all.yml)
+# with a registry digest, e.g.:
+# docker_metrics_exporter_mode: built
+# docker_metrics_exporter_image: "registry.home.arpa/labmonitor-docker-exporter:1.0.0@sha256:<64-hex-digest>"
+# docker_metrics_exporter_local_build: false
+# A registry-qualified or digest-pinned image is pull-only; only a bare local
+# tag is built on the host and imported into k3s containerd.
+monitoring_chart_version: "88.6.1"
+monitoring_prometheus_service_name: prometheus
+monitoring_prometheus_service_port: 9090
+prometheus_nodeport: 30909
+monitoring_grafana_service_name: grafana
+monitoring_grafana_service_port: 3000
+grafana_nodeport: 30300
+monitoring_prometheus_retention: 15d
+monitoring_prometheus_storage_size: 20Gi
+monitoring_grafana_storage_size: 5Gi
+monitoring_jenkins_metrics_path: /prometheus/
+portainer_service_name: portainer
+portainer_service_port: 9000
+portainer_nodeport: 30900
+labmonitor_namespace: labmonitor
+labmonitor_service_account: labmonitor-api
+jenkins_labmonitor_user: labmonitor-api
+jenkins_prometheus_user: prometheus-scraper
+compose_jenkins_labmonitor_id: jenkins
+compose_n8n_labmonitor_id: n8n
+compose_metabase_labmonitor_id: metabase

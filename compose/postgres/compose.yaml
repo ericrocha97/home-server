@@ -1,0 +1,42 @@
+---
+name: postgres
+services:
+  postgres:
+    image: "${POSTGRES_IMAGE:?required full image reference}"
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${POSTGRES_SUPERUSER_USER:-postgres}"
+      POSTGRES_PASSWORD: "${POSTGRES_SUPERUSER_PASSWORD:?required}"
+      POSTGRES_DB: "${POSTGRES_SUPERUSER_DB:-postgres}"
+      # DBs adicionais criados via init script / lógica app (n8n/metabase criam via credenciais próprias)
+    ports:
+      - "${POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # init scripts opcionais montados pela role se existirem
+    networks:
+      - home-server-data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_SUPERUSER_USER:-postgres} -d ${POSTGRES_SUPERUSER_DB:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  home-server-data:
+    external: true
+
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /srv/home-server/data/postgres

@@ -1,0 +1,7 @@
+---
+- name: Validar e recarregar SSH
+  ansible.builtin.shell: |
+    sshd -t && systemctl reload ssh
+  args:
+    executable: /bin/bash
+  changed_when: true

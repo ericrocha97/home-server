@@ -1,0 +1,15 @@
+# Prometheus additional scrape configs — Jenkins metrics.
+# Rendered only into the `prometheus-additional-scrape-configs` Secret via
+# lookup('template', ...) with no_log: true. Never commit rendered output:
+# the credential below interpolates Vault at deploy time.
+- job_name: jenkins
+  metrics_path: "{{ monitoring_jenkins_metrics_path }}"
+  scheme: http
+  static_configs:
+    - targets:
+        - "{{ server_lan_ip }}:{{ compose_jenkins_port }}"
+      labels:
+        instance: jenkins
+  basic_auth:
+    username: "{{ jenkins_prometheus_user }}"
+    password: "{{ jenkins_prometheus_api_token }}"

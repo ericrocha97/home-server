@@ -1,0 +1,13 @@
+[Unit]
+Description=Home Server Docker published-port policy
+Requires=docker.service
+Wants=ufw.service
+After=docker.service ufw.service
+
+[Service]
+Type=oneshot
+ExecStart={{ firewall_docker_user_script_path }}
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

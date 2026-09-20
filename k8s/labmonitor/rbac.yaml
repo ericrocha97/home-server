@@ -1,0 +1,68 @@
+---
+# LabMonitor foundation RBAC — least privilege for the future
+# labmonitor-api. One ClusterRole grants get/list/watch only on nodes, pods,
+# services, namespaces and apps/deployments; one namespaced Role grants get
+# only on the two named ConfigMaps. Both bind exclusively to
+# system:serviceaccount:labmonitor:labmonitor-api. Nothing else is granted.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: labmonitor
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: labmonitor-api
+  namespace: labmonitor
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: labmonitor-reader
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "pods", "services", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: labmonitor-reader
+subjects:
+  - kind: ServiceAccount
+    name: labmonitor-api
+    namespace: labmonitor
+roleRef:
+  kind: ClusterRole
+  name: labmonitor-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: labmonitor-config-reader
+  namespace: labmonitor
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames:
+      - labmonitor-catalog
+      - labmonitor-provider-config
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: labmonitor-config-reader
+  namespace: labmonitor
+subjects:
+  - kind: ServiceAccount
+    name: labmonitor-api
+    namespace: labmonitor
+roleRef:
+  kind: Role
+  name: labmonitor-config-reader
+  apiGroup: rbac.authorization.k8s.io

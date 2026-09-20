@@ -1,0 +1,66 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana
+  namespace: "{{ monitoring_namespace }}"
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - "grafana.{{ base_domain }}"
+  rules:
+    - host: "grafana.{{ base_domain }}"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: "{{ monitoring_grafana_service_name }}"
+                port:
+                  number: {{ monitoring_grafana_service_port }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: prometheus
+  namespace: "{{ monitoring_namespace }}"
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - "prometheus.{{ base_domain }}"
+  rules:
+    - host: "prometheus.{{ base_domain }}"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: "{{ monitoring_prometheus_service_name }}"
+                port:
+                  number: {{ monitoring_prometheus_service_port }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: portainer
+  namespace: "{{ portainer_namespace }}"
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - "portainer.{{ base_domain }}"
+  rules:
+    - host: "portainer.{{ base_domain }}"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: "{{ portainer_service_name }}"
+                port:
+                  number: {{ portainer_service_port }}

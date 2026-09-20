@@ -1,0 +1,61 @@
+---
+- name: Validar arquitetura Docker suportada
+  ansible.builtin.assert:
+    that:
+      - ansible_architecture == 'x86_64'
+    fail_msg: "A plataforma usa o repositório Docker amd64; defina uma variante de arquitetura antes de usar outro host."
+
+- name: Criar diretório de keyrings APT
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Instalar chave oficial do Docker
+  ansible.builtin.get_url:
+    url: "{{ docker_gpg_url }}"
+    dest: "{{ docker_keyring_path }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Configurar repositório oficial do Docker
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ docker_architecture }} signed-by={{ docker_keyring_path }}] {{ docker_repository }} {{ ansible_distribution_release }} stable"
+    filename: docker
+    state: present
+    update_cache: true
+
+- name: Instalar Docker Engine e Compose plugin
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+
+- name: Configurar daemon Docker
+  ansible.builtin.template:
+    src: daemon.json.j2
+    dest: "{{ docker_daemon_config_path }}"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reiniciar Docker
+
+- name: Habilitar Docker sem expor daemon TCP
+  ansible.builtin.systemd_service:
+    name: docker
+    enabled: true
+    state: started
+
+- name: Adicionar usuário de gerenciamento ao grupo Docker somente quando solicitado
+  ansible.builtin.user:
+    name: "{{ docker_manage_user }}"
+    groups: docker
+    append: true
+  when: docker_manage_user | length > 0
